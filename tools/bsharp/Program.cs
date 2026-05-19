@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 return Launcher.Run(args);
 
@@ -59,7 +60,10 @@ static class Launcher {
             return RunAudit(projectPath, globalProps);
 
         string projectDir = Path.GetDirectoryName(projectPath)!;
-        string bsharpDir = Path.Combine(projectDir, ".bsharp");
+        string bsharpRoot = Path.Combine(projectDir, ".bsharp");
+        string bsharpDir = bsharpRoot;
+        if (TryGetGlobalProp(globalProps, "TargetFramework", out var explicitTargetFramework) && !string.IsNullOrWhiteSpace(explicitTargetFramework))
+            bsharpDir = Path.Combine(bsharpRoot, "inner", SanitizePathSegment(explicitTargetFramework));
         string hashFile = Path.Combine(bsharpDir, "shape.hash");
         string binFile = Path.Combine(bsharpDir, "build");
         string currentHash = ComputeShapeHash(projectPath, globalProps);
@@ -74,7 +78,18 @@ static class Launcher {
         }
 
         // Cache miss — regenerate.
-        int rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
+        int rebuildRc;
+        if (bsharpDir == bsharpRoot
+            && TryEvaluateTargetFrameworkInfo(projectPath, globalProps, out var frameworkInfo)
+            && string.IsNullOrEmpty(frameworkInfo.TargetFramework)
+            && frameworkInfo.TargetFrameworks.Length > 0)
+        {
+            rebuildRc = RebuildOuter(projectPath, bsharpRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
+        }
+        else
+        {
+            rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
+        }
         if (rebuildRc != 0) return rebuildRc;
         return ExecBuildBinary(binFile, forwardArgs);
     }
@@ -101,6 +116,85 @@ static class Launcher {
         var eq = kv.IndexOf('=');
         if (eq <= 0) return; // ignore malformed
         dest.Add(new KeyValuePair<string, string>(kv.Substring(0, eq), kv.Substring(eq + 1)));
+    }
+
+    static bool TryGetGlobalProp(List<KeyValuePair<string, string>> props, string name, out string value) {
+        for (var i = props.Count - 1; i >= 0; i--) {
+            if (string.Equals(props[i].Key, name, StringComparison.OrdinalIgnoreCase)) {
+                value = props[i].Value;
+                return true;
+            }
+        }
+        value = "";
+        return false;
+    }
+
+    sealed record TargetFrameworkInfo(string TargetFramework, string[] TargetFrameworks);
+
+    static bool TryEvaluateTargetFrameworkInfo(string projectPath, List<KeyValuePair<string, string>> globalProps, out TargetFrameworkInfo info) {
+        info = new TargetFrameworkInfo("", Array.Empty<string>());
+        var args = new List<string> {
+            "msbuild", projectPath, "-nologo",
+            "-getProperty:TargetFramework",
+            "-getProperty:TargetFrameworks",
+        };
+        foreach (var p in globalProps)
+            args.Add($"-p:{p.Key}={p.Value}");
+
+        var rc = RunProcessCapture("dotnet", args, out var stdout, out _);
+        if (rc != 0) return false;
+
+        try {
+            using var doc = JsonDocument.Parse(stdout);
+            var props = doc.RootElement.GetProperty("Properties");
+            var targetFramework = props.TryGetProperty("TargetFramework", out var tf) ? tf.GetString() ?? "" : "";
+            var targetFrameworksText = props.TryGetProperty("TargetFrameworks", out var tfs) ? tfs.GetString() ?? "" : "";
+            var targetFrameworks = targetFrameworksText.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            info = new TargetFrameworkInfo(targetFramework, targetFrameworks);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    static int RebuildOuter(
+        string projectPath,
+        string bsharpRoot,
+        string currentHash,
+        List<KeyValuePair<string, string>> globalProps,
+        string[] targetFrameworks)
+    {
+        Console.Error.WriteLine($"bsharp: regenerating outer dispatcher for {Path.GetFileName(projectPath)} ({string.Join(", ", targetFrameworks)})...");
+        Directory.CreateDirectory(bsharpRoot);
+
+        var innerBuilds = new List<string>(targetFrameworks.Length);
+        foreach (var targetFramework in targetFrameworks) {
+            var innerProps = new List<KeyValuePair<string, string>>(globalProps.Count + 1);
+            innerProps.AddRange(globalProps.Where(p => !string.Equals(p.Key, "TargetFramework", StringComparison.OrdinalIgnoreCase)));
+            innerProps.Add(new KeyValuePair<string, string>("TargetFramework", targetFramework));
+            innerProps.Sort((x, y) => string.Compare(x.Key, y.Key, StringComparison.OrdinalIgnoreCase));
+
+            var innerDir = Path.Combine(bsharpRoot, "inner", SanitizePathSegment(targetFramework));
+            var innerHash = ComputeShapeHash(projectPath, innerProps);
+            var innerHashFile = Path.Combine(innerDir, "shape.hash");
+            var innerBin = Path.Combine(innerDir, "build");
+            if (!File.Exists(innerHashFile)
+                || !File.Exists(innerBin)
+                || !string.Equals(File.ReadAllText(innerHashFile).Split('\n', 2)[0].Trim(), innerHash, StringComparison.Ordinal))
+            {
+                var rc = Rebuild(projectPath, innerDir, innerHash, innerProps);
+                if (rc != 0) return rc;
+            }
+            innerBuilds.Add(innerBin);
+        }
+
+        var outerBin = Path.Combine(bsharpRoot, "build");
+        WriteOuterDispatcher(outerBin, innerBuilds);
+
+        var hashFile = Path.Combine(bsharpRoot, "shape.hash");
+        File.WriteAllText(hashFile, currentHash + "\nOuterDispatcher\n");
+        Console.Error.WriteLine($"bsharp: outer dispatcher ready at {outerBin}");
+        return 0;
     }
 
     static int Rebuild(string projectPath, string bsharpDir, string currentHash, List<KeyValuePair<string, string>> globalProps) {
@@ -234,6 +328,20 @@ static class Launcher {
         return proc.ExitCode;
     }
 
+    static int RunProcessCapture(string fileName, IEnumerable<string> args, out string stdout, out string stderr) {
+        var psi = new ProcessStartInfo(fileName) {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        var proc = Process.Start(psi)!;
+        stdout = proc.StandardOutput.ReadToEnd();
+        stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        return proc.ExitCode;
+    }
+
     static string ExecutableName(string baseName) =>
         OperatingSystem.IsWindows() ? baseName + ".exe" : baseName;
 
@@ -253,6 +361,55 @@ static class Launcher {
             File.Copy(source, destination, overwrite: true);
         }
     }
+
+    static void WriteOuterDispatcher(string destination, IReadOnlyList<string> innerBuilds) {
+        DeleteExistingFileOrDirectory(destination);
+        if (OperatingSystem.IsWindows()) {
+            var cmdPath = destination + ".cmd";
+            DeleteExistingFileOrDirectory(cmdPath);
+            var sb = new StringBuilder();
+            sb.AppendLine("@echo off");
+            sb.AppendLine("setlocal");
+            foreach (var innerBuild in innerBuilds) {
+                sb.Append("call ");
+                sb.Append(CommandQuote(innerBuild));
+                sb.AppendLine(" %*");
+                sb.AppendLine("if errorlevel 1 exit /b %errorlevel%");
+            }
+            File.WriteAllText(cmdPath, sb.ToString());
+            File.WriteAllText(destination, cmdPath);
+            return;
+        }
+
+        var script = new StringBuilder();
+        script.AppendLine("#!/bin/sh");
+        script.AppendLine("set -e");
+        foreach (var innerBuild in innerBuilds) {
+            script.Append("exec_path=");
+            script.Append(ShellQuote(innerBuild));
+            script.AppendLine();
+            script.AppendLine("\"$exec_path\" \"$@\"");
+        }
+        File.WriteAllText(destination, script.ToString());
+        try {
+            File.SetUnixFileMode(destination,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        } catch { }
+    }
+
+    static string SanitizePathSegment(string value) {
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value) {
+            if (char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_') sb.Append(ch);
+            else sb.Append('_');
+        }
+        return sb.Length == 0 ? "default" : sb.ToString();
+    }
+
+    static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+    static string CommandQuote(string value) => "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     static void ReplaceDirectoryLinkOrCopy(string destination, string sourceDirectory) {
         DeleteExistingFileOrDirectory(destination);
