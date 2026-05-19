@@ -131,13 +131,23 @@ Each MSBuild target becomes an async method with execute-once state:
 
 ```csharp
 static int T_123_CoreCompileState;
+static TaskCompletionSource? T_123_CoreCompileCompletion;
 
 public static async ValueTask T_123_CoreCompile() {
-    if (!TargetRuntime.TryEnter(ref T_123_CoreCompileState))
+    if (!TargetRuntime.TryEnter(
+            ref T_123_CoreCompileState,
+            ref T_123_CoreCompileCompletion,
+            out var waitTask)) {
+        if (waitTask is not null)
+            await waitTask;
         return;
+    }
+
     try {
-        await T_100_PrepareForBuild();
-        await T_101_ResolveReferences();
+        await Task.WhenAll(
+            Task.Run(static async () => await T_100_PrepareForBuild()),
+            Task.Run(static async () => await T_101_ResolveReferences())
+        );
 
         var targetStart = Log.TargetStarted("CoreCompile");
         // target body...
@@ -145,7 +155,9 @@ public static async ValueTask T_123_CoreCompile() {
     } catch (Exception ex) {
         AddError("CoreCompile", ex.Message);
     } finally {
-        TargetRuntime.MarkDone(ref T_123_CoreCompileState);
+        TargetRuntime.MarkDone(
+            ref T_123_CoreCompileState,
+            ref T_123_CoreCompileCompletion);
     }
 }
 ```
@@ -153,12 +165,12 @@ public static async ValueTask T_123_CoreCompile() {
 Target scheduling is deliberately conservative:
 
 - `DependsOnTargets` and literal `BeforeTargets` prerequisites are expanded at codegen
-  time and emitted as direct `await T_X()` calls.
+  time. Consecutive static prerequisites are started on the ThreadPool and awaited as
+  `Task.WhenAll(...)` batches.
 - Dynamic `CallTarget` or mutated dependency properties fall back to the generated
   `Targets.Run(string)` dispatcher.
-- Prerequisites are emitted in order, not as `Task.WhenAll` batches. Many SDK targets
-  mutate shared property/item state, so parallel target execution needs an explicit
-  concurrency model before it can be enabled safely.
+- If multiple prerequisite paths reach the same target concurrently, the first caller
+  runs it and the others asynchronously await its completion task.
 - `AfterTargets` companions run after the target body/up-to-date check.
 
 ## Generated state

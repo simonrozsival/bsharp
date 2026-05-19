@@ -2314,18 +2314,32 @@ static class TargetIncrementality {
 }
 
 static class TargetRuntime {
-    public static bool TryEnter(ref int state) {
-        if (Interlocked.CompareExchange(ref state, 1, 0) == 0)
+    public static bool TryEnter(ref int state, ref TaskCompletionSource? completion, out Task? waitTask) {
+        waitTask = null;
+        var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (Interlocked.CompareExchange(ref state, 1, 0) == 0) {
+            Volatile.Write(ref completion, created);
             return true;
+        }
+
+        if (Volatile.Read(ref state) == 2)
+            return false;
 
         var spin = new SpinWait();
-        while (Volatile.Read(ref state) != 2)
+        TaskCompletionSource? existing;
+        while ((existing = Volatile.Read(ref completion)) is null) {
+            if (Volatile.Read(ref state) == 2)
+                return false;
             spin.SpinOnce();
+        }
+
+        waitTask = existing.Task;
         return false;
     }
 
-    public static void MarkDone(ref int state) {
+    public static void MarkDone(ref int state, ref TaskCompletionSource? completion) {
         Volatile.Write(ref state, 2);
+        Volatile.Read(ref completion)?.TrySetResult();
     }
 }
 
@@ -3142,9 +3156,13 @@ static partial class Tasks {
             }
 
             bodies.AppendLine($"    static int {method}State;");
+            bodies.AppendLine($"    static TaskCompletionSource? {method}Completion;");
             bodies.AppendLine($"    public static async ValueTask {method}() {{");
-            bodies.AppendLine($"        if (!TargetRuntime.TryEnter(ref {method}State))");
+            bodies.AppendLine($"        if (!TargetRuntime.TryEnter(ref {method}State, ref {method}Completion, out var waitTask)) {{");
+            bodies.AppendLine("            if (waitTask is not null)");
+            bodies.AppendLine("                await waitTask;");
             bodies.AppendLine("            return;");
+            bodies.AppendLine("        }");
             bodies.AppendLine("        try {");
 
             // Write the body to a scratch buffer; if EmitTargetMethodBody throws mid-emission
@@ -3169,7 +3187,7 @@ static partial class Tasks {
                 bodies.AppendLine("            // (target replaced with no-op; see comment above)");
             }
             bodies.AppendLine("        } finally {");
-            bodies.AppendLine($"            TargetRuntime.MarkDone(ref {method}State);");
+            bodies.AppendLine($"            TargetRuntime.MarkDone(ref {method}State, ref {method}Completion);");
             bodies.AppendLine("        }");
             bodies.AppendLine("    }");
             bodies.AppendLine();
@@ -3297,7 +3315,7 @@ static partial class Tasks {
             sb.AppendLine($"            if ({NegateBoolExpr(CompileCondWithFallback(target.Condition, instance))}) {{ Log.TargetSkipped({CSharpLiteral(name)}, \"condition was false\"); return; }}");
 
         // DependsOnTargets — consecutive static literals are de-duplicated and emitted as
-        // direct calls. Dynamic deps preserve order.
+        // a parallel batch. Dynamic deps preserve order and form batch boundaries.
         var literalRun = new List<string>();
         var literalRunSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void FlushLiteralRun() {
@@ -3305,8 +3323,12 @@ static partial class Tasks {
             if (literalRun.Count == 1) {
                 sb.AppendLine($"            await {Method(literalRun[0])}();");
             } else {
-                foreach (var targetName in literalRun)
-                    sb.AppendLine($"            await {Method(targetName)}();");
+                sb.AppendLine("            await Task.WhenAll(");
+                for (int i = 0; i < literalRun.Count; i++) {
+                    var suffix = i == literalRun.Count - 1 ? "" : ",";
+                    sb.AppendLine($"                Task.Run(static async () => await {Method(literalRun[i])}()){suffix}");
+                }
+                sb.AppendLine("            );");
             }
             literalRun.Clear();
             literalRunSeen.Clear();
@@ -3322,8 +3344,10 @@ static partial class Tasks {
                 onDynamicEmitted();
             }
         }
-        // Before-companions (literal X with X.BeforeTargets containing this target) join
-        // the same prerequisite batch as DependsOnTargets.
+        FlushLiteralRun();
+
+        // Before-companions (literal X with X.BeforeTargets containing this target) run
+        // after DependsOnTargets, but can run as their own static prerequisite batch.
         if (beforeCompanions.TryGetValue(name, out var befores))
             foreach (var before in befores)
                 if (literalRunSeen.Add(before))
