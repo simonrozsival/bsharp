@@ -18,9 +18,10 @@ static class Launcher {
         for (int i = 0; i < args.Length; i++) {
             var a = args[i];
             switch (a) {
-                case "build": case "run":
+                case "build": case "run": case "audit":
                     command = a;
-                    forwardArgs.Add(a);
+                    if (a != "audit")
+                        forwardArgs.Add(a);
                     break;
                 case "--no-cache":
                     noCache = true;
@@ -54,6 +55,9 @@ static class Launcher {
             return 2;
         }
 
+        if (command == "audit")
+            return RunAudit(projectPath, globalProps);
+
         string projectDir = Path.GetDirectoryName(projectPath)!;
         string bsharpDir = Path.Combine(projectDir, ".bsharp");
         string hashFile = Path.Combine(bsharpDir, "shape.hash");
@@ -73,6 +77,24 @@ static class Launcher {
         int rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
         if (rebuildRc != 0) return rebuildRc;
         return ExecBuildBinary(binFile, forwardArgs);
+    }
+
+    static int RunAudit(string projectPath, List<KeyValuePair<string, string>> globalProps) {
+        var codegenTool = FindCodegen();
+        if (codegenTool == null) {
+            Console.Error.WriteLine("bsharp: cannot find codegen tool. Set BSHARP_CODEGEN env var to the path of Codegen.dll or a Codegen executable.");
+            return 4;
+        }
+
+        var args = new List<string> { "--audit", "--project", projectPath };
+        foreach (var p in globalProps) {
+            args.Add("-p");
+            args.Add($"{p.Key}={p.Value}");
+        }
+
+        return codegenTool.RequiresDotnet
+            ? RunProcess("dotnet", new[] { codegenTool.Path }.Concat(args))
+            : RunProcess(codegenTool.Path, args);
     }
 
     static void TryAddProp(List<KeyValuePair<string, string>> dest, string kv) {

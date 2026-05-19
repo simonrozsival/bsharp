@@ -101,11 +101,17 @@ time is dominated by launching `bsharp` and then launching the project-local
 | `bsharp build` | Ensure `.bsharp/build` is current, then run `build` |
 | `bsharp run` | Ensure `.bsharp/build` is current, then run `run` |
 | `bsharp build --no-cache` | Force regeneration and republish |
+| `bsharp audit` | Evaluate the project and print a JSON subset/shape report without generating a build host |
 | `bsharp build path/to/project.csproj` | Build an explicit project |
 | `bsharp build -p:Configuration=Release` | Add a closed-world global property override to the cache key |
 | `bsharp build -v quiet` | Set generated-host verbosity (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) |
 
 Unknown flags are forwarded to the generated per-project binary.
+
+`bsharp audit` reports the evaluated shape that codegen would see: target/task counts,
+outer-build detection, `CallTarget` and `<MSBuild>` task sites, dynamic imports,
+batching expressions, property functions, and `UsingTask` resolution issues. It is the
+bring-up tool for larger SDKs such as MAUI.
 
 ## Cache invalidation
 

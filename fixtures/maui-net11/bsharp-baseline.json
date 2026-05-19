@@ -14,6 +14,20 @@
   },
   "baselineCommands": [
     {
+      "name": "outerAudit",
+      "command": "tools/codegen/bin/Debug/net11.0/Codegen --audit --project fixtures/maui-net11/MauiNet11.csproj",
+      "status": "captured",
+      "artifact": "fixtures/maui-net11/bsharp-audit.outer.json",
+      "summary": "outer build, 111 targets, 6 CallTarget sites, 34 MSBuild task sites"
+    },
+    {
+      "name": "androidInnerAudit",
+      "command": "tools/codegen/bin/Debug/net11.0/Codegen --audit --project fixtures/maui-net11/MauiNet11.csproj -p TargetFramework=net11.0-android",
+      "status": "captured",
+      "artifact": "fixtures/maui-net11/bsharp-audit.android.json",
+      "summary": "net11.0-android inner build, 756 targets, 15 CallTarget sites"
+    },
+    {
       "name": "outerRestore",
       "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj",
       "status": "blocked",

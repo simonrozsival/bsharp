@@ -1,0 +1,778 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-05-19T09:36:26.028936Z",
+  "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
+  "globalProperties": {},
+  "shape": {
+    "targetFramework": "",
+    "targetFrameworks": "net11.0-android;net11.0-ios;net11.0-maccatalyst",
+    "runtimeIdentifier": "",
+    "runtimeIdentifiers": "",
+    "configuration": "Debug",
+    "platform": "AnyCPU",
+    "targetPlatformIdentifier": "",
+    "targetPlatformVersion": "",
+    "useMaui": "true",
+    "isOuterBuild": true
+  },
+  "counts": {
+    "targets": 111,
+    "items": 281,
+    "properties": 321,
+    "usedTaskNames": 51,
+    "usingTasks": 48,
+    "usingTaskAssemblies": 13,
+    "taskMetadataTypes": 41,
+    "taskMetadataLoadErrors": 0,
+    "callTargets": 6,
+    "msbuildTasks": 34,
+    "dynamicImports": 41,
+    "dynamicTargetDiagnostics": 12,
+    "targetBatchingSites": 4,
+    "taskBatchingSites": 15,
+    "propertyFunctionSites": 21,
+    "inlineUsingTasks": 0,
+    "unresolvedUsingTasks": 0
+  },
+  "diagnostics": {
+    "outerBuild": "Project evaluated as an outer build. MAUI support requires an outer dispatcher that creates per-TargetFramework inner generated hosts.",
+    "dynamicImports": [
+      {
+        "project": "$(NETCoreSdkBundledVersionsProps)",
+        "condition": "\u0027$(NetCoreSdkRoot)\u0027 == \u0027\u0027 and Exists(\u0027$(NETCoreSdkBundledVersionsProps)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.props",
+        "condition": "\u0027$(AlternateCommonProps)\u0027 == \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CustomAfterDirectoryBuildProps)",
+        "condition": "\u0027$(CustomAfterDirectoryBuildProps)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPropsFile)",
+        "condition": "Exists(\u0027$(NuGetPropsFile)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NETCoreSdkBundledMSBuildInformationProps)",
+        "condition": "Exists(\u0027$(NETCoreSdkBundledMSBuildInformationProps)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.SourceLink.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.Build.Tasks.Git/build/Microsoft.Build.Tasks.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Common/build/Microsoft.SourceLink.Common.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitHub/build/Microsoft.SourceLink.GitHub.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitLab/build/Microsoft.SourceLink.GitLab.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.AzureRepos.Git/build/Microsoft.SourceLink.AzureRepos.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Bitbucket.Git/build/Microsoft.SourceLink.Bitbucket.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.CSharp.props",
+        "condition": "\u0027$(MSBuildProjectExtension)\u0027 == \u0027.csproj\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PackTool.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PackProjectTool.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.NET.Sdk.WindowsDesktop.props",
+        "condition": "Exists(\u0027$(MSBuildThisFileDirectory)../../Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.NET.Sdk.WindowsDesktop.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Windows.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.BeforeCommonCrossTargeting.targets",
+        "condition": "\u0027$(IsCrossTargetingBuild)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultAssemblyInfo.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultOutputPaths.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultArtifactsPath.props",
+        "condition": "\u0027$(_DefaultArtifactsPathPropsImported)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.Workloads.CrossTargeting.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(LanguageTargets)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildToolsPath)/Microsoft.Managed.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CSharpTargetsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetRestoreTargets)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.CrossTargeting.targets/ImportAfter/*.targets",
+        "condition": "\u0027$(ImportByWildcardAfterMicrosoftCommonCrossTargetingTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.CrossTargeting.targets\\ImportAfter\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildToolsPath)/Microsoft.Managed.After.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.CrossTargeting.targets",
+        "condition": "\u0027$(IsCrossTargetingBuild)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.SourceLink.targets",
+        "condition": "\u0027$(SuppressImplicitGitSourceLink)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.Build.Tasks.Git/build/Microsoft.Build.Tasks.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Common/$(_SourceLinkSdkSubDir)/Microsoft.SourceLink.Common.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitHub/build/Microsoft.SourceLink.GitHub.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitLab/build/Microsoft.SourceLink.GitLab.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.AzureRepos.Git/build/Microsoft.SourceLink.AzureRepos.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Bitbucket.Git/build/Microsoft.SourceLink.Bitbucket.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.ApiCompat.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetBuildTasksPackTargets)",
+        "condition": "Exists(\u0027$(NuGetBuildTasksPackTargets)\u0027) AND \u0027$(ImportNuGetBuildTasksPackTargetsFromSdk)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../../Containers/build/Microsoft.NET.Build.Containers.props",
+        "condition": "Exists(\u0027$(MSBuildThisFileDirectory)..\\..\\..\\Containers\\build\\Microsoft.NET.Build.Containers.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(_ContainersTargetsDir)Microsoft.NET.Build.Containers.targets",
+        "condition": "$(_IsNotSetContainersTargetsDir) AND Exists(\u0027$(_ContainersTargetsDir)Microsoft.NET.Build.Containers.targets\u0027)",
+        "dynamicProject": true
+      }
+    ],
+    "dynamicTargets": [
+      {
+        "target": "GenerateNuspec",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GenerateNuspecDependsOn);_CalculateInputsOutputsForPack;_GetProjectReferenceVersions;_InitializeNuspecRepositoryInformationProperties"
+      },
+      {
+        "target": "Pack",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PackDependsOn)"
+      },
+      {
+        "target": "PublishContainer",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishContainerDependsOn)"
+      },
+      {
+        "target": "RunPackageValidation",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(RunPackageValidationDependsOn)"
+      },
+      {
+        "target": "_AddPriFileToPackBuildOutput",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(AddPriFileDependsOn)"
+      },
+      {
+        "target": "_GetBuildOutputFilesWithTfm",
+        "kind": "dynamic-depends-on-targets",
+        "value": "BuiltProjectOutputGroup;DocumentationProjectOutputGroup;SatelliteDllsProjectOutputGroup;_AddPriFileToPackBuildOutput;$(TargetsForTfmSpecificBuildOutput)"
+      },
+      {
+        "target": "_GetDebugSymbolsWithTfm",
+        "kind": "dynamic-depends-on-targets",
+        "value": "DebugSymbolsProjectOutputGroup;$(TargetsForTfmSpecificDebugSymbolsInPackage)"
+      },
+      {
+        "target": "_GetProjectReferenceVersions",
+        "kind": "dynamic-depends-on-targets",
+        "value": "_GetAbsoluteOutputPathsForPack;$(GetPackageVersionDependsOn)"
+      },
+      {
+        "target": "_GetProjectVersion",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetPackageVersionDependsOn)"
+      },
+      {
+        "target": "_GetTfmSpecificContentForPackage",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(TargetsForTfmSpecificContentInPackage)"
+      },
+      {
+        "target": "_InitializeSourceControlInformationFromSourceControlManager",
+        "kind": "dynamic-depends-on-targets",
+        "value": "InitializeSourceControlInformationFromSourceControlManager;_SourceLinkHasSingleProvider;$(SourceControlManagerUrlTranslationTargets);SourceControlManagerPublishTranslatedUrls"
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishContainerDependsOn)"
+      }
+    ],
+    "callTargets": [
+      {
+        "target": "BuildProject",
+        "targets": "Build",
+        "dynamicTargets": false
+      },
+      {
+        "target": "PublishContainer",
+        "targets": "_PublishMultiArchContainers",
+        "dynamicTargets": false
+      },
+      {
+        "target": "PublishContainer",
+        "targets": "_PublishSingleContainer",
+        "dynamicTargets": false
+      },
+      {
+        "target": "VSTest",
+        "targets": "BuildProject",
+        "dynamicTargets": false
+      },
+      {
+        "target": "VSTest",
+        "targets": "SetVSTestInnerTarget",
+        "dynamicTargets": false
+      },
+      {
+        "target": "VSTest",
+        "targets": "DispatchToInnerBuildsWithVSTestTarget",
+        "dynamicTargets": false
+      }
+    ],
+    "msbuildTasks": [
+      {
+        "target": "Clean",
+        "projects": "@(_InnerBuildProjects)",
+        "targets": "Clean",
+        "properties": ""
+      },
+      {
+        "target": "DispatchToInnerBuilds",
+        "projects": "@(_InnerBuildProjects)",
+        "targets": "$(InnerTargets)",
+        "properties": ""
+      },
+      {
+        "target": "DispatchToInnerBuildsWithVSTestTarget",
+        "projects": "@(_ProjectToTestWithTFM)",
+        "targets": "$(InnerVSTestTargets)",
+        "properties": ""
+      },
+      {
+        "target": "GetAllRuntimeIdentifiers",
+        "projects": "$(MSBuildProjectFile)",
+        "targets": "GetAllRuntimeIdentifiers",
+        "properties": "TargetFramework=%(_GetAllRuntimeIdentifiersTargetFrameworks.Identity)"
+      },
+      {
+        "target": "GetTargetFrameworksWithPlatformFromInnerBuilds",
+        "projects": "@(_InnerBuildProjects)",
+        "targets": "GetTargetFrameworksWithPlatformForSingleTargetFramework",
+        "properties": ""
+      },
+      {
+        "target": "_FilterRestoreGraphProjectInputItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItemsWithoutDuplicates)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_FilterRestoreGraphProjectInputItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItemsWithoutDuplicates)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateProjectRestoreGraphAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateProjectRestoreGraphPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreGraph",
+        "projects": "@(_GenerateRestoreGraphProjectEntryInput)",
+        "targets": "_GenerateRestoreGraphProjectEntry",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreGraph",
+        "projects": "@(_RestoreProjectPathItems)",
+        "targets": "_GenerateProjectRestoreGraph",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateRestoreProjectPathItemsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateRestoreProjectPathItemsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathWalk",
+        "projects": "@(_CurrentRestoreProjectPathItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathWalk",
+        "projects": "@(_CurrentRestoreProjectPathItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(_RestoreProjectPathItemsWithoutDupes)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(_RestoreProjectPathItemsWithoutDupes)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetProjectReferenceVersions",
+        "projects": "@(_ProjectReferencesFromAssetsFile)",
+        "targets": "_GetProjectVersion",
+        "properties": "BuildProjectReferences=false;"
+      },
+      {
+        "target": "_GetReferencePathFromInnerProjects",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "GetReferencesForApiCompatValidatePackage",
+        "properties": "TargetFramework=%(_TargetFrameworks.Identity);\n                         BuildProjectReferences=false"
+      },
+      {
+        "target": "_GetRequiredWorkloads",
+        "projects": "@(_InnerBuildProjects)",
+        "targets": "_GetRequiredWorkloads",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GetRestoreSettingsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestorePackagesPathOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreRepositoryPathOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreSourcesOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreFallbackFoldersOverride",
+        "properties": ""
+      },
+      {
+        "target": "_MTPBuild",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "",
+        "properties": ""
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "projects": "@(_InnerBuild)",
+        "targets": "Publish;_ParseItemsForPublishingSingleContainer;_ComputeContainerExecutionArgs;_PublishSingleContainer",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetBuildOutputFilesWithTfm",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetTfmSpecificContentForPackage",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetDebugSymbolsWithTfm",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "SourceFilesProjectOutputGroup",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "_GetFrameworkAssemblyReferences",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "_GetFrameworksWithSuppressedDependencies",
+        "properties": ""
+      }
+    ],
+    "targetBatchingSites": [
+      {
+        "target": "_InitializeAzureReposGitSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeBitbucketGitSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeGitHubSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeGitLabSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      }
+    ],
+    "taskBatchingSites": [
+      {
+        "target": "GetAllRuntimeIdentifiers",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_GetAllRuntimeIdentifiersTargetFrameworks.Identity)"
+      },
+      {
+        "target": "GetTargetFrameworks",
+        "task": "CombineXmlElements",
+        "parameter": "XmlElements",
+        "value": "@(_TargetFrameworkInfo-\u003E\u0027%(AdditionalPropertiesFromProject)\u0027)"
+      },
+      {
+        "target": "_CalculateInputsOutputsForPack",
+        "task": "ItemGroup",
+        "parameter": "NuGetPackInput",
+        "include": "@(_BuildOutputInPackage-\u003E\u0027%(FinalOutputPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CalculateInputsOutputsForPack",
+        "task": "ItemGroup",
+        "parameter": "NuGetPackInput",
+        "include": "@(_TargetPathsToSymbols-\u003E\u0027%(FinalOutputPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_GenerateProjectRestoreGraphAllFrameworks",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreGraph",
+        "task": "Message",
+        "parameter": "Text",
+        "value": "%(_RestoreProjectPathItems.Identity)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetFrameworkAssemblyReferences",
+        "task": "ItemGroup",
+        "parameter": "TfmSpecificFrameworkAssemblyReferences",
+        "include": "@(ReferencePath-\u003E\u0027%(OriginalItemSpec)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_GetReferencePathFromInnerProjects",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_TargetFrameworks.Identity);\n                         BuildProjectReferences=false"
+      },
+      {
+        "target": "_GetRestoreSettingsAllFrameworks",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "task": "ItemGroup",
+        "parameter": "ContainerImageTags",
+        "include": "@(OriginalImageTags-\u003E\u0027%(Identity)-$(ContainerRuntimeIdentifier)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "task": "ItemGroup",
+        "parameter": "ContainerLabel",
+        "include": "$([System.String]::Copy(\u0027%(_ParsedContainerLabel.Identity)\u0027).Split(\u0027:\u0027)[0])",
+        "remove": ""
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "task": "ItemGroup",
+        "parameter": "ContainerPort",
+        "include": "$([System.String]::Copy(\u0027%(_ParsedContainerPort.Identity)\u0027).Split(\u0027:\u0027)[0])",
+        "remove": ""
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "task": "ItemGroup",
+        "parameter": "ContainerEnvironmentVariables",
+        "include": "$([System.String]::Copy(\u0027%(_ParsedContainerEnvironmentVariables.Identity)\u0027).Split(\u0027:\u0027)[0])",
+        "remove": ""
+      }
+    ],
+    "propertyFunctionSites": [
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:RoslynAssembliesPath",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027$(CSharpCoreTargetsPath)\u0027))"
+      },
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:RoslynAssembliesPath",
+        "value": "$([System.IO.Path]::Combine(\u0027$(RoslynAssembliesPath)\u0027, \u0027bincore\u0027))"
+      },
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:_apiCompatDefaultProjectSuppressionFile",
+        "value": "$([MSBuild]::NormalizePath(\u0027$(MSBuildProjectDirectory)\u0027, \u0027CompatibilitySuppressions.xml\u0027))"
+      },
+      {
+        "target": "ComputeContainerConfig",
+        "expressionKind": "Property:ContainerImageTag",
+        "value": "$([System.DateTime]::UtcNow.ToString(\u0027yyyyMMddhhmmss\u0027))"
+      },
+      {
+        "target": "ComputeContainerConfig",
+        "expressionKind": "Property:ContainerImageTag",
+        "value": "$([System.DateTime]::UtcNow.ToString(\u0027yyyyMMddhhmmss\u0027))"
+      },
+      {
+        "target": "DispatchToInnerBuildsWithVSTestTarget",
+        "expressionKind": "Property:_TestTfmsInParallel",
+        "value": "$([MSBuild]::ValueOrDefault(\u0027$(TestTfmsInParallel)\u0027, \u0027$(BuildInParallel)\u0027))"
+      },
+      {
+        "target": "RunPackageValidation",
+        "expressionKind": "Property:PackageValidationBaselinePath",
+        "value": "$([MSBuild]::NormalizePath(\u0027$(NuGetPackageRoot)\u0027, \u0027$(PackageValidationBaselineName.ToLower())\u0027, \u0027$(PackageValidationBaselineVersion)\u0027, \u0027$(PackageValidationBaselineName.ToLower()).$(PackageValidationBaselineVersion).nupkg\u0027))"
+      },
+      {
+        "target": "RunPackageValidation",
+        "expressionKind": "MakeDir.Directories",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027$(_ApiCompatValidatePackageSemaphoreFile)\u0027))"
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishWeb",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_WebDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishWorker",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_WorkerDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishConsole",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_ConsoleDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_GenerateProjectRestoreGraphPerFramework",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreSpecs",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GetRestoreSettingsPerFramework",
+        "expressionKind": "Item:_RestoreSettingsPerFramework.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerLabel.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerLabel.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerPort.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerPort.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerEnvironmentVariables.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerEnvironmentVariables.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "expressionKind": "MSBuild.BuildInParallel",
+        "value": "$([MSBuild]::ValueOrDefault(\u0027$(ContainerPublishInParallel)\u0027, \u0027true\u0027))"
+      }
+    ],
+    "inlineUsingTasks": [],
+    "unresolvedUsingTasks": [],
+    "taskMetadataLoadErrors": []
+  }
+}

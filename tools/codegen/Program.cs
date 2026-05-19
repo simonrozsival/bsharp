@@ -4,7 +4,21 @@ using Microsoft.Build.Execution;
 using Microsoft.Build.Locator;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 
+if (args.Length < 2) {
+    Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [-p Name=Value ...]");
+    Console.Error.WriteLine("       codegen --audit --project <csproj> [-p Name=Value ...]");
+    return 1;
+}
+if (args.Contains("--audit", StringComparer.OrdinalIgnoreCase) || (args.Length > 0 && args[0] == "audit")) {
+    var auditProject = ArgValue(args, "--project") ?? args.FirstOrDefault(a => a.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
+    if (auditProject == null) {
+        Console.Error.WriteLine("usage: codegen --audit --project <csproj> [-p Name=Value ...]");
+        return 1;
+    }
+    return Codegen.Audit(auditProject, CollectRepeated(args, "-p"));
+}
 if (args.Length < 4) {
     Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [-p Name=Value ...]");
     return 1;
@@ -35,6 +49,197 @@ static class Codegen {
     public static int Run(string projectPath, string outDir, string entryTarget, Dictionary<string, string> globalProps) {
         MSBuildLocator.RegisterDefaults();
         return RunInner(projectPath, outDir, entryTarget, globalProps);
+    }
+
+    public static int Audit(string projectPath, Dictionary<string, string> globalProps) {
+        MSBuildLocator.RegisterDefaults();
+        return AuditInner(projectPath, globalProps);
+    }
+
+    static int AuditInner(string projectPath, Dictionary<string, string> globalProps) {
+        var pc = new ProjectCollection(globalProps);
+        var fullPath = Path.GetFullPath(projectPath);
+        var project = pc.LoadProject(fullPath);
+        var instance = project.CreateProjectInstance();
+        var taskRegistry = UsingTaskRegistry.Build(instance, project);
+        var taskMetadata = TaskMetadataLoader.Load(taskRegistry);
+
+        var targetDiagnostics = new List<object>();
+        var taskNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var callTargets = new List<object>();
+        var msbuildTasks = new List<object>();
+        var taskBatchingSites = new List<object>();
+        var targetBatchingSites = new List<object>();
+        var propertyFunctionSites = new List<object>();
+
+        foreach (var target in instance.Targets.Values.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)) {
+            var dynamicDepends = ContainsDynamicTargetList(target.DependsOnTargets);
+            if (dynamicDepends) {
+                targetDiagnostics.Add(new {
+                    target = target.Name,
+                    kind = "dynamic-depends-on-targets",
+                    value = target.DependsOnTargets
+                });
+            }
+            if (ContainsBatching(target.Inputs) || ContainsBatching(target.Outputs)) {
+                targetBatchingSites.Add(new {
+                    target = target.Name,
+                    inputs = target.Inputs,
+                    outputs = target.Outputs
+                });
+            }
+            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Condition", target.Condition);
+            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "DependsOnTargets", target.DependsOnTargets);
+            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Inputs", target.Inputs);
+            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Outputs", target.Outputs);
+
+            foreach (var child in target.Children) {
+                switch (child) {
+                    case ProjectTaskInstance task:
+                        taskNames.Add(task.Name);
+                        if (task.Name == "CallTarget") {
+                            callTargets.Add(new {
+                                target = target.Name,
+                                targets = task.Parameters.TryGetValue("Targets", out var targets) ? targets : "",
+                                dynamicTargets = task.Parameters.TryGetValue("Targets", out var callTargetValue) && ContainsDynamicTargetList(callTargetValue)
+                            });
+                        }
+                        if (task.Name == "MSBuild") {
+                            msbuildTasks.Add(new {
+                                target = target.Name,
+                                projects = task.Parameters.TryGetValue("Projects", out var projects) ? projects : "",
+                                targets = task.Parameters.TryGetValue("Targets", out var targets) ? targets : "",
+                                properties = task.Parameters.TryGetValue("Properties", out var properties) ? properties : ""
+                            });
+                        }
+                        AddPropertyFunctionSite(propertyFunctionSites, target.Name, task.Name + ".Condition", task.Condition);
+                        foreach (var parameter in task.Parameters) {
+                            if (ContainsBatching(parameter.Value)) {
+                                taskBatchingSites.Add(new {
+                                    target = target.Name,
+                                    task = task.Name,
+                                    parameter = parameter.Key,
+                                    value = parameter.Value
+                                });
+                            }
+                            AddPropertyFunctionSite(propertyFunctionSites, target.Name, task.Name + "." + parameter.Key, parameter.Value);
+                        }
+                        break;
+                    case ProjectPropertyGroupTaskInstance propertyGroup:
+                        AddPropertyFunctionSite(propertyFunctionSites, target.Name, "PropertyGroup.Condition", propertyGroup.Condition);
+                        foreach (var property in propertyGroup.Properties) {
+                            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Property:" + property.Name, property.Value);
+                            if (ContainsBatching(property.Value)) {
+                                taskBatchingSites.Add(new {
+                                    target = target.Name,
+                                    task = "PropertyGroup",
+                                    parameter = property.Name,
+                                    value = property.Value
+                                });
+                            }
+                        }
+                        break;
+                    case ProjectItemGroupTaskInstance itemGroup:
+                        AddPropertyFunctionSite(propertyFunctionSites, target.Name, "ItemGroup.Condition", itemGroup.Condition);
+                        foreach (var item in itemGroup.Items) {
+                            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Item:" + item.ItemType + ".Include", item.Include);
+                            AddPropertyFunctionSite(propertyFunctionSites, target.Name, "Item:" + item.ItemType + ".Remove", item.Remove);
+                            if (ContainsBatching(item.Include) || ContainsBatching(item.Remove)) {
+                                taskBatchingSites.Add(new {
+                                    target = target.Name,
+                                    task = "ItemGroup",
+                                    parameter = item.ItemType,
+                                    include = item.Include,
+                                    remove = item.Remove
+                                });
+                            }
+                        }
+                        break;
+                }
+            }
+        }
+
+        var importingElements = project.Imports
+            .Select(i => i.ImportingElement)
+            .Where(e => e != null)
+            .Select(e => new {
+                project = e!.Project,
+                condition = e.Condition,
+                dynamicProject = ContainsPropertyOrItemReference(e.Project)
+            })
+            .Where(e => e.dynamicProject)
+            .Take(200)
+            .ToArray();
+
+        var audit = new {
+            schemaVersion = 1,
+            generatedAtUtc = DateTime.UtcNow,
+            project = fullPath,
+            globalProperties = globalProps.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(kv => kv.Key, kv => kv.Value),
+            shape = new {
+                targetFramework = instance.GetPropertyValue("TargetFramework"),
+                targetFrameworks = instance.GetPropertyValue("TargetFrameworks"),
+                runtimeIdentifier = instance.GetPropertyValue("RuntimeIdentifier"),
+                runtimeIdentifiers = instance.GetPropertyValue("RuntimeIdentifiers"),
+                configuration = instance.GetPropertyValue("Configuration"),
+                platform = instance.GetPropertyValue("Platform"),
+                targetPlatformIdentifier = instance.GetPropertyValue("TargetPlatformIdentifier"),
+                targetPlatformVersion = instance.GetPropertyValue("TargetPlatformVersion"),
+                useMaui = instance.GetPropertyValue("UseMaui"),
+                isOuterBuild = string.IsNullOrEmpty(instance.GetPropertyValue("TargetFramework")) &&
+                               !string.IsNullOrEmpty(instance.GetPropertyValue("TargetFrameworks"))
+            },
+            counts = new {
+                targets = instance.Targets.Count,
+                items = instance.Items.Count,
+                properties = instance.Properties.Count,
+                usedTaskNames = taskNames.Count,
+                usingTasks = taskRegistry.EntryCount,
+                usingTaskAssemblies = taskRegistry.AssemblyCount,
+                taskMetadataTypes = taskMetadata.TaskCount,
+                taskMetadataLoadErrors = taskMetadata.LoadErrors.Count,
+                callTargets = callTargets.Count,
+                msbuildTasks = msbuildTasks.Count,
+                dynamicImports = importingElements.Length,
+                dynamicTargetDiagnostics = targetDiagnostics.Count,
+                targetBatchingSites = targetBatchingSites.Count,
+                taskBatchingSites = taskBatchingSites.Count,
+                propertyFunctionSites = propertyFunctionSites.Count,
+                inlineUsingTasks = taskRegistry.Entries.Count(e => e.IsInline),
+                unresolvedUsingTasks = taskRegistry.Entries.Count(e => e.Status != "resolved")
+            },
+            diagnostics = new {
+                outerBuild = string.IsNullOrEmpty(instance.GetPropertyValue("TargetFramework")) &&
+                             !string.IsNullOrEmpty(instance.GetPropertyValue("TargetFrameworks"))
+                    ? "Project evaluated as an outer build. MAUI support requires an outer dispatcher that creates per-TargetFramework inner generated hosts."
+                    : null,
+                dynamicImports = importingElements,
+                dynamicTargets = targetDiagnostics.Take(200).ToArray(),
+                callTargets = callTargets.Take(200).ToArray(),
+                msbuildTasks = msbuildTasks.Take(200).ToArray(),
+                targetBatchingSites = targetBatchingSites.Take(200).ToArray(),
+                taskBatchingSites = taskBatchingSites.Take(200).ToArray(),
+                propertyFunctionSites = propertyFunctionSites.Take(200).ToArray(),
+                inlineUsingTasks = taskRegistry.Entries.Where(e => e.IsInline).Select(e => new {
+                    e.TaskName,
+                    e.ExpandedTaskName,
+                    e.Condition,
+                    e.Notes
+                }).ToArray(),
+                unresolvedUsingTasks = taskRegistry.Entries.Where(e => e.Status != "resolved").Select(e => new {
+                    e.TaskName,
+                    e.ExpandedTaskName,
+                    e.DeclaredAssembly,
+                    e.Status,
+                    e.Notes,
+                    e.IsUsed
+                }).ToArray(),
+                taskMetadataLoadErrors = taskMetadata.LoadErrors.Take(100).ToArray()
+            }
+        };
+
+        Console.WriteLine(JsonSerializer.Serialize(audit, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
     }
 
     static int RunInner(string projectPath, string outDir, string entryTarget, Dictionary<string, string> globalProps) {
@@ -94,6 +299,28 @@ static class Codegen {
         if (globalProps.Count > 0)
             Console.WriteLine($"  Global properties: {string.Join(", ", globalProps.Select(kv => $"{kv.Key}={kv.Value}"))}");
         return 0;
+    }
+
+    static bool ContainsDynamicTargetList(string? value) =>
+        ContainsPropertyOrItemReference(value);
+
+    static bool ContainsPropertyOrItemReference(string? value) =>
+        !string.IsNullOrEmpty(value) &&
+        (value.Contains("$(", StringComparison.Ordinal) ||
+         value.Contains("@(", StringComparison.Ordinal) ||
+         value.Contains("%(", StringComparison.Ordinal));
+
+    static bool ContainsBatching(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Contains("%(", StringComparison.Ordinal);
+
+    static void AddPropertyFunctionSite(List<object> sites, string target, string expressionKind, string? value) {
+        if (string.IsNullOrEmpty(value) || !value.Contains("$([", StringComparison.Ordinal))
+            return;
+        sites.Add(new {
+            target,
+            expressionKind,
+            value
+        });
     }
 
     // The shared task invocation model emitted as TaskModel.cs. Compiled into the
