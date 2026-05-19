@@ -1,0 +1,31 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+
+# Generated bsharp output/cache
+.bsharp/
+
+# User/local IDE files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and dumps
+*.log
+*.binlog
+*.dmp
+*.dump
+
+# NuGet/local package outputs
+*.nupkg
+*.snupkg
+packages/

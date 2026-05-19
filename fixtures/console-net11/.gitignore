@@ -1,0 +1,4 @@
+.bsharp/
+bin/
+obj/
+*.user
