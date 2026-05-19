@@ -2538,6 +2538,13 @@ static class CondHelpers {
         if (Version.TryParse(a, out var va) && Version.TryParse(b, out var vb)) return va.CompareTo(vb);
         return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
     }
+
+    public static bool IsAny(string value, params string[] candidates) {
+        foreach (var candidate in candidates)
+            if (string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
 }
 
 static class TargetFrameworkHelpers {
@@ -4515,12 +4522,12 @@ static class CondCompiler {
         public bool HasMore => _i < _src.Length;
 
         public string ParseOr() {
-            var left = ParseAnd();
+            var terms = new List<string> { ParseAnd() };
             while (true) {
                 SkipWs();
-                if (MatchKw("OR") || MatchKw("or") || MatchOp("||")) { left = $"({left} || {ParseAnd()})"; } else break;
+                if (MatchKw("OR") || MatchKw("or") || MatchOp("||")) { terms.Add(ParseAnd()); } else break;
             }
-            return left;
+            return SimplifyOrTerms(terms);
         }
         string ParseAnd() {
             var left = ParseNot();
@@ -4558,6 +4565,14 @@ static class CondCompiler {
                                     : null;
                     if (itemVar != null) {
                         return op == "==" ? $"({itemVar}.Count == 0)" : $"({itemVar}.Count != 0)";
+                    }
+                    if (TryExtractBoolString(left, out var leftBool) && TryExtractBoolLiteral(right, out var rightBool)) {
+                        var boolComparison = rightBool ? leftBool : $"!({leftBool})";
+                        return op == "==" ? boolComparison : $"!({boolComparison})";
+                    }
+                    if (TryExtractBoolString(right, out var rightBoolExpr) && TryExtractBoolLiteral(left, out var leftBoolLiteral)) {
+                        var boolComparison = leftBoolLiteral ? rightBoolExpr : $"!({rightBoolExpr})";
+                        return op == "==" ? boolComparison : $"!({boolComparison})";
                     }
                     // Special case: `'%(X.Meta)' == 'literal'` becomes `batchItem.HasMetadata("meta", "literal")`.
                     // Avoids the lengthy string.Equals(GetMetadata(...)) construction. The receiver
@@ -4695,6 +4710,173 @@ static class CondCompiler {
             op = ""; return false;
         }
         static bool IsOpStart(char c) => c is '!' or '=' or '<' or '>' or '&' or '|';
+
+        static string SimplifyOrTerms(List<string> terms) {
+            if (terms.Count == 1) return terms[0];
+
+            var result = new List<string>();
+            var byExpression = new Dictionary<string, List<(int Index, string Literal)>>(StringComparer.Ordinal);
+            for (var i = 0; i < terms.Count; i++) {
+                var term = terms[i];
+                if (TryExtractStringEquals(term, out var boolStringExpr, out var boolLiteral)
+                    && TryExtractBoolString(boolStringExpr, out var boolExpr)
+                    && TryExtractBoolLiteral(boolLiteral, out var boolValue))
+                {
+                    term = boolValue ? boolExpr : $"!({boolExpr})";
+                }
+                result.Add(term);
+                if (TryExtractStringEquals(term, out var expr, out var literal)) {
+                    if (!byExpression.TryGetValue(expr, out var matches)) {
+                        matches = new List<(int Index, string Literal)>();
+                        byExpression.Add(expr, matches);
+                    }
+                    matches.Add((i, literal));
+                }
+            }
+
+            foreach (var (expr, matches) in byExpression) {
+                if (matches.Count < 2) continue;
+                var literals = string.Join(", ", matches.Select(match => match.Literal));
+                result[matches[0].Index] = $"CondHelpers.IsAny({expr}, {literals})";
+                for (var i = 1; i < matches.Count; i++)
+                    result[matches[i].Index] = "";
+            }
+
+            var folded = result.Where(term => term.Length != 0).ToArray();
+            return folded.Length == 1 ? folded[0] : $"({string.Join(" || ", folded)})";
+        }
+
+        static bool TryExtractStringEquals(string term, out string expr, out string literal) {
+            expr = ""; literal = "";
+            term = StripOuterParens(term.Trim());
+            const string prefix = "string.Equals(";
+            const string suffix = ", StringComparison.OrdinalIgnoreCase)";
+            if (!term.StartsWith(prefix, StringComparison.Ordinal) || !term.EndsWith(suffix, StringComparison.Ordinal))
+                return false;
+
+            var args = term.Substring(prefix.Length, term.Length - prefix.Length - suffix.Length);
+            var comma = FindTopLevelComma(args);
+            if (comma < 0) return false;
+
+            var left = args.Substring(0, comma).Trim();
+            var right = args.Substring(comma + 1).Trim();
+            if (IsStringLiteral(left) && !IsStringLiteral(right)) {
+                expr = right;
+                literal = left;
+                return true;
+            }
+            if (IsStringLiteral(right) && !IsStringLiteral(left)) {
+                expr = left;
+                literal = right;
+                return true;
+            }
+            return false;
+        }
+
+        static string StripOuterParens(string value) {
+            while (value.Length >= 2 && value[0] == '(' && value[^1] == ')' && EnclosesWholeExpression(value))
+                value = value.Substring(1, value.Length - 2).Trim();
+            return value;
+        }
+
+        static bool EnclosesWholeExpression(string value) {
+            var depth = 0;
+            var inString = false;
+            for (var i = 0; i < value.Length; i++) {
+                var c = value[i];
+                if (inString) {
+                    if (c == '\\') i++;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '(') depth++;
+                else if (c == ')') {
+                    depth--;
+                    if (depth == 0 && i != value.Length - 1)
+                        return false;
+                }
+            }
+            return depth == 0;
+        }
+
+        static int FindTopLevelComma(string value) {
+            var depth = 0;
+            var inString = false;
+            for (var i = 0; i < value.Length; i++) {
+                var c = value[i];
+                if (inString) {
+                    if (c == '\\') i++;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '(') depth++;
+                else if (c == ')') depth--;
+                else if (c == ',' && depth == 0) return i;
+            }
+            return -1;
+        }
+
+        static bool IsStringLiteral(string value) =>
+            value.Length >= 2 && value[0] == '"' && value[^1] == '"';
+
+        static bool TryExtractBoolLiteral(string value, out bool result) {
+            value = value.Trim();
+            if (string.Equals(value, "\"true\"", StringComparison.Ordinal)) {
+                result = true;
+                return true;
+            }
+            if (string.Equals(value, "\"false\"", StringComparison.Ordinal)) {
+                result = false;
+                return true;
+            }
+            result = false;
+            return false;
+        }
+
+        static bool TryExtractBoolString(string value, out string boolExpr) {
+            boolExpr = "";
+            value = StripOuterParens(value.Trim());
+            var question = FindTopLevelChar(value, '?');
+            if (question < 0) return false;
+            var colon = FindTopLevelChar(value.Substring(question + 1), ':');
+            if (colon < 0) return false;
+            colon += question + 1;
+
+            var condition = value.Substring(0, question).Trim();
+            var trueArm = value.Substring(question + 1, colon - question - 1).Trim();
+            var falseArm = value.Substring(colon + 1).Trim();
+            if (TryExtractBoolLiteral(trueArm, out var trueValue) && TryExtractBoolLiteral(falseArm, out var falseValue)) {
+                if (trueValue && !falseValue) {
+                    boolExpr = condition;
+                    return true;
+                }
+                if (!trueValue && falseValue) {
+                    boolExpr = $"!({condition})";
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static int FindTopLevelChar(string value, char needle) {
+            var depth = 0;
+            var inString = false;
+            for (var i = 0; i < value.Length; i++) {
+                var c = value[i];
+                if (inString) {
+                    if (c == '\\') i++;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '(') depth++;
+                else if (c == ')') depth--;
+                else if (c == needle && depth == 0) return i;
+            }
+            return -1;
+        }
 
         // Recognize the canonical compiled shape of an @(X) item-list reference,
         // i.e. ExprCompiler's output for a bare @(X). When we see this on one side
