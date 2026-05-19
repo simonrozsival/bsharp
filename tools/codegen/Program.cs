@@ -3736,16 +3736,47 @@ static partial class Tasks {
                 }
             }
 
-            // Snapshot the batch list before iterating so the body can safely mutate the
-            // underlying list. Defensive — covers patterns we haven't special-cased above.
-            if (batch != null) {
-                sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
-                iind += "    ";
-            }
             var openCond = !string.IsNullOrEmpty(item.Condition) ? $"if ({CompileCond(item.Condition, batch)}) " : "";
             var target = ItemAccess(item.ItemType);
+            var openedBatch = false;
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
+                var projection = TryParseSimpleItemProjection(item.Include);
+                if (batch != null
+                    && projection != null
+                    && string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase))
+                {
+                    var source = ItemAccess(projection.Value.ItemType);
+                    var sourceEnumerable = string.Equals(TryCanonicalItemKey(item.ItemType), TryCanonicalItemKey(projection.Value.ItemType), StringComparison.OrdinalIgnoreCase)
+                        ? $"{source}.ToArray()"
+                        : source;
+                    var sourceCond = !string.IsNullOrEmpty(item.Condition)
+                        ? $"if ({CompileCond(item.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal)}) "
+                        : "";
+                    sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
+                    sb.AppendLine($"{iind}    {sourceCond}{{");
+                    sb.AppendLine($"{iind}        var newItem = new Item({projection.Value.Selector});");
+                    foreach (var m in item.Metadata) {
+                        var value = CompileExpr(m.Value, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {value})";
+                        if (!string.IsNullOrEmpty(m.Condition))
+                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal)}) {assign};");
+                        else
+                            sb.AppendLine($"{iind}        {assign};");
+                    }
+                    sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}    }}");
+                    sb.AppendLine($"{iind}}}");
+                    continue;
+                }
+
+                // Snapshot the batch list before iterating so the body can safely mutate the
+                // underlying list. Defensive — covers patterns we haven't special-cased above.
+                if (batch != null) {
+                    sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                    iind += "    ";
+                    openedBatch = true;
+                }
                 sb.AppendLine($"{iind}{openCond}{{");
                 if (direct != null) {
                     // If the Include source is the SAME item type as the surrounding batch,
@@ -3808,6 +3839,13 @@ static partial class Tasks {
                 }
                 sb.AppendLine($"{iind}}}");
             } else if (!string.IsNullOrEmpty(item.Remove)) {
+                // Snapshot the batch list before iterating so the body can safely mutate the
+                // underlying list. Defensive — covers patterns we haven't special-cased above.
+                if (batch != null) {
+                    sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                    iind += "    ";
+                    openedBatch = true;
+                }
                 var direct = TryParseDirectItemRef(item.Remove);
                 sb.AppendLine($"{iind}{openCond}{{");
                 if (direct != null) {
@@ -3821,7 +3859,7 @@ static partial class Tasks {
                 }
                 sb.AppendLine($"{iind}}}");
             }
-            if (batch != null) sb.AppendLine($"{ind}}}");
+            if (openedBatch) sb.AppendLine($"{ind}}}");
         }
         sb.AppendLine($"{outer}}}");
     }
@@ -4376,6 +4414,24 @@ static partial class Tasks {
         if (inner.Length == 0) return null;
         foreach (var c in inner) if (!char.IsLetterOrDigit(c) && c != '_') return null;
         return inner;
+    }
+
+    static (string ItemType, string Selector)? TryParseSimpleItemProjection(string expr) {
+        var trimmed = expr.Trim();
+        if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) return null;
+        var itemType = inner.Substring(0, arrow).Trim();
+        if (itemType.Length == 0) return null;
+        foreach (var c in itemType) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+
+        var projection = inner.Substring(arrow + 2).Trim();
+        if (!projection.StartsWith("'") || !projection.EndsWith("'")) return null;
+        var format = projection.Substring(1, projection.Length - 2);
+        var compiled = ExprCompiler.TryCompile(format, itemType.ToLowerInvariant());
+        if (compiled == null) return null;
+        return (itemType, compiled.Replace("batchItem.", "sourceItem.", StringComparison.Ordinal));
     }
 
     // Returns true if the expression is a pure literal (no MSBuild $/@/%-refs and no `;`),
