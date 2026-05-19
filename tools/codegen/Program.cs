@@ -1067,6 +1067,7 @@ sealed class BsharpEngineServices : Microsoft.Build.Framework.EngineServices {
         Add("MSBuildProjectFullPath"); Add("MSBuildProjectFile"); Add("MSBuildProjectName");
         Add("MSBuildProjectExtension"); Add("MSBuildProjectDirectory"); Add("ProjectDir");
         Add("MSBuildThisFile"); Add("MSBuildThisFileFullPath"); Add("MSBuildThisFileDirectory");
+        Add("TargetFramework"); Add("TargetFrameworks"); Add("TargetPath"); Add("RuntimeFrameworkVersion");
         foreach (var p in project.AllEvaluatedProperties) Add(p.Name);
         foreach (var name in sequence) {
             if (!instance.Targets.TryGetValue(name, out var t)) continue;
