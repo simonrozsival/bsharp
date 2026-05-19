@@ -68,6 +68,7 @@ static class Codegen {
         var taskNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var callTargets = new List<object>();
         var msbuildTasks = new List<object>();
+        var cscTasks = new List<object>();
         var taskBatchingSites = new List<object>();
         var targetBatchingSites = new List<object>();
         var propertyFunctionSites = new List<object>();
@@ -110,6 +111,19 @@ static class Codegen {
                                 projects = task.Parameters.TryGetValue("Projects", out var projects) ? projects : "",
                                 targets = task.Parameters.TryGetValue("Targets", out var targets) ? targets : "",
                                 properties = task.Parameters.TryGetValue("Properties", out var properties) ? properties : ""
+                            });
+                        }
+                        if (task.Name == "Csc") {
+                            cscTasks.Add(new {
+                                target = target.Name,
+                                sources = task.Parameters.TryGetValue("Sources", out var sources) ? sources : "",
+                                references = task.Parameters.TryGetValue("References", out var references) ? references : "",
+                                analyzers = task.Parameters.TryGetValue("Analyzers", out var analyzers) ? analyzers : "",
+                                additionalFiles = task.Parameters.TryGetValue("AdditionalFiles", out var additionalFiles) ? additionalFiles : "",
+                                analyzerConfigFiles = task.Parameters.TryGetValue("AnalyzerConfigFiles", out var analyzerConfigFiles) ? analyzerConfigFiles : "",
+                                generatedFilesOutputPath = task.Parameters.TryGetValue("GeneratedFilesOutputPath", out var generatedFilesOutputPath) ? generatedFilesOutputPath : "",
+                                skipAnalyzers = task.Parameters.TryGetValue("SkipAnalyzers", out var skipAnalyzers) ? skipAnalyzers : "",
+                                useSharedCompilation = task.Parameters.TryGetValue("UseSharedCompilation", out var useSharedCompilation) ? useSharedCompilation : ""
                             });
                         }
                         AddPropertyFunctionSite(propertyFunctionSites, target.Name, task.Name + ".Condition", task.Condition);
@@ -200,6 +214,7 @@ static class Codegen {
                 taskMetadataLoadErrors = taskMetadata.LoadErrors.Count,
                 callTargets = callTargets.Count,
                 msbuildTasks = msbuildTasks.Count,
+                cscTasks = cscTasks.Count,
                 dynamicImports = importingElements.Length,
                 dynamicTargetDiagnostics = targetDiagnostics.Count,
                 targetBatchingSites = targetBatchingSites.Count,
@@ -217,6 +232,7 @@ static class Codegen {
                 dynamicTargets = targetDiagnostics.Take(200).ToArray(),
                 callTargets = callTargets.Take(200).ToArray(),
                 msbuildTasks = msbuildTasks.Take(200).ToArray(),
+                cscTasks = cscTasks.Take(200).ToArray(),
                 targetBatchingSites = targetBatchingSites.Take(200).ToArray(),
                 taskBatchingSites = taskBatchingSites.Take(200).ToArray(),
                 propertyFunctionSites = propertyFunctionSites.Take(200).ToArray(),
@@ -2066,6 +2082,8 @@ static bool FastNoOpBuild(string csprojPath) {
 }
 
 static bool FastNoOpBuildBeforePopulate(string csprojPath) {
+    if (GeneratedProjectInfo.HasCompilerExtensionInputs)
+        return false;
     var projectDir = string.Equals(csprojPath, GeneratedProjectInfo.ProjectPath, StringComparison.OrdinalIgnoreCase)
         ? GeneratedProjectInfo.ProjectDirectory
         : Path.GetDirectoryName(csprojPath)!;
@@ -2096,9 +2114,29 @@ static IEnumerable<string> FastNoOpInputs(string projectDir, string csprojPath) 
         if (!string.IsNullOrEmpty(path))
             yield return path;
     }
+    foreach (var input in CompilerExtensionInputs(projectDir))
+        yield return input;
 
     foreach (var input in FastNoOpShapeInputs(projectDir))
         yield return input;
+}
+
+static IEnumerable<string> CompilerExtensionInputs(string projectDir) {
+    foreach (var item in I.Get("analyzer")) {
+        var path = ResolveProjectPath(projectDir, item.Identity);
+        if (!string.IsNullOrEmpty(path))
+            yield return path;
+    }
+    foreach (var item in I.Get("additionalfiles")) {
+        var path = ResolveProjectPath(projectDir, item.Identity);
+        if (!string.IsNullOrEmpty(path))
+            yield return path;
+    }
+    foreach (var item in I.Get("editorconfigfiles")) {
+        var path = ResolveProjectPath(projectDir, item.Identity);
+        if (!string.IsNullOrEmpty(path))
+            yield return path;
+    }
 }
 
 static IEnumerable<string> FastNoOpShapeInputs(string projectDir) {
@@ -2175,7 +2213,11 @@ static class FastPathFileHelpers {
 }
 """);
         sb.AppendLine();
-        sb.AppendLine($"static class GeneratedProjectInfo {{ public const string ProjectPath = {CSharpLiteral(project.FullPath)}; public const string ProjectDirectory = {CSharpLiteral(Path.GetDirectoryName(project.FullPath) ?? "")}; }}");
+        var hasCompilerExtensionInputs =
+            project.GetItems("Analyzer").Any() ||
+            project.GetItems("AdditionalFiles").Any() ||
+            project.GetItems("EditorConfigFiles").Any();
+        sb.AppendLine($"static class GeneratedProjectInfo {{ public const string ProjectPath = {CSharpLiteral(project.FullPath)}; public const string ProjectDirectory = {CSharpLiteral(Path.GetDirectoryName(project.FullPath) ?? "")}; public const bool HasCompilerExtensionInputs = {(hasCompilerExtensionInputs ? "true" : "false")}; }}");
         sb.AppendLine();
 
         EmitItemAndRuntimeHelpers(sb);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAtUtc": "2026-05-19T09:36:26.028936Z",
+  "generatedAtUtc": "2026-05-19T09:40:21.113314Z",
   "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
   "globalProperties": {},
   "shape": {
@@ -26,6 +26,7 @@
     "taskMetadataLoadErrors": 0,
     "callTargets": 6,
     "msbuildTasks": 34,
+    "cscTasks": 0,
     "dynamicImports": 41,
     "dynamicTargetDiagnostics": 12,
     "targetBatchingSites": 4,
@@ -543,6 +544,7 @@
         "properties": ""
       }
     ],
+    "cscTasks": [],
     "targetBatchingSites": [
       {
         "target": "_InitializeAzureReposGitSourceLinkUrl",

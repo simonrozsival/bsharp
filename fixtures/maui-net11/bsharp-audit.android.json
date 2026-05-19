@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAtUtc": "2026-05-19T09:36:26.872166Z",
+  "generatedAtUtc": "2026-05-19T09:40:21.814446Z",
   "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
   "globalProperties": {
     "TargetFramework": "net11.0-android"
@@ -19,7 +19,7 @@
   },
   "counts": {
     "targets": 756,
-    "items": 579,
+    "items": 580,
     "properties": 1040,
     "usedTaskNames": 308,
     "usingTasks": 273,
@@ -28,6 +28,7 @@
     "taskMetadataLoadErrors": 1,
     "callTargets": 15,
     "msbuildTasks": 51,
+    "cscTasks": 3,
     "dynamicImports": 91,
     "dynamicTargetDiagnostics": 126,
     "targetBatchingSites": 22,
@@ -1512,6 +1513,41 @@
         "properties": ""
       }
     ],
+    "cscTasks": [
+      {
+        "target": "CoreCompile",
+        "sources": "@(Compile)",
+        "references": "@(ReferencePathWithRefAssemblies)",
+        "analyzers": "@(Analyzer)",
+        "additionalFiles": "@(AdditionalFiles)",
+        "analyzerConfigFiles": "@(EditorConfigFiles)",
+        "generatedFilesOutputPath": "$(CompilerGeneratedFilesOutputPath)",
+        "skipAnalyzers": "$(_SkipAnalyzers)",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "sources": "$(_AssemblyInfoFile)",
+        "references": "@(_SatelliteAssemblyReferences)",
+        "analyzers": "",
+        "additionalFiles": "",
+        "analyzerConfigFiles": "",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "XamlPreCompile",
+        "sources": "@(Compile)",
+        "references": "@(ReferencePath)",
+        "analyzers": "@(Analyzer)",
+        "additionalFiles": "@(AdditionalFiles)",
+        "analyzerConfigFiles": "@(EditorConfigFiles)",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "true",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      }
+    ],
     "targetBatchingSites": [
       {
         "target": "CoreGenerateSatelliteAssemblies",
@@ -1759,8 +1795,14 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "StronglyTypedManifestPrefix",
-        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
+        "parameter": "PublicClass",
+        "value": "%(EmbeddedResource.PublicClass)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedLanguage",
+        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
       },
       {
         "target": "CoreResGen",
@@ -1777,8 +1819,8 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "PublicClass",
-        "value": "%(EmbeddedResource.PublicClass)"
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
       },
       {
         "target": "CoreResGen",
@@ -1789,20 +1831,20 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "OutputResources",
-        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
+        "parameter": "StronglyTypedManifestPrefix",
+        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "PublicClass",
+        "value": "%(EmbeddedResource.PublicClass)"
       },
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
         "parameter": "StronglyTypedLanguage",
         "value": "%(EmbeddedResource.StronglyTypedLanguage)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedManifestPrefix",
-        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
       },
       {
         "target": "CoreResGen",
@@ -1819,8 +1861,8 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "PublicClass",
-        "value": "%(EmbeddedResource.PublicClass)"
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
       },
       {
         "target": "CoreResGen",
@@ -1831,14 +1873,8 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "OutputResources",
-        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedLanguage",
-        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
+        "parameter": "StronglyTypedManifestPrefix",
+        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
       },
       {
         "target": "CoreResGen",
@@ -2205,14 +2241,14 @@
       {
         "target": "ResolveProjectReferences",
         "task": "MSBuild",
-        "parameter": "Targets",
-        "value": "%(_MSBuildProjectReferenceExistent.Targets)"
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "ResolveProjectReferences",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+        "parameter": "Targets",
+        "value": "%(_MSBuildProjectReferenceExistent.Targets)"
       },
       {
         "target": "ResolveProjectReferences",
@@ -2295,14 +2331,14 @@
       {
         "target": "UnmanagedRegistration",
         "task": "RegisterAssembly",
-        "parameter": "TypeLibFiles",
-        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetName).tlb\u0027)"
+        "parameter": "Assemblies",
+        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetFileName)\u0027)"
       },
       {
         "target": "UnmanagedRegistration",
         "task": "RegisterAssembly",
-        "parameter": "Assemblies",
-        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetFileName)\u0027)"
+        "parameter": "TypeLibFiles",
+        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetName).tlb\u0027)"
       },
       {
         "target": "UnmanagedRegistration",
@@ -2358,14 +2394,14 @@
       {
         "target": "_BuildAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "ToolPath",
-        "value": "%(AndroidGradleProject.RootDir)%(AndroidGradleProject.Directory)"
+        "parameter": "OutputPath",
+        "value": "%(AndroidGradleProject.OutputPath)"
       },
       {
         "target": "_BuildAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "OutputPath",
-        "value": "%(AndroidGradleProject.OutputPath)"
+        "parameter": "ModuleName",
+        "value": "%(AndroidGradleProject.ModuleName)"
       },
       {
         "target": "_BuildAndroidGradleProjects",
@@ -2376,8 +2412,8 @@
       {
         "target": "_BuildAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "ModuleName",
-        "value": "%(AndroidGradleProject.ModuleName)"
+        "parameter": "ToolPath",
+        "value": "%(AndroidGradleProject.RootDir)%(AndroidGradleProject.Directory)"
       },
       {
         "target": "_BuildAndroidGradleProjects",
@@ -2409,8 +2445,8 @@
       {
         "target": "_BuildAssetPacks",
         "task": "Aapt2LinkAssetPack",
-        "parameter": "OutputArchive",
-        "value": "%(_AssetPacks.AssetPackOutput)"
+        "parameter": "Manifest",
+        "value": "%(_AssetPacks.ManifestFile)"
       },
       {
         "target": "_BuildAssetPacks",
@@ -2421,14 +2457,14 @@
       {
         "target": "_BuildAssetPacks",
         "task": "Aapt2LinkAssetPack",
-        "parameter": "Manifest",
-        "value": "%(_AssetPacks.ManifestFile)"
+        "parameter": "AssetDirectories",
+        "value": "%(_AssetPacks.AssetPackDirectory)"
       },
       {
         "target": "_BuildAssetPacks",
         "task": "Aapt2LinkAssetPack",
-        "parameter": "AssetDirectories",
-        "value": "%(_AssetPacks.AssetPackDirectory)"
+        "parameter": "OutputArchive",
+        "value": "%(_AssetPacks.AssetPackOutput)"
       },
       {
         "target": "_BuildAssetPacks",
@@ -2507,12 +2543,6 @@
       {
         "target": "_CleanAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "ToolPath",
-        "value": "%(AndroidGradleProject.RootDir)%(AndroidGradleProject.Directory)"
-      },
-      {
-        "target": "_CleanAndroidGradleProjects",
-        "task": "Gradle",
         "parameter": "OutputPath",
         "value": "%(AndroidGradleProject.OutputPath)"
       },
@@ -2523,17 +2553,17 @@
         "value": "%(AndroidGradleProject.ModuleName)"
       },
       {
+        "target": "_CleanAndroidGradleProjects",
+        "task": "Gradle",
+        "parameter": "ToolPath",
+        "value": "%(AndroidGradleProject.RootDir)%(AndroidGradleProject.Directory)"
+      },
+      {
         "target": "_CollectLibraryResourceDirectories",
         "task": "ItemGroup",
         "parameter": "FileWrites",
         "include": "@(_LibraryResourceDirectories-\u003E\u0027%(FilesCache)\u0027)",
         "remove": ""
-      },
-      {
-        "target": "_CompileBindingJava",
-        "task": "JavaSourceUtils",
-        "parameter": "JavadocUrlPrefix",
-        "value": "%(_JavaBindingSource.UrlPrefix)"
       },
       {
         "target": "_CompileBindingJava",
@@ -2546,6 +2576,12 @@
         "task": "JavaSourceUtils",
         "parameter": "JavadocUrlStyle",
         "value": "%(_JavaBindingSource.UrlStyle)"
+      },
+      {
+        "target": "_CompileBindingJava",
+        "task": "JavaSourceUtils",
+        "parameter": "JavadocUrlPrefix",
+        "value": "%(_JavaBindingSource.UrlPrefix)"
       },
       {
         "target": "_CompileBindingJava",
@@ -2689,14 +2725,14 @@
       {
         "target": "_CreateAssetPackManifests",
         "task": "CreateDynamicFeatureManifest",
-        "parameter": "OutputFile",
-        "value": "%(_AssetPacks.ManifestFile)"
+        "parameter": "FeatureSplitName",
+        "value": "%(_AssetPacks.AssetPack)"
       },
       {
         "target": "_CreateAssetPackManifests",
         "task": "CreateDynamicFeatureManifest",
-        "parameter": "FeatureSplitName",
-        "value": "%(_AssetPacks.AssetPack)"
+        "parameter": "OutputFile",
+        "value": "%(_AssetPacks.ManifestFile)"
       },
       {
         "target": "_CreateAssetPackManifests",
@@ -2796,14 +2832,8 @@
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
         "task": "JavaSourceUtils",
-        "parameter": "JavadocUrlPrefix",
-        "value": "%(_JavaSourceJavadocXml.UrlPrefix)"
-      },
-      {
-        "target": "_ExtractJavadocsFromJavaSourceJars",
-        "task": "JavaSourceUtils",
-        "parameter": "InputFiles",
-        "value": "%(_JavaSourceJavadocXml.OriginalItemSpec)"
+        "parameter": "OutputJavadocXml",
+        "value": "%(_JavaSourceJavadocXml.Identity)"
       },
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
@@ -2820,8 +2850,14 @@
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
         "task": "JavaSourceUtils",
-        "parameter": "OutputJavadocXml",
-        "value": "%(_JavaSourceJavadocXml.Identity)"
+        "parameter": "JavadocUrlPrefix",
+        "value": "%(_JavaSourceJavadocXml.UrlPrefix)"
+      },
+      {
+        "target": "_ExtractJavadocsFromJavaSourceJars",
+        "task": "JavaSourceUtils",
+        "parameter": "InputFiles",
+        "value": "%(_JavaSourceJavadocXml.OriginalItemSpec)"
       },
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
@@ -2853,14 +2889,14 @@
       {
         "target": "_GenerateClsidMap",
         "task": "GenerateClsidMap",
-        "parameter": "CLsidMapDestinationPath",
-        "value": "@(ClsidMap-\u003E\u0027%(FullPath)\u0027)"
+        "parameter": "IntermediateAssembly",
+        "value": "@(IntermediateAssembly-\u003E\u0027%(FullPath)\u0027)"
       },
       {
         "target": "_GenerateClsidMap",
         "task": "GenerateClsidMap",
-        "parameter": "IntermediateAssembly",
-        "value": "@(IntermediateAssembly-\u003E\u0027%(FullPath)\u0027)"
+        "parameter": "CLsidMapDestinationPath",
+        "value": "@(ClsidMap-\u003E\u0027%(FullPath)\u0027)"
       },
       {
         "target": "_GenerateCompileInputs",
