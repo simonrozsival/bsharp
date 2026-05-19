@@ -1,153 +1,216 @@
 # bsharp
 
-> Compile MSBuild target XML into specialized C# and publish a cached ReadyToRun build host.
+> Research prototype: compile a closed-world subset of MSBuild into a specialized
+> NativeAOT build host, with real SDK `UsingTask`s delegated to a persistent CoreCLR
+> task server.
 
-This is a research playground. See [`DESIGN.md`](./DESIGN.md) for the original architecture brief and the implementation notes section at the top of it.
+This is a playground, not a general MSBuild replacement. The current fixture is a
+simple `net11.0` console app under `fixtures/console-net11/`.
+
+## Requirements
+
+- macOS arm64
+- .NET SDK `11.0.100-preview.4.26230.115` or a compatible .NET 11 SDK
+- `dotnet publish` support for NativeAOT on `osx-arm64`
 
 ## Quick start
 
-Requirements: macOS arm64, .NET SDK 11.0.100-preview.4.26230.115 (or compatible .NET 11 SDK).
+Build the tools and run the default fixture:
 
 ```bash
-./regenerate.sh                                  # default: fixtures/console-net11/console-net11.csproj
-./regenerate.sh path/to/YourProject.csproj
+./regenerate.sh
 ```
 
-Once built once, the workflow is:
+Or use the tools directly:
 
 ```bash
-cd path/to/your-project/
-BSHARP_CODEGEN=.../tools/codegen/bin/Debug/net11.0/Codegen \
-  .../tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp build
+export BSHARP=/Users/simonrozsival/Projects/playground/bsharp/tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp
+export BSHARP_CODEGEN=/Users/simonrozsival/Projects/playground/bsharp/tools/codegen/bin/Debug/net11.0/Codegen
+
+cd fixtures/console-net11
+$BSHARP build --no-cache -v:quiet run
 ```
 
-Set `BSHARP_CODEGEN` to point to either the `Codegen` executable or `Codegen.dll`.
-DLL paths are run through `dotnet`; executable paths are invoked directly.
+After the first successful build, the generated project-local binary can be run
+directly:
 
-## Two-binary architecture
-
-```
-bsharp                    # the launcher (Native AOT, ~2.2 MB).
-                          # parses args, hashes project, checks .bsharp/ cache,
-                          # codegens+publishes on miss, execs .bsharp/build.
-
-codegen.dll               # the codegen tool (managed; uses MSBuild.Evaluation).
-                          # Invoked by the launcher only on cache miss.
-
-project_dir/.bsharp/      # per-project cache (gitignore-able)
-├── shape.hash            # SHA-256 of csproj + Directory.Build.* + global.json + -p flags + mode
-├── src/                  # generated C# (debuggable)
-│   ├── Program.cs        # ~9000 lines for HelloConsole
-│   └── BsharpGenerated.csproj
-└── build                 # symlink to the published binary
+```bash
+./.bsharp/build --no-restore build
+./.bsharp/build --no-restore run
 ```
 
-## Commands and flags
+`BSHARP_CODEGEN` may point to either the `Codegen` executable/apphost or
+`Codegen.dll`. DLL paths are invoked through `dotnet`; executable paths are invoked
+directly.
 
-| Command                          | Behavior                                                       |
-|----------------------------------|----------------------------------------------------------------|
-| `bsharp build`                   | Ensure binary is current; exec `.bsharp/build build`           |
-| `bsharp run`                     | Same, then `.bsharp/build run`                                 |
-| `bsharp build --no-cache`        | Force regen + republish                                        |
-| `bsharp build path/to/X.csproj`  | Explicit project                                               |
-| `bsharp build -p:Configuration=Release`  | Closed-world property override; folds into cache key |
-| `bsharp build -v normal`         | Verbosity: `quiet`/`minimal`/`normal`/`detailed`/`diagnostic`  |
-| Any other flag                   | Forwarded verbatim to the per-project binary                   |
+## Architecture
 
-Verbosity is gated at the generated binary level. `quiet` suppresses the summary line; `normal` and above print task starts as `[<elapsed-ms>] <TaskName>`.
+```text
+bsharp
+  NativeAOT launcher. Finds the project, computes a shape hash, regenerates on cache
+  miss, publishes the generated host and task server, then execs .bsharp/build.
+
+tools/codegen
+  Managed .NET tool. Uses MSBuild evaluation and MetadataLoadContext to generate the
+  closed-world build host source and task-server source.
+
+project/.bsharp/
+  shape.hash
+  src/
+    Program.cs
+    TaskModel.cs
+    BsharpGenerated.csproj
+    task-server/
+      Program.cs
+      BsharpTaskServer.csproj
+  build -> src/bin/Release/net11.0/osx-arm64/publish/BsharpGenerated
+```
+
+The published per-project runtime shape is:
+
+| Component | Publish shape | Purpose |
+|---|---|---|
+| Generated host | NativeAOT, self-contained, single file | Fast startup and generated target/property/item logic |
+| Task server | CoreCLR ReadyToRun, framework-dependent | Persistent execution of real SDK `UsingTask`s that need dynamic assembly loading |
+
+The old per-task sub-CLI experiment has been removed. The task server is intentionally
+**not** NativeAOT.
+
+## Current measurements
+
+Latest observed `fixtures/console-net11` warm no-op numbers:
+
+| Scenario | Time | What it measures |
+|---|---:|---|
+| Generated host cache-hit build | 0.4-0.8 ms | `.bsharp/build` internal build summary: fast no-op path, no SDK tasks |
+| `bsharp` launcher cache-hit wall time | ~115 ms | Shell `time $BSHARP`: launcher startup/hash check + `Process.Start(.bsharp/build)` |
+| Cumulative tasks on warm no-op | 0.00 ms | Fast path returns before restore/build target execution |
+
+The sub-millisecond number is the generated host's own work. The larger shell wall
+time is dominated by launching `bsharp` and then launching the project-local
+`.bsharp/build` process.
+
+## Commands
+
+| Command | Behavior |
+|---|---|
+| `bsharp build` | Ensure `.bsharp/build` is current, then run `build` |
+| `bsharp run` | Ensure `.bsharp/build` is current, then run `run` |
+| `bsharp build --no-cache` | Force regeneration and republish |
+| `bsharp build path/to/project.csproj` | Build an explicit project |
+| `bsharp build -p:Configuration=Release` | Add a closed-world global property override to the cache key |
+| `bsharp build -v quiet` | Set generated-host verbosity (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) |
+
+Unknown flags are forwarded to the generated per-project binary.
 
 ## Cache invalidation
 
-The launcher recomputes the shape hash on every invocation. Cache miss triggers when any of these change:
+The launcher recomputes a shape hash on every invocation. A cache miss occurs when
+any of these change:
 
-- the target `.csproj`
-- `Directory.Build.props` / `Directory.Build.targets` (any ancestor)
-- `Directory.Packages.props` (any ancestor)
-- `global.json` (any ancestor)
-- the set of `-p:X=Y` global properties passed on the command line
+- target `.csproj`
+- ancestor `Directory.Build.props`
+- ancestor `Directory.Build.targets`
+- ancestor `Directory.Packages.props`
+- ancestor `global.json`
+- `-p:X=Y` global properties passed to `bsharp`
 
-NOT currently tracked (known gaps):
+Known gaps:
 
-- `project.assets.json` (transitive package versions)
-- `ProjectReference` recursive (multi-project solutions)
+- `project.assets.json` / transitive package drift is not yet hashed.
+- `ProjectReference` recursion is not yet modeled.
+- NuGet packages added by the final project are assumed not to introduce new targets.
 
-## Publish mode
+## Generated target shape
 
-On cache miss, the launcher publishes the generated host as NativeAOT and publishes one
-persistent CoreCLR task server for real SDK tasks:
-
-| Component | Publish shape | Purpose |
-|-----------|---------------|---------|
-| Generated host | `PublishAot=true`, single-file, self-contained | Fast startup and generated target/property/item logic |
-| Task server | CoreCLR ReadyToRun, framework-dependent | Persistent execution of real SDK `UsingTask` tasks |
-
-The older per-task sub-CLI experiment has been removed; all non-native `UsingTask`
-execution goes through the persistent task server.
-
-## Generated code shape
-
-For each MSBuild target, codegen produces a static method:
+Each MSBuild target becomes an async method with execute-once state:
 
 ```csharp
-static bool _T_236_Build_ran;
-public static void T_236_Build() {
-    if (_T_236_Build_ran) return;
-    _T_236_Build_ran = true;
+static int T_123_CoreCompileState;
+
+public static async ValueTask T_123_CoreCompile() {
+    if (!TargetRuntime.TryEnter(ref T_123_CoreCompileState))
+        return;
     try {
-        if (!cond) return;
-        T_040_BeforeBuild();                     // $(BuildDependsOn) statically expanded
-        T_231_CoreBuild();
-        T_232_AfterBuild();
-        T_039__CheckForInvalidConfigurationAndPlatform();    // literal Before-companions
-        // ...
-        T_259__CheckContainersPackage();                      // literal After-companions
-        T_266__PackAsBuildAfterTarget();
+        await T_100_PrepareForBuild();
+        await T_101_ResolveReferences();
+
+        var targetStart = Log.TargetStarted("CoreCompile");
+        // target body...
+        Log.TargetFinished("CoreCompile", targetStart);
     } catch (Exception ex) {
-        Errors.Add(("Build", ex.Message));
+        AddError("CoreCompile", ex.Message);
+    } finally {
+        TargetRuntime.MarkDone(ref T_123_CoreCompileState);
     }
 }
 ```
 
-Key invariants:
+Current scheduling is deliberately conservative:
 
-- **Execute-once via `static bool _T_NNN_<name>_ran`** — no central scheduler.
-- **`DependsOn=$(Prop)` is statically expanded** at codegen time if `Prop` is never mutated by any target body (incl. task `<Output PropertyName=.../>`). For HelloConsole all 267 targets are fully static → the `Targets.Run(string)` switch dispatcher is never emitted, the entry is `Targets.Build() => T_236_Build();`.
-- **Before/AfterTargets** are reverse-indexed at codegen time into the parent target's prologue/epilogue.
-- **Per-target try/catch** around the whole method body — task errors and codegen-time-error stubs all attribute to the right target.
-- **Properties** baked as static field initializers (`public static string Configuration = "Debug";`).
-- **Items** baked as collection-literal initializers (`public static List<Item> KnownFrameworkReference = [new Item("X", new() { ["meta"] = "v" }), ...];`). Deduplicated by Identity+metadata so SDK overlapping conditional ItemGroups don't multiply entries.
+- `DependsOnTargets` and literal `BeforeTargets` prerequisites are expanded at codegen
+  time and emitted as direct `await T_X()` calls.
+- Dynamic `CallTarget` or mutated dependency properties fall back to the generated
+  `Targets.Run(string)` dispatcher.
+- Prerequisites are **not currently emitted as `Task.WhenAll` batches**. That was tried,
+  including a `CoreCompile`-only version, but clean builds exposed hidden mutable-state
+  ordering dependencies in SDK targets. Proper parallelism needs a coherent item/property
+  concurrency model first.
+- `AfterTargets` companions run after the target body/up-to-date check.
 
-## Performance
+## Generated state
 
-| Scenario                                 | Wall-clock | Internal     | Notes                                       |
-|------------------------------------------|------------|--------------|---------------------------------------------|
-| `dotnet build --no-restore` warm no-op   | ~900 ms    | —            | After `dotnet restore`                      |
-| `.bsharp/build` warm no-op               | ~200 ms    | ~170-230ms   | Generated R2R host, no launcher             |
-| `bsharp build` cache hit                 | ~320 ms    | ~170-230ms   | Native launcher + generated host            |
-| `bsharp build` first run (cache miss)    | ~30-35s    | —            | dominated by `dotnet publish` R2R           |
+- Properties are emitted as typed static fields on `P`.
+- Item types are emitted as typed `List<Item>` properties on `I`.
+- Empty item groups are lazy to avoid allocating hundreds of empty lists at startup.
+- Task helper methods read generated global state (`P.*`, `I.*`) directly rather than
+  receiving long `p0`, `p1`, ... argument lists.
+- Generated locals use descriptive names; the old `__local` naming has been removed.
 
-The warm no-op path now enters `CoreCompile` but the hand-rolled `Csc` task performs its own timestamp check and returns without launching Roslyn. That avoids the previous ~1.6s warm-build cost.
+## Task execution
 
-Future: drop the double-spawn via `exec()` on Unix to get under 50ms.
+Structural/simple tasks are hand-rolled in the generated host, including:
 
-## What works / doesn't
+`Message`, `MakeDir`, `WriteLinesToFile`, `Touch`, `Delete`, `Copy`, `Error`,
+`Warning`, `ConvertToAbsolutePath`, `RemoveDir`, `CreateProperty`, `CreateItem`,
+`FindUnderPath`, `ReadLinesFromFile`, `Exec`, and `Hash`.
 
-`bsharp build` produces `Hello, World!` end-to-end on the `fixtures/console-net11` fixture targeting `net11.0`. The generated build host runs the full emitted DAG and lazily loads real SDK task assemblies in-process through `AssemblyLoadContext`.
+Real SDK tasks are represented as `TaskInvocation` objects and sent to the persistent
+task server over a length-prefixed JSON stream. The task server:
 
-Currently 0 `// codegen failed:` markers on HelloConsole. The prototype still contains HelloConsole-specific shortcuts for restore/assets-file-dependent SDK tasks and is not a general MSBuild replacement.
+- loads SDK task assemblies on CoreCLR,
+- creates task instances with reflection,
+- sets `BuildEngine` and .NET 11 `TaskEnvironment`,
+- maps inputs/outputs through `TaskModel.cs`,
+- stays alive across many task invocations.
 
-Tasks implemented natively in `Tasks` class include `Message`, `MakeDir`, `WriteLinesToFile`, `Touch`, `Delete`, `Copy`, `Error`, `Warning`, `ConvertToAbsolutePath`, `RemoveDir`, `CreateProperty`, `CreateItem`, `FindUnderPath`, `ReadLinesFromFile`, `Exec`, `Csc`, `Hash`, and a few minimal SDK-specific shims. Other SDK tasks are invoked in-process from their SDK assemblies.
+This keeps the generated NativeAOT host small and avoids dynamic assembly loading in
+the NativeAOT process.
 
-Csc finds `csc.dll` via the codegen-time-baked `P.RoslynTargetsPath` (no `Assembly.Location`).
+## What works
+
+The current validated path:
+
+```bash
+cd fixtures/console-net11
+$BSHARP build --no-cache -v:quiet run
+./.bsharp/build --no-restore -v:quiet run
+```
+
+Both commands print `Hello, World!`.
+
+The prototype still contains fixture-oriented shortcuts around restore/assets-file
+dependent SDK tasks and is not a complete MSBuild implementation.
 
 ## Repo layout
 
-```
+```text
 DESIGN.md
 README.md
-regenerate.sh                    # dev convenience: build everything + invoke bsharp
-fixtures/console-net11/          # POC project
+regenerate.sh
+fixtures/
+  console-net11/
 tools/
-├── bsharp/                      # launcher (AOT)
-└── codegen/                     # MSBuild XML → C#
+  bsharp/
+  codegen/
 ```
