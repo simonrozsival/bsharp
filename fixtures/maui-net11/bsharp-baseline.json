@@ -1,0 +1,58 @@
+{
+  "fixture": {
+    "template": "maui",
+    "name": "MauiNet11",
+    "project": "MauiNet11.csproj",
+    "sdkVersion": "11.0.100-preview.4.26230.115",
+    "workloadVersion": "11.0.100-manifests.ac712c55"
+  },
+  "targetFrameworks": {
+    "outer": "net11.0-android;net11.0-ios;net11.0-maccatalyst",
+    "androidInner": "net11.0-android",
+    "iosSimulatorInner": "net11.0-ios",
+    "iosSimulatorRuntimeIdentifier": "iossimulator-arm64"
+  },
+  "baselineCommands": [
+    {
+      "name": "outerRestore",
+      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj",
+      "status": "blocked",
+      "exitCode": 1,
+      "diagnostic": "NETSDK1147: missing workload maccatalyst"
+    },
+    {
+      "name": "androidInnerRestore",
+      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj -p:TargetFrameworks=net11.0-android -p:TargetFramework=net11.0-android",
+      "status": "blocked",
+      "exitCode": 1,
+      "diagnostic": "NETSDK1147: missing workload maccatalyst"
+    },
+    {
+      "name": "iosSimulatorInnerRestore",
+      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj -p:TargetFrameworks=net11.0-ios -p:TargetFramework=net11.0-ios -p:RuntimeIdentifier=iossimulator-arm64",
+      "status": "blocked",
+      "exitCode": 1,
+      "diagnostic": "NETSDK1147: missing workload ios"
+    },
+    {
+      "name": "workloadRestore",
+      "command": "dotnet workload restore fixtures/maui-net11/MauiNet11.csproj",
+      "status": "blocked",
+      "exitCode": 1,
+      "diagnostic": "Inadequate permissions. Run the command with elevated privileges."
+    }
+  ],
+  "environmentBlockers": [
+    {
+      "id": "missing-maui-workloads",
+      "description": "No workloads are installed according to dotnet workload list. The fixture requires at least maccatalyst for the current outer evaluation path and ios for the iOS simulator path.",
+      "manualCommand": "sudo dotnet workload restore fixtures/maui-net11/MauiNet11.csproj"
+    }
+  ],
+  "nextCaptureAfterWorkloads": [
+    "dotnet restore fixtures/maui-net11/MauiNet11.csproj",
+    "dotnet build fixtures/maui-net11/MauiNet11.csproj -v:minimal",
+    "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-android -v:minimal",
+    "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-ios -p:RuntimeIdentifier=iossimulator-arm64 -v:minimal"
+  ]
+}
