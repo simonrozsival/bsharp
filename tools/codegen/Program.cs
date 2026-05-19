@@ -3748,28 +3748,32 @@ static partial class Tasks {
             var openedBatch = false;
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
-                var projection = TryParseSimpleItemProjection(item.Include);
-                if (batch != null
-                    && projection != null
-                    && string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase))
+                var projection = TryParseItemProjection(item.Include);
+                if (projection != null
+                    && (batch == null || string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase)))
                 {
-                    var source = ItemAccess(projection.Value.ItemType);
                     var sourceEnumerable = string.Equals(TryCanonicalItemKey(item.ItemType), TryCanonicalItemKey(projection.Value.ItemType), StringComparison.OrdinalIgnoreCase)
-                        ? $"{source}.ToArray()"
-                        : source;
+                        ? $"{projection.Value.ItemsExpr}.ToArray()"
+                        : projection.Value.ItemsExpr;
                     var sourceCond = !string.IsNullOrEmpty(item.Condition)
-                        ? $"if ({CompileCond(item.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal)}) "
+                        ? $"if ({(batch == null ? CompileCond(item.Condition) : CompileCond(item.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal))}) "
                         : "";
                     sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
                     sb.AppendLine($"{iind}        var newItem = new Item({projection.Value.Selector});");
                     foreach (var m in item.Metadata) {
-                        var value = CompileExpr(m.Value, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
+                        var value = batch == null
+                            ? CompileExpr(m.Value)
+                            : CompileExpr(m.Value, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
                         var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {value})";
-                        if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal)}) {assign};");
-                        else
+                        if (!string.IsNullOrEmpty(m.Condition)) {
+                            var metadataCondition = batch == null
+                                ? CompileCond(m.Condition)
+                                : CompileCond(m.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
+                            sb.AppendLine($"{iind}        if ({metadataCondition}) {assign};");
+                        } else {
                             sb.AppendLine($"{iind}        {assign};");
+                        }
                     }
                     sb.AppendLine($"{iind}        {target}.Add(newItem);");
                     sb.AppendLine($"{iind}    }}");
@@ -4423,7 +4427,7 @@ static partial class Tasks {
         return inner;
     }
 
-    static (string ItemType, string Selector)? TryParseSimpleItemProjection(string expr) {
+    static (string ItemType, string ItemsExpr, string Selector)? TryParseItemProjection(string expr) {
         var trimmed = expr.Trim();
         if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
         var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
@@ -4433,12 +4437,105 @@ static partial class Tasks {
         if (itemType.Length == 0) return null;
         foreach (var c in itemType) if (!char.IsLetterOrDigit(c) && c != '_') return null;
 
-        var projection = inner.Substring(arrow + 2).Trim();
-        if (!projection.StartsWith("'") || !projection.EndsWith("'")) return null;
-        var format = projection.Substring(1, projection.Length - 2);
-        var compiled = ExprCompiler.TryCompile(format, itemType.ToLowerInvariant());
-        if (compiled == null) return null;
-        return (itemType, compiled.Replace("batchItem.", "sourceItem.", StringComparison.Ordinal));
+        var itemsExpr = ItemAccess(itemType);
+        var selector = "transformItem.Identity";
+        var batchCtx = itemType.ToLowerInvariant();
+        var pos = arrow + 2;
+        while (pos < inner.Length) {
+            while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+            if (pos >= inner.Length) break;
+            if (inner[pos] == ',') {
+                pos++;
+                while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+                if (pos >= inner.Length || inner[pos] != '\'') return null;
+                var close = inner.IndexOf('\'', pos + 1);
+                if (close < 0) return null;
+                if (inner.Substring(pos + 1, close - pos - 1) != ";") return null;
+                pos = close + 1;
+                break;
+            }
+            if (inner[pos] == '\'') {
+                var close = inner.IndexOf('\'', pos + 1);
+                if (close < 0) return null;
+                var format = inner.Substring(pos + 1, close - pos - 1);
+                var compiled = ExprCompiler.TryCompile(format, batchCtx);
+                if (compiled == null) return null;
+                selector = compiled.Replace("batchItem.", "transformItem.", StringComparison.Ordinal);
+                pos = close + 1;
+            } else {
+                var nameStart = pos;
+                while (pos < inner.Length && (char.IsLetterOrDigit(inner[pos]) || inner[pos] == '_')) pos++;
+                if (pos == nameStart || pos >= inner.Length || inner[pos] != '(') return null;
+                var fn = inner.Substring(nameStart, pos - nameStart);
+                pos++;
+                var depth = 1;
+                var argsStart = pos;
+                while (pos < inner.Length && depth > 0) {
+                    if (inner[pos] == '(') depth++;
+                    else if (inner[pos] == ')') depth--;
+                    if (depth > 0) pos++;
+                }
+                if (pos >= inner.Length) return null;
+                var args = ParseProjectionArgs(inner.Substring(argsStart, pos - argsStart));
+                if (args == null) return null;
+                pos++;
+                switch (fn) {
+                    case "WithMetadataValue" when args.Count == 2:
+                        itemsExpr = $"{itemsExpr}.Where(transformItem => transformItem.HasMetadata({args[0]}, {args[1]}))";
+                        break;
+                    case "WithoutMetadataValue" when args.Count == 2:
+                        itemsExpr = $"{itemsExpr}.Where(transformItem => !transformItem.HasMetadata({args[0]}, {args[1]}))";
+                        break;
+                    case "ClearMetadata" when args.Count == 0:
+                        break;
+                    case "Distinct" when args.Count == 0:
+                        itemsExpr = $"{itemsExpr}.GroupBy(transformItem => {selector}, StringComparer.OrdinalIgnoreCase).Select(group => group.First())";
+                        break;
+                    case "Reverse" when args.Count == 0:
+                        itemsExpr = $"{itemsExpr}.Reverse()";
+                        break;
+                    default:
+                        return null;
+                }
+            }
+            while (pos < inner.Length && char.IsWhiteSpace(inner[pos])) pos++;
+            if (pos + 1 < inner.Length && inner[pos] == '-' && inner[pos + 1] == '>') pos += 2;
+            else if (pos < inner.Length && inner[pos] != ',') break;
+        }
+        return (itemType, itemsExpr, selector.Replace("transformItem.", "sourceItem.", StringComparison.Ordinal));
+    }
+
+    static List<string>? ParseProjectionArgs(string block) {
+        var raw = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var depth = 0;
+        var inQuote = false;
+        var quote = '\0';
+        foreach (var c in block) {
+            if (inQuote) {
+                current.Append(c);
+                if (c == quote) inQuote = false;
+                continue;
+            }
+            if (c == '\'' || c == '`') { inQuote = true; quote = c; current.Append(c); continue; }
+            if (c == '(' || c == '[') { depth++; current.Append(c); continue; }
+            if (c == ')' || c == ']') { depth--; current.Append(c); continue; }
+            if (c == ',' && depth == 0) { raw.Add(current.ToString().Trim()); current.Clear(); continue; }
+            current.Append(c);
+        }
+        if (current.Length > 0) raw.Add(current.ToString().Trim());
+
+        var compiled = new List<string>(raw.Count);
+        foreach (var arg in raw) {
+            string? value;
+            if (arg.Length >= 2 && (arg[0] == '\'' && arg[^1] == '\'' || arg[0] == '`' && arg[^1] == '`'))
+                value = ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2));
+            else
+                value = ExprCompiler.TryCompile(arg);
+            if (value == null) return null;
+            compiled.Add(value);
+        }
+        return compiled;
     }
 
     // Returns true if the expression is a pure literal (no MSBuild $/@/%-refs and no `;`),
