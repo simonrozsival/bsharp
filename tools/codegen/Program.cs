@@ -1342,7 +1342,7 @@ static class UsingTaskRegistry {
                         ? "TaskBody (inline) is not supported in v1; declared but not bindable"
                         : $"TaskFactory='{ut.TaskFactory}' (factory binding) is not supported in v1";
                 } else if (!string.IsNullOrEmpty(ut.AssemblyFile)) {
-                    var expanded = TryExpand(instance, ut.AssemblyFile);
+                    var expanded = TryExpandUsingTaskAssemblyFile(instance, pre, ut.AssemblyFile);
                     if (File.Exists(expanded)) resolvedPath = Path.GetFullPath(expanded);
                     else if (TryResolveOnSearchPath(instance, expanded) is string fromPath) {
                         resolvedPath = fromPath;
@@ -1465,6 +1465,41 @@ static class UsingTaskRegistry {
     static string TryExpand(ProjectInstance instance, string s) {
         if (string.IsNullOrEmpty(s) || !s.Contains('$')) return s;
         try { return instance.ExpandString(s); } catch { return s; }
+    }
+
+    static string TryExpandUsingTaskAssemblyFile(ProjectInstance instance, ProjectRootElement source, string assemblyFile) {
+        var expanded = TryExpand(instance, assemblyFile);
+        var sourceFullPath = source.FullPath;
+        if (string.IsNullOrEmpty(sourceFullPath))
+            return expanded;
+        var sourceDirectory = Path.GetDirectoryName(sourceFullPath);
+        if (string.IsNullOrEmpty(sourceDirectory))
+            return expanded;
+
+        if (!assemblyFile.Contains("$(MSBuildThisFile", StringComparison.OrdinalIgnoreCase)) {
+            if (!Path.IsPathRooted(expanded) && (expanded.Contains('/') || expanded.Contains('\\') || expanded.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))) {
+                var sourceRelative = Path.GetFullPath(Path.Combine(sourceDirectory, expanded));
+                if (File.Exists(sourceRelative))
+                    return sourceRelative;
+            }
+            return expanded;
+        }
+
+        var sourceFile = Path.GetFileName(sourceFullPath);
+        var sourceFileName = Path.GetFileNameWithoutExtension(sourceFullPath);
+        var sourceExtension = Path.GetExtension(sourceFullPath);
+        var sourceDirectoryWithSlash = sourceDirectory + Path.DirectorySeparatorChar;
+
+        expanded = assemblyFile
+            .Replace("$(MSBuildThisFileFullPath)", sourceFullPath, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildThisFileDirectory)", sourceDirectoryWithSlash, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildThisFileName)", sourceFileName, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildThisFileExtension)", sourceExtension, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildThisFile)", sourceFile, StringComparison.OrdinalIgnoreCase);
+
+        if (!Path.IsPathRooted(expanded))
+            expanded = Path.GetFullPath(Path.Combine(sourceDirectory, expanded));
+        return expanded;
     }
 
     // SDK targets sometimes set `$(RestoreTaskAssemblyFile) = "NuGet.Build.Tasks.dll"` — a
