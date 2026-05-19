@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAtUtc": "2026-05-19T09:40:21.113314Z",
+  "generatedAtUtc": "2026-05-19T09:49:43.706372Z",
   "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
   "globalProperties": {},
   "shape": {
@@ -17,8 +17,8 @@
   },
   "counts": {
     "targets": 111,
-    "items": 281,
-    "properties": 321,
+    "items": 282,
+    "properties": 328,
     "usedTaskNames": 51,
     "usingTasks": 48,
     "usingTaskAssemblies": 13,
@@ -27,7 +27,7 @@
     "callTargets": 6,
     "msbuildTasks": 34,
     "cscTasks": 0,
-    "dynamicImports": 41,
+    "dynamicImports": 43,
     "dynamicTargetDiagnostics": 12,
     "targetBatchingSites": 4,
     "taskBatchingSites": 15,
@@ -51,6 +51,11 @@
       {
         "project": "$(CustomAfterDirectoryBuildProps)",
         "condition": "\u0027$(CustomAfterDirectoryBuildProps)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props",
+        "condition": "\u0027$(ImportProjectExtensionProps)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
         "dynamicProject": true
       },
       {
@@ -176,6 +181,11 @@
       {
         "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.CrossTargeting.targets/ImportAfter/*.targets",
         "condition": "\u0027$(ImportByWildcardAfterMicrosoftCommonCrossTargetingTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.CrossTargeting.targets\\ImportAfter\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.targets",
+        "condition": "\u0027$(ImportProjectExtensionTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
         "dynamicProject": true
       },
       {

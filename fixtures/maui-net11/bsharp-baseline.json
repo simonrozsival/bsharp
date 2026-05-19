@@ -4,7 +4,13 @@
     "name": "MauiNet11",
     "project": "MauiNet11.csproj",
     "sdkVersion": "11.0.100-preview.4.26230.115",
-    "workloadVersion": "11.0.100-manifests.ac712c55"
+    "workloadVersion": "11.0.100-preview.4.26261.2",
+    "installedWorkloads": [
+      {
+        "id": "maui",
+        "manifestVersion": "11.0.0-preview.4.26230.3/11.0.100-preview.4"
+      }
+    ]
   },
   "targetFrameworks": {
     "outer": "net11.0-android;net11.0-ios;net11.0-maccatalyst",
@@ -25,48 +31,52 @@
       "command": "tools/codegen/bin/Debug/net11.0/Codegen --audit --project fixtures/maui-net11/MauiNet11.csproj -p TargetFramework=net11.0-android",
       "status": "captured",
       "artifact": "fixtures/maui-net11/bsharp-audit.android.json",
-      "summary": "net11.0-android inner build, 756 targets, 15 CallTarget sites"
+      "summary": "net11.0-android inner build, 803 targets, 16 CallTarget sites, 3 Csc task sites"
+    },
+    {
+      "name": "iosSimulatorInnerAudit",
+      "command": "tools/codegen/bin/Debug/net11.0/Codegen --audit --project fixtures/maui-net11/MauiNet11.csproj -p TargetFramework=net11.0-ios -p RuntimeIdentifier=iossimulator-arm64",
+      "status": "captured",
+      "artifact": "fixtures/maui-net11/bsharp-audit.iossimulator.json",
+      "summary": "net11.0-ios iossimulator-arm64 inner build, 803 targets, 13 CallTarget sites, 5 Csc task sites"
     },
     {
       "name": "outerRestore",
-      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj",
-      "status": "blocked",
-      "exitCode": 1,
-      "diagnostic": "NETSDK1147: missing workload maccatalyst"
+      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj -v:minimal",
+      "status": "passed",
+      "exitCode": 0,
+      "summary": "Restore succeeded with NU1603 package-version warnings."
     },
     {
-      "name": "androidInnerRestore",
-      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj -p:TargetFrameworks=net11.0-android -p:TargetFramework=net11.0-android",
-      "status": "blocked",
-      "exitCode": 1,
-      "diagnostic": "NETSDK1147: missing workload maccatalyst"
+      "name": "androidInnerBuild",
+      "command": "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-android -v:minimal",
+      "status": "passed",
+      "exitCode": 0,
+      "summary": "Build succeeded with NU1603 package-version warnings."
     },
     {
-      "name": "iosSimulatorInnerRestore",
-      "command": "dotnet restore fixtures/maui-net11/MauiNet11.csproj -p:TargetFrameworks=net11.0-ios -p:TargetFramework=net11.0-ios -p:RuntimeIdentifier=iossimulator-arm64",
-      "status": "blocked",
+      "name": "bsharpAndroidInnerBuild",
+      "command": "BSHARP_CODEGEN=tools/codegen/bin/Debug/net11.0/Codegen tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp build --no-cache -p:TargetFramework=net11.0-android -v:quiet",
+      "status": "failed",
       "exitCode": 1,
-      "diagnostic": "NETSDK1147: missing workload ios"
+      "summary": "Codegen and NativeAOT host/task-server publish succeed. Clean generated-host execution no longer corrupts task-server frames, but Android build is blocked by unsupported Xamarin.Android/MAUI tasks, incomplete compiled restore assets, and platform/source filtering gaps."
     },
     {
-      "name": "workloadRestore",
-      "command": "dotnet workload restore fixtures/maui-net11/MauiNet11.csproj",
+      "name": "iosSimulatorInnerBuild",
+      "command": "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-ios -p:RuntimeIdentifier=iossimulator-arm64 -v:minimal",
       "status": "blocked",
       "exitCode": 1,
-      "diagnostic": "Inadequate permissions. Run the command with elevated privileges."
+      "diagnostic": ".NET for iOS 26.4.11514-net11-p4 requires Xcode 26.4; installed Xcode is 26.2."
     }
   ],
   "environmentBlockers": [
     {
-      "id": "missing-maui-workloads",
-      "description": "No workloads are installed according to dotnet workload list. The fixture requires at least maccatalyst for the current outer evaluation path and ios for the iOS simulator path.",
-      "manualCommand": "sudo dotnet workload restore fixtures/maui-net11/MauiNet11.csproj"
+      "id": "xcode-version-for-ios-simulator",
+      "description": ".NET for iOS 26.4.11514-net11-p4 requires Xcode 26.4. The installed Xcode version is 26.2, so the iOS simulator baseline build is blocked until Xcode is updated or the .NET iOS workload is changed.",
+      "manualAction": "Install Xcode 26.4 or use a .NET iOS workload compatible with Xcode 26.2."
     }
   ],
-  "nextCaptureAfterWorkloads": [
-    "dotnet restore fixtures/maui-net11/MauiNet11.csproj",
-    "dotnet build fixtures/maui-net11/MauiNet11.csproj -v:minimal",
-    "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-android -v:minimal",
+  "nextCaptureAfterXcode": [
     "dotnet build fixtures/maui-net11/MauiNet11.csproj -p:TargetFramework=net11.0-ios -p:RuntimeIdentifier=iossimulator-arm64 -v:minimal"
   ]
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAtUtc": "2026-05-19T09:40:21.814446Z",
+  "generatedAtUtc": "2026-05-19T09:49:44.407171Z",
   "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
   "globalProperties": {
     "TargetFramework": "net11.0-android"
@@ -18,24 +18,24 @@
     "isOuterBuild": false
   },
   "counts": {
-    "targets": 756,
-    "items": 580,
-    "properties": 1040,
-    "usedTaskNames": 308,
-    "usingTasks": 273,
-    "usingTaskAssemblies": 14,
-    "taskMetadataTypes": 110,
+    "targets": 803,
+    "items": 752,
+    "properties": 1124,
+    "usedTaskNames": 325,
+    "usingTasks": 292,
+    "usingTaskAssemblies": 16,
+    "taskMetadataTypes": 121,
     "taskMetadataLoadErrors": 1,
-    "callTargets": 15,
-    "msbuildTasks": 51,
+    "callTargets": 16,
+    "msbuildTasks": 52,
     "cscTasks": 3,
-    "dynamicImports": 91,
-    "dynamicTargetDiagnostics": 126,
+    "dynamicImports": 192,
+    "dynamicTargetDiagnostics": 131,
     "targetBatchingSites": 22,
-    "taskBatchingSites": 296,
-    "propertyFunctionSites": 153,
-    "inlineUsingTasks": 0,
-    "unresolvedUsingTasks": 155
+    "taskBatchingSites": 324,
+    "propertyFunctionSites": 159,
+    "inlineUsingTasks": 3,
+    "unresolvedUsingTasks": 161
   },
   "diagnostics": {
     "outerBuild": null,
@@ -53,6 +53,36 @@
       {
         "project": "$(CustomAfterDirectoryBuildProps)",
         "condition": "\u0027$(CustomAfterDirectoryBuildProps)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props",
+        "condition": "\u0027$(ImportProjectExtensionProps)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.net.illink.tasks/11.0.0-preview.4.26230.115/build/Microsoft.NET.ILLink.Tasks.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.net.illink.tasks/11.0.0-preview.4.26230.115/build/Microsoft.NET.ILLink.Tasks.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(ILLinkAnalyzersPropsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.props\u0027)",
         "dynamicProject": true
       },
       {
@@ -181,6 +211,16 @@
         "dynamicProject": true
       },
       {
+        "project": "$(MSBuildThisFileDirectory)/MonoTargetsTasks.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)/RuntimeComponentManifest.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
         "project": "$(MSBuildThisFileDirectory)Microsoft.NET.RuntimeIdentifierInference.targets",
         "condition": "",
         "dynamicProject": true
@@ -248,6 +288,446 @@
       {
         "project": "$(VSTestTargets)",
         "condition": "Exists(\u0027$(VSTestTargets)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.targets",
+        "condition": "\u0027$(ImportProjectExtensionTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.annotation.jvm/1.9.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.Jvm.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.annotation.jvm/1.9.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.Jvm.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.collection.jvm/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.Jvm.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.collection.jvm/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.Jvm.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.annotation/1.9.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.annotation/1.9.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.collection/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.collection/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.versionedparcelable/1.2.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VersionedParcelable.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.versionedparcelable/1.2.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VersionedParcelable.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.tracing.tracing.android/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Tracing.Tracing.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.tracing.tracing.android/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Tracing.Tracing.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.tracing.tracing/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Tracing.Tracing.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.tracing.tracing/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Tracing.Tracing.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.startup.startupruntime/1.2.0.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Startup.StartupRuntime.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.startup.startupruntime/1.2.0.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Startup.StartupRuntime.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.concurrent.futures/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Concurrent.Futures.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.concurrent.futures/1.3.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Concurrent.Futures.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.profileinstaller.profileinstaller/1.4.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ProfileInstaller.ProfileInstaller.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.profileinstaller.profileinstaller/1.4.1.7/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ProfileInstaller.ProfileInstaller.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.common.jvm/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Common.Jvm.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.common.jvm/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Common.Jvm.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.core.viewtree/1.0.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.ViewTree.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.core.viewtree/1.0.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.ViewTree.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.arch.core.common/2.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Arch.Core.Common.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.arch.core.common/2.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Arch.Core.Common.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.arch.core.runtime/2.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Arch.Core.Runtime.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.arch.core.runtime/2.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Arch.Core.Runtime.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.common/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Common.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.common/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Common.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.interpolator/1.0.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Interpolator.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.interpolator/1.0.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Interpolator.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.annotation.experimental/1.5.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.Experimental.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.annotation.experimental/1.5.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Annotation.Experimental.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.core/1.17.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.core/1.17.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.customview/1.2.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CustomView.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.customview/1.2.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CustomView.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.viewpager/1.1.0.6/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ViewPager.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.viewpager/1.1.0.6/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ViewPager.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.core.core.ktx/1.17.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.Core.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.core.core.ktx/1.17.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Core.Core.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.savedstate.savedstate.android/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.SavedState.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.savedstate.savedstate.android/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.SavedState.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.savedstate/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.savedstate/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.customview.poolingcontainer/1.1.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CustomView.PoolingContainer.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.customview.poolingcontainer/1.1.0.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CustomView.PoolingContainer.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.recyclerview/1.4.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.RecyclerView.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.recyclerview/1.4.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.RecyclerView.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.compose.runtime.annotation.android/1.10.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Compose.Runtime.Annotation.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.compose.runtime.annotation.android/1.10.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Compose.Runtime.Annotation.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigationevent.android/1.0.2.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.NavigationEvent.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigationevent.android/1.0.2.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.NavigationEvent.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.compose.runtime.annotation/1.10.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Compose.Runtime.Annotation.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.compose.runtime.annotation/1.10.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Compose.Runtime.Annotation.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigationevent/1.0.2.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.NavigationEvent.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigationevent/1.0.2.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.NavigationEvent.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata.core/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.Core.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata.core/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.Core.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.loader/1.1.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Loader.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.loader/1.1.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Loader.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodelsavedstate.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodelsavedstate.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodelsavedstate/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModelSavedState.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodelsavedstate/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModelSavedState.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.activity/1.12.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Activity.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.activity/1.12.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Activity.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.fragment/1.8.9.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Fragment.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.fragment/1.8.9.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Fragment.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.viewpager2/1.1.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ViewPager2.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.viewpager2/1.1.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ViewPager2.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.vectordrawable/1.2.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VectorDrawable.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.vectordrawable/1.2.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VectorDrawable.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.vectordrawable.animated/1.2.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VectorDrawable.Animated.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.vectordrawable.animated/1.2.0.10/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.VectorDrawable.Animated.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.dynamicanimation/1.1.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.DynamicAnimation.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.dynamicanimation/1.1.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.DynamicAnimation.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.transition/1.7.0.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Transition.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.transition/1.7.0.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Transition.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.resourceinspection.annotation/1.0.1.24/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ResourceInspection.Annotation.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.resourceinspection.annotation/1.0.1.24/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ResourceInspection.Annotation.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.process/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Process.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.process/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Process.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.graphics.shapes.android/1.1.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Graphics.Shapes.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.graphics.shapes.android/1.1.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Graphics.Shapes.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.graphics.shapes/1.1.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Graphics.Shapes.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.graphics.shapes/1.1.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Graphics.Shapes.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.emoji2/1.6.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Emoji2.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.emoji2/1.6.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Emoji2.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.emoji2.viewshelper/1.6.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Emoji2.ViewsHelper.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.emoji2.viewshelper/1.6.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Emoji2.ViewsHelper.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.drawerlayout/1.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.DrawerLayout.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.drawerlayout/1.2.0.20/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.DrawerLayout.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.cursoradapter/1.0.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CursorAdapter.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.cursoradapter/1.0.0.36/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CursorAdapter.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.coordinatorlayout/1.3.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CoordinatorLayout.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.coordinatorlayout/1.3.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CoordinatorLayout.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.constraintlayout.core/1.1.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ConstraintLayout.Core.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.constraintlayout.core/1.1.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ConstraintLayout.Core.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.appcompat.appcompatresources/1.7.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.AppCompat.AppCompatResources.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.appcompat.appcompatresources/1.7.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.AppCompat.AppCompatResources.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.appcompat/1.7.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.AppCompat.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.appcompat/1.7.1.3/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.AppCompat.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.constraintlayout/2.2.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ConstraintLayout.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.constraintlayout/2.2.1.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ConstraintLayout.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.cardview/1.0.0.38/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CardView.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.cardview/1.0.0.38/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.CardView.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.google.android.material/1.13.0.2/buildTransitive/net10.0-android36.0/Xamarin.Google.Android.Material.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.google.android.material/1.13.0.2/buildTransitive/net10.0-android36.0/Xamarin.Google.Android.Material.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.window.windowcore.jvm/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.WindowCore.Jvm.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.window.windowcore.jvm/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.WindowCore.Jvm.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.window.windowcore/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.WindowCore.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.window.windowcore/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.WindowCore.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.window/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.window/1.5.1.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Window.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.swiperefreshlayout/1.2.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SwipeRefreshLayout.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.swiperefreshlayout/1.2.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SwipeRefreshLayout.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.slidingpanelayout/1.2.0.24/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SlidingPaneLayout.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.slidingpanelayout/1.2.0.24/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SlidingPaneLayout.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.security.securitycrypto/1.1.0.4-alpha07/buildTransitive/net10.0-android35.0/Xamarin.AndroidX.Security.SecurityCrypto.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.security.securitycrypto/1.1.0.4-alpha07/buildTransitive/net10.0-android35.0/Xamarin.AndroidX.Security.SecurityCrypto.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.savedstate.savedstate.ktx/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.SavedState.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.savedstate.savedstate.ktx/1.4.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.SavedState.SavedState.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.common.android/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Common.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.common.android/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Common.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.common/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Common.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.common/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Common.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.viewmodel.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.ViewModel.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.ktx.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Ktx.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.ktx.android/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Ktx.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.runtime.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.Runtime.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.activity.ktx/1.12.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Activity.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.activity.ktx/1.12.4.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Activity.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.runtime.android/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Runtime.Android.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.runtime.android/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Runtime.Android.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.runtime/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Runtime.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.runtime/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Runtime.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.ui/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.UI.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.ui/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.UI.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata.core.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata.core.ktx/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.collection.ktx/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.collection.ktx/1.5.0.5/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Collection.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.fragment.ktx/1.8.9.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Fragment.Ktx.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.fragment.ktx/1.8.9.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Fragment.Ktx.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.navigation.fragment/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Fragment.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.navigation.fragment/2.9.7.1/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Navigation.Fragment.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.lifecycle.livedata/2.10.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Lifecycle.LiveData.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.exifinterface/1.4.2.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ExifInterface.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.exifinterface/1.4.2.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.ExifInterface.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)xamarin.androidx.browser/1.9.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Browser.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)xamarin.androidx.browser/1.9.0.2/buildTransitive/net10.0-android36.0/Xamarin.AndroidX.Browser.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Resizetizer.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Core.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.targets\u0027)",
         "dynamicProject": true
       },
       {
@@ -371,6 +851,11 @@
         "dynamicProject": true
       },
       {
+        "project": "$(ILLinkTargetsPath)",
+        "condition": "\u0027$(ILLinkTargetsPath)\u0027 != \u0027\u0027 and \u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027",
+        "dynamicProject": true
+      },
+      {
         "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.Analyzers.targets",
         "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027 or \u0027$(Language)\u0027 == \u0027VB\u0027",
         "dynamicProject": true
@@ -468,6 +953,26 @@
       {
         "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.Android.Sdk.TypeMap.LlvmIr.targets",
         "condition": " \u0027$(_AndroidTypeMapImplementation)\u0027 != \u0027trimmable\u0027 ",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Core.BundledVersions.targets",
+        "condition": "",
         "dynamicProject": true
       },
       {
@@ -708,6 +1213,11 @@
         "value": "$(InstallDependsOnTargets)"
       },
       {
+        "target": "MauiGeneratePackageAppxManifest",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(MauiGeneratePackageAppxManifestDependsOnTargets)"
+      },
+      {
         "target": "Pack",
         "kind": "dynamic-depends-on-targets",
         "value": "$(PackDependsOn)"
@@ -753,6 +1263,11 @@
         "value": "$(PrepareResourcesDependsOn)"
       },
       {
+        "target": "ProcessMauiFonts",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ProcessMauiFontsDependsOnTargets)"
+      },
+      {
         "target": "Publish",
         "kind": "dynamic-depends-on-targets",
         "value": "$(_PublishDependsOn)"
@@ -791,6 +1306,11 @@
         "target": "ResGen",
         "kind": "dynamic-depends-on-targets",
         "value": "$(ResGenDependsOn)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResizetizeDependsOnTargets)"
       },
       {
         "target": "ResolveAssemblyReferences",
@@ -950,7 +1470,7 @@
       {
         "target": "_ComputeFilesToPublishForRuntimeIdentifiers",
         "kind": "dynamic-depends-on-targets",
-        "value": "BuildOnlySettings;_FixupIntermediateAssembly;ResolveReferences;ComputeFilesToPublish;$(_RunAotMaybe)"
+        "value": "BuildOnlySettings;_FixupIntermediateAssembly;_PatchNuGetReferenceMetadata;ResolveReferences;ComputeFilesToPublish;$(_RunAotMaybe)"
       },
       {
         "target": "_ConvertResourcesCases",
@@ -1055,7 +1575,17 @@
       {
         "target": "_LinkAssemblies",
         "kind": "dynamic-depends-on-targets",
-        "value": "_ResolveAssemblies;_CreatePackageWorkspace;$(_BeforeLinkAssemblies);_GenerateJniMarshalMethods;_LinkAssembliesNoShrink"
+        "value": "_ResolveAssemblies;_CreatePackageWorkspace;$(_BeforeLinkAssemblies);_LinkAssembliesNoShrink"
+      },
+      {
+        "target": "_MauiAddXamlEmbeddedResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_MauiAddXamlEmbeddedResourcesDependsOn)"
+      },
+      {
+        "target": "_MauiInjectXamlCssAdditionalFiles",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_MauiInjectXamlCssAdditionalFilesDependsOn)"
       },
       {
         "target": "_PrepareAssemblies",
@@ -1160,6 +1690,11 @@
         "dynamicTargets": false
       },
       {
+        "target": "ResizetizeCollectItems",
+        "targets": "GetMauiItems",
+        "dynamicTargets": false
+      },
+      {
         "target": "VSTest",
         "targets": "_VSTestConsole",
         "dynamicTargets": false
@@ -1247,6 +1782,12 @@
         "projects": "@(_MSBuildProjectReferenceExistent)",
         "targets": "GetTargetPathWithTargetPlatformMoniker",
         "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "projects": "%(_ResizetizeCollectItemsProject.Identity)",
+        "targets": "GetMauiItems",
+        "properties": "TargetFramework=%(_ResizetizeCollectItemsProject.NearestTargetFramework)"
       },
       {
         "target": "ResolveProjectReferences",
@@ -1670,17 +2211,11 @@
       {
         "target": "BuildCompileTraverse",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
-      },
-      {
-        "target": "BuildCompileTraverse",
-        "task": "MSBuild",
         "parameter": "Properties",
         "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
       },
       {
-        "target": "BuildGenerateSourcesTraverse",
+        "target": "BuildCompileTraverse",
         "task": "MSBuild",
         "parameter": "RemoveProperties",
         "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
@@ -1692,7 +2227,7 @@
         "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework);"
       },
       {
-        "target": "BuildLinkTraverse",
+        "target": "BuildGenerateSourcesTraverse",
         "task": "MSBuild",
         "parameter": "RemoveProperties",
         "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
@@ -1702,6 +2237,12 @@
         "task": "MSBuild",
         "parameter": "Properties",
         "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "BuildLinkTraverse",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "BuiltProjectOutputGroup",
@@ -1732,14 +2273,14 @@
       {
         "target": "CleanReferencedProjects",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
       },
       {
         "target": "CleanReferencedProjects",
         "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "ComputeIntermediateSatelliteAssemblies",
@@ -1795,44 +2336,8 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "PublicClass",
-        "value": "%(EmbeddedResource.PublicClass)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedLanguage",
-        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedFileName",
-        "value": "%(EmbeddedResource.StronglyTypedFileName)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
         "parameter": "StronglyTypedNamespace",
         "value": "%(EmbeddedResource.StronglyTypedNamespace)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "OutputResources",
-        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedClassName",
-        "value": "%(EmbeddedResource.StronglyTypedClassName)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedManifestPrefix",
-        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
       },
       {
         "target": "CoreResGen",
@@ -1843,26 +2348,8 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
-        "parameter": "StronglyTypedLanguage",
-        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedFileName",
-        "value": "%(EmbeddedResource.StronglyTypedFileName)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "StronglyTypedNamespace",
-        "value": "%(EmbeddedResource.StronglyTypedNamespace)"
-      },
-      {
-        "target": "CoreResGen",
-        "task": "GenerateResource",
-        "parameter": "OutputResources",
-        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
+        "parameter": "StronglyTypedManifestPrefix",
+        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
       },
       {
         "target": "CoreResGen",
@@ -1873,8 +2360,62 @@
       {
         "target": "CoreResGen",
         "task": "GenerateResource",
+        "parameter": "StronglyTypedFileName",
+        "value": "%(EmbeddedResource.StronglyTypedFileName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedLanguage",
+        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedNamespace",
+        "value": "%(EmbeddedResource.StronglyTypedNamespace)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "PublicClass",
+        "value": "%(EmbeddedResource.PublicClass)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
         "parameter": "StronglyTypedManifestPrefix",
         "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedClassName",
+        "value": "%(EmbeddedResource.StronglyTypedClassName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedFileName",
+        "value": "%(EmbeddedResource.StronglyTypedFileName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedLanguage",
+        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
       },
       {
         "target": "CoreResGen",
@@ -1989,14 +2530,14 @@
       {
         "target": "GenerateSatelliteAssemblies",
         "task": "AL",
-        "parameter": "Culture",
-        "value": "%(Culture)"
+        "parameter": "OutputAssembly",
+        "value": "$(IntermediateOutputPath)%(Culture)\\$(TargetName).resources.dll"
       },
       {
         "target": "GenerateSatelliteAssemblies",
         "task": "AL",
-        "parameter": "OutputAssembly",
-        "value": "$(IntermediateOutputPath)%(Culture)\\$(TargetName).resources.dll"
+        "parameter": "Culture",
+        "value": "%(Culture)"
       },
       {
         "target": "GetCopyToOutputDirectoryItems",
@@ -2050,14 +2591,14 @@
       {
         "target": "GetCopyToPublishDirectoryItems",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
       },
       {
         "target": "GetCopyToPublishDirectoryItems",
         "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "GetCopyToPublishDirectoryItems",
@@ -2160,14 +2701,14 @@
       {
         "target": "GetReferenceTargetPlatformMonikers",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
       },
       {
         "target": "GetReferenceTargetPlatformMonikers",
         "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "GetTargetFrameworks",
@@ -2182,11 +2723,94 @@
         "value": "$(OutDir);$(IntermediateOutputPath);@(DocFileItem-\u003E\u0027%(RelativeDir)\u0027);@(CreateDirectory)"
       },
       {
+        "target": "PrepareForILLink",
+        "task": "PropertyGroup",
+        "parameter": "_ExtraTrimmerArgs",
+        "value": "$(_ExtraTrimmerArgs) --link-attributes \u0022@(_ILLinkSuppressions-\u003E\u0027%(Identity)\u0027, \u0027\u0022 --link-attributes \u0022\u0027)\u0022"
+      },
+      {
         "target": "PriFilesOutputGroup",
         "task": "ItemGroup",
         "parameter": "PriFilesOutputGroupOutput",
         "include": "@(_ReferenceRelatedPaths-\u003E\u0027%(FullPath)\u0027)",
         "remove": ""
+      },
+      {
+        "target": "ProcessMauiSplashScreens",
+        "task": "ItemGroup",
+        "parameter": "BundleResource",
+        "include": "@(_MauiSplashImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizeCollectItemsProjectWithItemSpec",
+        "include": "@(_ResizetizeCollectItemsProjectWithOIS-\u003E\u0027%(OriginalProjectReferenceItemSpec)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "MSBuild",
+        "parameter": "Projects",
+        "value": "%(_ResizetizeCollectItemsProject.Identity)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_ResizetizeCollectItemsProject.NearestTargetFramework)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(MauiImage-\u003E\u0027File=%(Identity);Link=%(Link);BaseSize=%(BaseSize);Resize=%(Resize);TintColor=%(TintColor);Color=%(Color);IsAppIcon=%(IsAppIcon);ForegroundScale=%(ForegroundScale);ForegroundFile=%(ForegroundFile);MonochromeFile=%(MonochromeFile)\u0027)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(MauiFont-\u003E\u0027File=%(Identity);Link=%(Link);Alias=%(Alias)\u0027)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(_MauiSplashScreenWithHashes-\u003E\u0027File=%(Identity);Link=%(Link);BaseSize=%(BaseSize);Resize=%(Resize);TintColor=%(TintColor);Color=%(Color);ForegroundScale=%(ForegroundScale);FileHash=%(FileHash)\u0027)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerImagesToDelete",
+        "include": "@(_ResizetizerExistingImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerCollectedImages",
+        "include": "@(_ResizetizerExistingImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerCollectedBundleResourceImages",
+        "include": "@(_ResizetizerCollectedImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "PropertyGroup",
+        "parameter": "ApplicationIcon",
+        "value": "%(_MauiAppIconFile.Identity)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(_ResizetizerCollectedImages-\u003E\u0027%(Identity)\u0027)"
       },
       {
         "target": "ResolveFrameworkReferences",
@@ -2229,12 +2853,6 @@
       {
         "target": "ResolveProjectReferences",
         "task": "MSBuild",
-        "parameter": "RemoveProperties",
-        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
-      },
-      {
-        "target": "ResolveProjectReferences",
-        "task": "MSBuild",
         "parameter": "Properties",
         "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
       },
@@ -2243,12 +2861,6 @@
         "task": "MSBuild",
         "parameter": "RemoveProperties",
         "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
-      },
-      {
-        "target": "ResolveProjectReferences",
-        "task": "MSBuild",
-        "parameter": "Targets",
-        "value": "%(_MSBuildProjectReferenceExistent.Targets)"
       },
       {
         "target": "ResolveProjectReferences",
@@ -2259,6 +2871,12 @@
       {
         "target": "ResolveProjectReferences",
         "task": "MSBuild",
+        "parameter": "Targets",
+        "value": "%(_MSBuildProjectReferenceExistent.Targets)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
         "parameter": "RemoveProperties",
         "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
@@ -2267,6 +2885,12 @@
         "task": "MSBuild",
         "parameter": "Properties",
         "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
       },
       {
         "target": "ResolveProjectReferences",
@@ -2394,8 +3018,8 @@
       {
         "target": "_BuildAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "OutputPath",
-        "value": "%(AndroidGradleProject.OutputPath)"
+        "parameter": "Command",
+        "value": "assemble%(AndroidGradleProject.Configuration)"
       },
       {
         "target": "_BuildAndroidGradleProjects",
@@ -2406,8 +3030,8 @@
       {
         "target": "_BuildAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "Command",
-        "value": "assemble%(AndroidGradleProject.Configuration)"
+        "parameter": "OutputPath",
+        "value": "%(AndroidGradleProject.OutputPath)"
       },
       {
         "target": "_BuildAndroidGradleProjects",
@@ -2445,8 +3069,14 @@
       {
         "target": "_BuildAssetPacks",
         "task": "Aapt2LinkAssetPack",
-        "parameter": "Manifest",
-        "value": "%(_AssetPacks.ManifestFile)"
+        "parameter": "AssetDirectories",
+        "value": "%(_AssetPacks.AssetPackDirectory)"
+      },
+      {
+        "target": "_BuildAssetPacks",
+        "task": "Aapt2LinkAssetPack",
+        "parameter": "OutputArchive",
+        "value": "%(_AssetPacks.AssetPackOutput)"
       },
       {
         "target": "_BuildAssetPacks",
@@ -2457,14 +3087,8 @@
       {
         "target": "_BuildAssetPacks",
         "task": "Aapt2LinkAssetPack",
-        "parameter": "AssetDirectories",
-        "value": "%(_AssetPacks.AssetPackDirectory)"
-      },
-      {
-        "target": "_BuildAssetPacks",
-        "task": "Aapt2LinkAssetPack",
-        "parameter": "OutputArchive",
-        "value": "%(_AssetPacks.AssetPackOutput)"
+        "parameter": "Manifest",
+        "value": "%(_AssetPacks.ManifestFile)"
       },
       {
         "target": "_BuildAssetPacks",
@@ -2543,14 +3167,14 @@
       {
         "target": "_CleanAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "OutputPath",
-        "value": "%(AndroidGradleProject.OutputPath)"
+        "parameter": "ModuleName",
+        "value": "%(AndroidGradleProject.ModuleName)"
       },
       {
         "target": "_CleanAndroidGradleProjects",
         "task": "Gradle",
-        "parameter": "ModuleName",
-        "value": "%(AndroidGradleProject.ModuleName)"
+        "parameter": "OutputPath",
+        "value": "%(AndroidGradleProject.OutputPath)"
       },
       {
         "target": "_CleanAndroidGradleProjects",
@@ -2580,20 +3204,34 @@
       {
         "target": "_CompileBindingJava",
         "task": "JavaSourceUtils",
-        "parameter": "JavadocUrlPrefix",
-        "value": "%(_JavaBindingSource.UrlPrefix)"
+        "parameter": "JavadocDocRootUrl",
+        "value": "%(_JavaBindingSource.DocRootUrl)"
       },
       {
         "target": "_CompileBindingJava",
         "task": "JavaSourceUtils",
-        "parameter": "JavadocDocRootUrl",
-        "value": "%(_JavaBindingSource.DocRootUrl)"
+        "parameter": "JavadocUrlPrefix",
+        "value": "%(_JavaBindingSource.UrlPrefix)"
       },
       {
         "target": "_ComputeFilesToPublishForRuntimeIdentifiers",
         "task": "AndroidWarning",
         "parameter": "FormatArguments",
         "value": "%(_SourceItemsToCopyToPublishDirectory.Identity)"
+      },
+      {
+        "target": "_ComputeManagedAssemblyToLink",
+        "task": "ItemGroup",
+        "parameter": "_LinkedResolvedFileToPublishCandidate",
+        "include": "@(ManagedAssemblyToLink-\u003E\u0027$(IntermediateLinkDir)%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeManagedAssemblyToLink",
+        "task": "ItemGroup",
+        "parameter": "_LinkedResolvedFileToPublishCandidate",
+        "include": "@(_PDBToLink-\u003E\u0027$(IntermediateLinkDir)%(Filename)%(Extension)\u0027)",
+        "remove": ""
       },
       {
         "target": "_ComputeToolPackInputsToProcessFrameworkReferences",
@@ -2725,12 +3363,6 @@
       {
         "target": "_CreateAssetPackManifests",
         "task": "CreateDynamicFeatureManifest",
-        "parameter": "FeatureSplitName",
-        "value": "%(_AssetPacks.AssetPack)"
-      },
-      {
-        "target": "_CreateAssetPackManifests",
-        "task": "CreateDynamicFeatureManifest",
         "parameter": "OutputFile",
         "value": "%(_AssetPacks.ManifestFile)"
       },
@@ -2739,6 +3371,12 @@
         "task": "CreateDynamicFeatureManifest",
         "parameter": "FeatureDeliveryType",
         "value": "%(_AssetPacks.DeliveryType)"
+      },
+      {
+        "target": "_CreateAssetPackManifests",
+        "task": "CreateDynamicFeatureManifest",
+        "parameter": "FeatureSplitName",
+        "value": "%(_AssetPacks.AssetPack)"
       },
       {
         "target": "_CreateAssetPackManifests",
@@ -2832,12 +3470,6 @@
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
         "task": "JavaSourceUtils",
-        "parameter": "OutputJavadocXml",
-        "value": "%(_JavaSourceJavadocXml.Identity)"
-      },
-      {
-        "target": "_ExtractJavadocsFromJavaSourceJars",
-        "task": "JavaSourceUtils",
         "parameter": "JavadocCopyrightFile",
         "value": "%(_JavaSourceJavadocXml.CopyrightFile)"
       },
@@ -2850,98 +3482,8 @@
       {
         "target": "_ExtractJavadocsFromJavaSourceJars",
         "task": "JavaSourceUtils",
-        "parameter": "JavadocUrlPrefix",
-        "value": "%(_JavaSourceJavadocXml.UrlPrefix)"
-      },
-      {
-        "target": "_ExtractJavadocsFromJavaSourceJars",
-        "task": "JavaSourceUtils",
-        "parameter": "InputFiles",
-        "value": "%(_JavaSourceJavadocXml.OriginalItemSpec)"
-      },
-      {
-        "target": "_ExtractJavadocsFromJavaSourceJars",
-        "task": "JavaSourceUtils",
         "parameter": "JavadocDocRootUrl",
         "value": "%(_JavaSourceJavadocXml.DocRootUrl)"
-      },
-      {
-        "target": "_ExtractLibraryProjectImports",
-        "task": "ItemGroup",
-        "parameter": "FileWrites",
-        "include": "@(ResolvedResourceDirectories-\u003E\u0027%(ResourceDirectoryArchive)\u0027)",
-        "remove": ""
-      },
-      {
-        "target": "_GatherDesignerShadowCopyFiles",
-        "task": "ItemGroup",
-        "parameter": "DesignerRuntimeImplementationProjectOutputGroupOutput",
-        "include": "@(_DesignerShadowCopy-\u003E\u0027%(FullPath)\u0027)",
-        "remove": ""
-      },
-      {
-        "target": "_GenerateAndroidAssetsDir",
-        "task": "ItemGroup",
-        "parameter": "_AssetDirectories",
-        "include": "@(_AssetPacks-\u003E\u0027%(AssetPackDirectory)\u0027)",
-        "remove": ""
-      },
-      {
-        "target": "_GenerateClsidMap",
-        "task": "GenerateClsidMap",
-        "parameter": "IntermediateAssembly",
-        "value": "@(IntermediateAssembly-\u003E\u0027%(FullPath)\u0027)"
-      },
-      {
-        "target": "_GenerateClsidMap",
-        "task": "GenerateClsidMap",
-        "parameter": "CLsidMapDestinationPath",
-        "value": "@(ClsidMap-\u003E\u0027%(FullPath)\u0027)"
-      },
-      {
-        "target": "_GenerateCompileInputs",
-        "task": "ItemGroup",
-        "parameter": "_CoreCompileResourceInputs",
-        "include": "@(EmbeddedResource-\u003E\u0027%(OutputResource)\u0027)",
-        "remove": ""
-      },
-      {
-        "target": "_GenerateEnvironmentFiles",
-        "task": "ItemGroup",
-        "parameter": "_GeneratedAndroidEnvironment",
-        "include": "@(RuntimeEnvironmentVariable-\u003E\u0027%(Identity)=%(Value)\u0027)",
-        "remove": ""
-      },
-      {
-        "target": "_GenerateProjectRestoreGraphAllFrameworks",
-        "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
-      },
-      {
-        "target": "_GenerateRestoreGraph",
-        "task": "Message",
-        "parameter": "Text",
-        "value": "%(_RestoreProjectPathItems.Identity)"
-      },
-      {
-        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
-        "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
-      },
-      {
-        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
-        "task": "MSBuild",
-        "parameter": "Properties",
-        "value": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
-      },
-      {
-        "target": "_GenerateRuntimeConfigurationFilesInputCache",
-        "task": "ItemGroup",
-        "parameter": "_GenerateRuntimeConfigurationPropertyInputsCacheToHash",
-        "include": "@(AdditionalProbingPath-\u003E\u0027%(Identity)\u0027)",
-        "remove": ""
       }
     ],
     "propertyFunctionSites": [
@@ -3301,6 +3843,11 @@
         "value": "$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(_NetCoreRefDir), $([System.IO.Path]::GetFileName($(Crossgen)))))))"
       },
       {
+        "target": "ResizetizeImages",
+        "expressionKind": "Property:ResizetizerIntermediateOutputAbsolutePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(_MauiIntermediateImages)\u0027))"
+      },
+      {
         "target": "ResolveTargetingPackAssets",
         "expressionKind": "Property:PackageConflictPreferredPackages",
         "value": "$([MSBuild]::Unescape($(PackageConflictPreferredPackages)))"
@@ -3399,6 +3946,11 @@
         "target": "_CheckForInvalidWindowsDesktopTargetingConfiguration",
         "expressionKind": "Condition",
         "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027)) and (\u0027$(UseWindowsForms)\u0027 == \u0027true\u0027 or \u0027$(UseWPF)\u0027 == \u0027true\u0027)"
+      },
+      {
+        "target": "_CheckForMauiMinimumSupportedWorkloadVersion",
+        "expressionKind": "Condition",
+        "value": "\r\n      \u0027$(SkipCheckForMauiMinimumSupportedWorkloadVersion)\u0027 != \u0027true\u0027 and\r\n      \u0027$(MauiWorkloadVersion)\u0027 != \u0027\u0027 and\r\n      $([MSBuild]::VersionLessThan(\u0027$(MauiWorkloadVersion)\u0027, \u0027$(MauiMinimumSupportedWorkloadVersion)\u0027))"
       },
       {
         "target": "_CheckForNotRecommendedNETStandardVersion",
@@ -3566,6 +4118,21 @@
         "value": "$([System.IO.Path]::GetDirectoryName(%(_ReadyToRunNativeObjectOutputs.Identity)))"
       },
       {
+        "target": "_MauiGetAssemblyAttributesFromAppxManifest",
+        "expressionKind": "Property:_MauiAppxManifestContents",
+        "value": "$([System.IO.File]::ReadAllText(\u0027$(_MauiIntermediateManifest)Package.appxmanifest\u0027))"
+      },
+      {
+        "target": "_MauiXamlComputeInflator",
+        "expressionKind": "Warning.Condition",
+        "value": "\u0027$(MauiXamlInflator)\u0027 != \u0027\u0027 And !$([System.String]::new(\u0027$(MauiXamlInflator)\u0027).ToLowerInvariant().Contains(\u0027sourcegen\u0027))"
+      },
+      {
+        "target": "_MonoReadAvailableComponentsManifest",
+        "expressionKind": "Property:_MonoRuntimeComponentManifestJsonFilePath",
+        "value": "$([MSBuild]::NormalizePath(\u0027%(RuntimePackPath)\u0027, \u0027runtimes\u0027, \u0027$(RuntimeIdentifier)\u0027, \u0027build\u0027, \u0027RuntimeComponentManifest.json\u0027))"
+      },
+      {
         "target": "_NormalizeTargetPlatformVersion",
         "expressionKind": "Condition",
         "value": "\u0027$(TargetPlatformVersion)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) and (\u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027 or \u0027$(_EnablePackageReferencesInVCProjects)\u0027 == \u0027true\u0027)"
@@ -3696,6 +4263,11 @@
         "value": "$([System.IO.Path]::GetFileName (\u0027$(_AndroidResourceDesignerFile)\u0027))"
       },
       {
+        "target": "_ValidateMauiXamlHotReload",
+        "expressionKind": "Property:_MauiXamlHotReloadUpper",
+        "value": "$([System.String]::Copy(\u0027$(MauiXamlHotReload)\u0027).Trim().ToUpperInvariant())"
+      },
+      {
         "target": "_VSTestConsole",
         "expressionKind": "VSTestTask.VSTestSetting",
         "value": "$([MSBuild]::ValueOrDefault($(VSTestSetting), \u0027$(RunSettingsFilePath)\u0027))"
@@ -3711,8 +4283,51 @@
         "value": "$([MSBuild]::VersionLessThan($(MSBuildVersion), \u002717.15.0\u0027)) and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u002710.0\u0027))"
       }
     ],
-    "inlineUsingTasks": [],
+    "inlineUsingTasks": [
+      {
+        "TaskName": "MonoRuntimeComponentManifestReadTask",
+        "ExpandedTaskName": "MonoRuntimeComponentManifestReadTask",
+        "Condition": null,
+        "Notes": "TaskFactory=\u0027JsonToItemsTaskFactory.JsonToItemsTaskFactory\u0027 (factory binding) is not supported in v1"
+      },
+      {
+        "TaskName": "ILLink",
+        "ExpandedTaskName": "ILLink",
+        "Condition": "\u0027$(ILLinkTasksAssembly)\u0027 != \u0027\u0027",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1"
+      },
+      {
+        "TaskName": "ComputeManagedAssemblies",
+        "ExpandedTaskName": "ComputeManagedAssemblies",
+        "Condition": "\u0027$(ILLinkTasksAssembly)\u0027 != \u0027\u0027",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1"
+      }
+    ],
     "unresolvedUsingTasks": [
+      {
+        "TaskName": "MonoRuntimeComponentManifestReadTask",
+        "ExpandedTaskName": "MonoRuntimeComponentManifestReadTask",
+        "DeclaredAssembly": "$(MonoTargetsTasksAssemblyPath)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027JsonToItemsTaskFactory.JsonToItemsTaskFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "ILLink",
+        "ExpandedTaskName": "ILLink",
+        "DeclaredAssembly": "$(ILLinkTasksAssembly)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "ComputeManagedAssemblies",
+        "ExpandedTaskName": "ComputeManagedAssemblies",
+        "DeclaredAssembly": "$(ILLinkTasksAssembly)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
       {
         "TaskName": "Xamarin.Android.Tasks.RemoveUnknownFiles",
         "ExpandedTaskName": "Xamarin.Android.Tasks.RemoveUnknownFiles",
@@ -4554,14 +5169,6 @@
         "IsUsed": true
       },
       {
-        "TaskName": "Xamarin.Android.Tasks.ResolveJdkJvmPath",
-        "ExpandedTaskName": "Xamarin.Android.Tasks.ResolveJdkJvmPath",
-        "DeclaredAssembly": "Xamarin.Android.Build.Tasks.dll",
-        "Status": "unresolved",
-        "Notes": "AssemblyFile path does not exist after expansion: \u0027Xamarin.Android.Build.Tasks.dll\u0027",
-        "IsUsed": true
-      },
-      {
         "TaskName": "Xamarin.Android.Tasks.Adb",
         "ExpandedTaskName": "Xamarin.Android.Tasks.Adb",
         "DeclaredAssembly": "Xamarin.Android.Build.Debugging.Tasks.dll",
@@ -4738,8 +5345,16 @@
         "IsUsed": true
       },
       {
-        "TaskName": "Xamarin.Android.Tasks.StripEmbeddedLibraries",
-        "ExpandedTaskName": "Xamarin.Android.Tasks.StripEmbeddedLibraries",
+        "TaskName": "Xamarin.Android.Tasks.PostTrimmingPipeline",
+        "ExpandedTaskName": "Xamarin.Android.Tasks.PostTrimmingPipeline",
+        "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "Xamarin.Android.Tasks.PreTrimmingFixLegacyDesigner",
+        "ExpandedTaskName": "Xamarin.Android.Tasks.PreTrimmingFixLegacyDesigner",
         "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
         "Status": "unresolved",
         "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
@@ -4858,6 +5473,14 @@
         "IsUsed": true
       },
       {
+        "TaskName": "Xamarin.Android.Tasks.GetAndroidInstrumentationName",
+        "ExpandedTaskName": "Xamarin.Android.Tasks.GetAndroidInstrumentationName",
+        "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      },
+      {
         "TaskName": "Xamarin.Android.Tasks.GetAvailableAndroidDevices",
         "ExpandedTaskName": "Xamarin.Android.Tasks.GetAvailableAndroidDevices",
         "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
@@ -4876,14 +5499,6 @@
       {
         "TaskName": "Xamarin.Android.BuildTools.PrepTasks.XASleepInternal",
         "ExpandedTaskName": "Xamarin.Android.BuildTools.PrepTasks.XASleepInternal",
-        "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
-        "Status": "unresolved",
-        "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
-        "IsUsed": true
-      },
-      {
-        "TaskName": "Xamarin.Android.Tasks.CheckForObsoletePreserveAttribute",
-        "ExpandedTaskName": "Xamarin.Android.Tasks.CheckForObsoletePreserveAttribute",
         "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
         "Status": "unresolved",
         "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
@@ -4922,6 +5537,22 @@
         "IsUsed": false
       },
       {
+        "TaskName": "Xamarin.Android.Tasks.GetNativeRuntimeComponents",
+        "ExpandedTaskName": "Xamarin.Android.Tasks.GetNativeRuntimeComponents",
+        "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "Xamarin.Android.Tasks.LinkNativeRuntime",
+        "ExpandedTaskName": "Xamarin.Android.Tasks.LinkNativeRuntime",
+        "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      },
+      {
         "TaskName": "Xamarin.Android.Tasks.CheckGoogleSdkRequirements",
         "ExpandedTaskName": "Xamarin.Android.Tasks.CheckGoogleSdkRequirements",
         "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
@@ -4951,6 +5582,14 @@
         "DeclaredAssembly": "$(_XamarinAndroidBuildTasksAssembly)",
         "Status": "unresolved",
         "Notes": "AssemblyFile path does not exist after expansion: \u0027../tools/Xamarin.Android.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "Microsoft.Maui.Controls.Build.Tasks.XamlCTask",
+        "ExpandedTaskName": "Microsoft.Maui.Controls.Build.Tasks.XamlCTask",
+        "DeclaredAssembly": "$(MSBuildThisFileDirectory)Microsoft.Maui.Controls.Build.Tasks.dll",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/Microsoft.Maui.Controls.Build.Tasks.dll\u0027",
         "IsUsed": true
       }
     ],

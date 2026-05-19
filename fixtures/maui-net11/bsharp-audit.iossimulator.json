@@ -1,0 +1,4072 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-05-19T09:49:45.112213Z",
+  "project": "/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/MauiNet11.csproj",
+  "globalProperties": {
+    "RuntimeIdentifier": "iossimulator-arm64",
+    "TargetFramework": "net11.0-ios"
+  },
+  "shape": {
+    "targetFramework": "net11.0-ios",
+    "targetFrameworks": "net11.0-android;net11.0-ios;net11.0-maccatalyst",
+    "runtimeIdentifier": "iossimulator-arm64",
+    "runtimeIdentifiers": "",
+    "configuration": "Debug",
+    "platform": "AnyCPU",
+    "targetPlatformIdentifier": "iOS",
+    "targetPlatformVersion": "26.4",
+    "useMaui": "true",
+    "isOuterBuild": false
+  },
+  "counts": {
+    "targets": 803,
+    "items": 666,
+    "properties": 1041,
+    "usedTaskNames": 260,
+    "usingTasks": 230,
+    "usingTaskAssemblies": 17,
+    "taskMetadataTypes": 207,
+    "taskMetadataLoadErrors": 1,
+    "callTargets": 13,
+    "msbuildTasks": 54,
+    "cscTasks": 5,
+    "dynamicImports": 106,
+    "dynamicTargetDiagnostics": 136,
+    "targetBatchingSites": 28,
+    "taskBatchingSites": 371,
+    "propertyFunctionSites": 173,
+    "inlineUsingTasks": 3,
+    "unresolvedUsingTasks": 4
+  },
+  "diagnostics": {
+    "outerBuild": null,
+    "dynamicImports": [
+      {
+        "project": "$(NETCoreSdkBundledVersionsProps)",
+        "condition": "\u0027$(NetCoreSdkRoot)\u0027 == \u0027\u0027 and Exists(\u0027$(NETCoreSdkBundledVersionsProps)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.props",
+        "condition": "\u0027$(AlternateCommonProps)\u0027 == \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CustomAfterDirectoryBuildProps)",
+        "condition": "\u0027$(CustomAfterDirectoryBuildProps)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props",
+        "condition": "\u0027$(ImportProjectExtensionProps)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.net.illink.tasks/11.0.0-preview.4.26230.115/build/Microsoft.NET.ILLink.Tasks.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.net.illink.tasks/11.0.0-preview.4.26230.115/build/Microsoft.NET.ILLink.Tasks.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(ILLinkAnalyzersPropsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/net6.0-ios10.0/Microsoft.Maui.Controls.Build.Tasks.props",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/net6.0-ios10.0/Microsoft.Maui.Controls.Build.Tasks.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../Microsoft.Maui.Controls.Build.Tasks.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPropsFile)",
+        "condition": "Exists(\u0027$(NuGetPropsFile)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NETCoreSdkBundledMSBuildInformationProps)",
+        "condition": "Exists(\u0027$(NETCoreSdkBundledMSBuildInformationProps)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.SourceLink.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.Build.Tasks.Git/build/Microsoft.Build.Tasks.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Common/build/Microsoft.SourceLink.Common.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitHub/build/Microsoft.SourceLink.GitHub.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitLab/build/Microsoft.SourceLink.GitLab.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.AzureRepos.Git/build/Microsoft.SourceLink.AzureRepos.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Bitbucket.Git/build/Microsoft.SourceLink.Bitbucket.Git.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.CSharp.props",
+        "condition": "\u0027$(MSBuildProjectExtension)\u0027 == \u0027.csproj\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PackTool.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PackProjectTool.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.NET.Sdk.WindowsDesktop.props",
+        "condition": "Exists(\u0027$(MSBuildThisFileDirectory)../../Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.NET.Sdk.WindowsDesktop.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Windows.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.BeforeCommon.targets",
+        "condition": "\u0027$(IsCrossTargetingBuild)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultAssemblyInfo.targets",
+        "condition": "\u0027$(UsingNETSdkDefaults)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.ImportPublishProfile.targets",
+        "condition": "\u0027$(PublishProfileImported)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.TargetFrameworkInference.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultOutputPaths.targets",
+        "condition": "\u0027$(UsingNETSdkDefaults)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DefaultArtifactsPath.props",
+        "condition": "\u0027$(_DefaultArtifactsPathPropsImported)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.iOS.Sdk.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "Microsoft.$(_PlatformName).Sdk.Versions.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "Microsoft.$(_PlatformName).Sdk.SupportedTargetPlatforms.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)WorkloadTelemetry.targets",
+        "condition": "\u0027$(_MonoWorkloadTargetsMobile)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)/MonoTargetsTasks.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)/RuntimeComponentManifest.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.RuntimeIdentifierInference.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.EolTargetFrameworks.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.AspireWorkloadDeprecation.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.NuGetOfflineCache.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(LanguageTargets)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildToolsPath)/Microsoft.Managed.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CSharpTargetsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CSharpCoreTargetsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CommonTargetsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetRestoreTargets)",
+        "condition": "\u0027$(IsRestoreTargetsFileLoaded)\u0027 != \u0027true\u0027 and Exists(\u0027$(NuGetRestoreTargets)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.targets/ImportAfter/*",
+        "condition": "\u0027$(ImportByWildcardAfterMicrosoftCommonTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.targets\\ImportAfter\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MicrosoftNETBuildExtensionsTargets)",
+        "condition": "Exists(\u0027$(MicrosoftNETBuildExtensionsTargets)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildExtensionsPath)/$(MSBuildToolsVersion)/Microsoft.Common.targets/ImportAfter/*",
+        "condition": "\u0027$(ImportByWildcardAfterMicrosoftCommonTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.targets\\ImportAfter\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(VSTestTargets)",
+        "condition": "Exists(\u0027$(VSTestTargets)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.targets",
+        "condition": "\u0027$(ImportProjectExtensionTargets)\u0027 == \u0027true\u0027 and exists(\u0027$(MSBuildProjectExtensionsPath)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.resizetizer/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Resizetizer.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Resizetizer.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.core/11.0.0-preview.4.26230.3/buildTransitive/Microsoft.Maui.Core.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Core.Before.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/net6.0-ios10.0/Microsoft.Maui.Controls.Build.Tasks.targets",
+        "condition": "Exists(\u0027$(NuGetPackageRoot)microsoft.maui.controls.build.tasks/11.0.0-preview.4.26230.3/buildTransitive/net6.0-ios10.0/Microsoft.Maui.Controls.Build.Tasks.targets\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../Microsoft.Maui.Controls.Build.Tasks.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)netstandard2.0/Microsoft.Maui.Controls.Build.Tasks.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(_MicrosoftMauiControlsPlatformTargets)",
+        "condition": "\u0027$(_MicrosoftMauiControlsPlatformTargets)\u0027 != \u0027\u0027 and Exists(\u0027$(_MicrosoftMauiControlsPlatformTargets)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CustomAfterDirectoryBuildTargets)",
+        "condition": "\u0027$(CustomAfterDirectoryBuildTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildToolsPath)/Microsoft.Managed.After.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.Sdk.targets",
+        "condition": "\u0027$(IsCrossTargetingBuild)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.PackageDependencyResolution.targets",
+        "condition": "Exists(\u0027$(MSBuildThisFileDirectory)Microsoft.PackageDependencyResolution.targets\u0027) and (\u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027 or \u0027$(_EnablePackageReferencesInVCProjects)\u0027 == \u0027true\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.SourceLink.targets",
+        "condition": "\u0027$(SuppressImplicitGitSourceLink)\u0027 != \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.Build.Tasks.Git/build/Microsoft.Build.Tasks.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Common/$(_SourceLinkSdkSubDir)/Microsoft.SourceLink.Common.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitHub/build/Microsoft.SourceLink.GitHub.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.GitLab/build/Microsoft.SourceLink.GitLab.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.AzureRepos.Git/build/Microsoft.SourceLink.AzureRepos.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../Microsoft.SourceLink.Bitbucket.Git/build/Microsoft.SourceLink.Bitbucket.Git.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DisableStandardFrameworkResolution.targets",
+        "condition": "\u0027$(DisableStandardFrameworkResolution)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.DesignerSupport.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.GenerateAssemblyInfo.targets",
+        "condition": "\u0027$(UsingNETSdkDefaults)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.GenerateGlobalUsings.targets",
+        "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.GenerateSupportedRuntime.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.ComposeStore.targets",
+        "condition": "\u0027$(UsingNETSdkDefaults)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(CrossGenTargetsPath)",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.ObsoleteReferences.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NETCoreSdkBundledCliToolsProps)",
+        "condition": "Exists(\u0027$(NETCoreSdkBundledCliToolsProps)\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Publish.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PackProjectTool.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.PreserveCompilationContext.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.ConflictResolution.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.CSharp.targets",
+        "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(ILLinkTargetsPath)",
+        "condition": "\u0027$(ILLinkTargetsPath)\u0027 != \u0027\u0027 and \u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.NET.Sdk.Analyzers.targets",
+        "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027 or \u0027$(Language)\u0027 == \u0027VB\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../analyzers/build/Microsoft.CodeAnalysis.NetAnalyzers.props",
+        "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027 Or \u0027$(Language)\u0027 == \u0027VB\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../analyzers/build/Microsoft.CodeAnalysis.NetAnalyzers.targets",
+        "condition": "$(EnableNETAnalyzers)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../codestyle/cs/build/Microsoft.CodeAnalysis.CSharp.CodeStyle.targets",
+        "condition": "\u0027$(Language)\u0027 == \u0027C#\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(_TargetsDirectory)Xamarin.iOS.$(_ProjectLanguage).targets",
+        "condition": "\u0027$(_ProjectType)\u0027 == \u0027iOSExecutableProject\u0027 Or \u0027$(_ProjectType)\u0027 == \u0027iOSClassLibrary\u0027 ",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Xamarin.iOS.Common.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Xamarin.Shared.props",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Xamarin.Shared.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Xamarin.Shared.Stubs.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)Microsoft.Maui.Core.BundledVersions.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(AfterMicrosoftNETSdkTargets)",
+        "condition": "\u0027$(AfterMicrosoftNETSdkTargets)\u0027 != \u0027\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../targets/Microsoft.NET.ApiCompat.targets",
+        "condition": "",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(NuGetBuildTasksPackTargets)",
+        "condition": "Exists(\u0027$(NuGetBuildTasksPackTargets)\u0027) AND \u0027$(ImportNuGetBuildTasksPackTargetsFromSdk)\u0027 == \u0027true\u0027",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(MSBuildThisFileDirectory)../../../Containers/build/Microsoft.NET.Build.Containers.props",
+        "condition": "Exists(\u0027$(MSBuildThisFileDirectory)..\\..\\..\\Containers\\build\\Microsoft.NET.Build.Containers.props\u0027)",
+        "dynamicProject": true
+      },
+      {
+        "project": "$(_ContainersTargetsDir)Microsoft.NET.Build.Containers.targets",
+        "condition": "$(_IsNotSetContainersTargetsDir) AND Exists(\u0027$(_ContainersTargetsDir)Microsoft.NET.Build.Containers.targets\u0027)",
+        "dynamicProject": true
+      }
+    ],
+    "dynamicTargets": [
+      {
+        "target": "Archive",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ArchiveDependsOn)"
+      },
+      {
+        "target": "AssignTargetPaths",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(AssignTargetPathsDependsOn)"
+      },
+      {
+        "target": "Build",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(BuildDependsOn)"
+      },
+      {
+        "target": "BuildCompile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "BuildCompileTraverse;$(BuildCompileAction)"
+      },
+      {
+        "target": "BuildGenerateSources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "BuildGenerateSourcesTraverse;$(BuildGenerateSourcesAction)"
+      },
+      {
+        "target": "BuildLink",
+        "kind": "dynamic-depends-on-targets",
+        "value": "BuildLinkTraverse;$(BuildLinkAction)"
+      },
+      {
+        "target": "BuiltProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(BuiltProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "BuiltProjectOutputGroupDependencies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(BuiltProjectOutputGroupDependenciesDependsOn)"
+      },
+      {
+        "target": "Clean",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CleanDependsOn)"
+      },
+      {
+        "target": "Codesign",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CodesignDependsOn)"
+      },
+      {
+        "target": "CollectAppManifests",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CollectAppManifestsDependsOn)"
+      },
+      {
+        "target": "Compile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CompileDependsOn)"
+      },
+      {
+        "target": "CompileLicxFiles",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CompileLicxFilesDependsOn)"
+      },
+      {
+        "target": "ComputeFilesToPublish",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeFilesToPublishDependsOn)"
+      },
+      {
+        "target": "ComputeIntermediateSatelliteAssemblies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ComputeIntermediateSatelliteAssembliesDependsOn)"
+      },
+      {
+        "target": "ContentFilesProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ContentFilesProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "CoreBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreBuildDependsOn)"
+      },
+      {
+        "target": "CoreClean",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreCleanDependsOn)"
+      },
+      {
+        "target": "CoreCodesign",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreCodesignDependsOn)"
+      },
+      {
+        "target": "CoreCompile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreCompileDependsOn);_BeforeVBCSCoreCompile"
+      },
+      {
+        "target": "CoreResGen",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreResGenDependsOn)"
+      },
+      {
+        "target": "CreateCustomManifestResourceNames",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CreateCustomManifestResourceNamesDependsOn)"
+      },
+      {
+        "target": "CreateIpa",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CreateIpaDependsOn)"
+      },
+      {
+        "target": "CreateManifestResourceNames",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CreateManifestResourceNamesDependsOn)"
+      },
+      {
+        "target": "CreateSatelliteAssemblies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CreateSatelliteAssembliesDependsOn)"
+      },
+      {
+        "target": "DebugSymbolsProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DebugSymbolsProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "DebugSymbolsProjectOutputGroupDependencies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DebugSymbolsProjectOutputGroupDependenciesDependsOn)"
+      },
+      {
+        "target": "DesignerRuntimeImplementationProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DesignerRuntimeImplementationProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "DesignTimeResolveAssemblyReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DesignTimeResolveAssemblyReferencesDependsOn)"
+      },
+      {
+        "target": "DocumentationProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DocumentationProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "DocumentationProjectOutputGroupDependencies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DocumentationProjectOutputGroupDependenciesDependsOn)"
+      },
+      {
+        "target": "ExpandSDKReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ExpandSDKReferencesDependsOn)"
+      },
+      {
+        "target": "FindInvalidProjectReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(FindInvalidProjectReferencesDependsOn)"
+      },
+      {
+        "target": "GenerateNuspec",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GenerateNuspecDependsOn);_CalculateInputsOutputsForPack;_GetProjectReferenceVersions;_InitializeNuspecRepositoryInformationProperties"
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetCopyToOutputDirectoryItemsDependsOn)"
+      },
+      {
+        "target": "GetInstalledSDKLocations",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetInstalledSDKLocationsDependsOn)"
+      },
+      {
+        "target": "GetTargetPath",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetTargetPathDependsOn)"
+      },
+      {
+        "target": "GetTargetPathWithTargetPlatformMoniker",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetTargetPathWithTargetPlatformMonikerDependsOn)"
+      },
+      {
+        "target": "IncrementalClean",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(IncrementalCleanDependsOn);_CleanGetCurrentAndPriorFileWrites"
+      },
+      {
+        "target": "MaciOSPrepareForBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(MaciOSPrepareForBuildDependsOn)"
+      },
+      {
+        "target": "MauiGeneratePackageAppxManifest",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(MauiGeneratePackageAppxManifestDependsOnTargets)"
+      },
+      {
+        "target": "Pack",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PackDependsOn)"
+      },
+      {
+        "target": "PostBuildEvent",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PostBuildEventDependsOn)"
+      },
+      {
+        "target": "PreBuildEvent",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PreBuildEventDependsOn)"
+      },
+      {
+        "target": "PrepareForBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PrepareForBuildDependsOn)"
+      },
+      {
+        "target": "PrepareForRun",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PrepareForRunDependsOn)"
+      },
+      {
+        "target": "PrepareProjectReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PrepareProjectReferencesDependsOn)"
+      },
+      {
+        "target": "PrepareResourceNames",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PrepareResourceNamesDependsOn)"
+      },
+      {
+        "target": "PrepareResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PrepareResourcesDependsOn)"
+      },
+      {
+        "target": "ProcessMauiFonts",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ProcessMauiFontsDependsOnTargets)"
+      },
+      {
+        "target": "PublishBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishBuildDependsOn)"
+      },
+      {
+        "target": "PublishContainer",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishContainerDependsOn)"
+      },
+      {
+        "target": "PublishItemsOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishItemsOutputGroupDependsOn)"
+      },
+      {
+        "target": "PublishOnly",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishOnlyDependsOn)"
+      },
+      {
+        "target": "Rebuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(RebuildDependsOn)"
+      },
+      {
+        "target": "ReferenceCopyLocalPathsOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ReferenceCopyLocalPathsOutputGroupDependsOn)"
+      },
+      {
+        "target": "ResGen",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResGenDependsOn)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResizetizeDependsOnTargets)"
+      },
+      {
+        "target": "ResolveAssemblyReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResolveAssemblyReferencesDependsOn)"
+      },
+      {
+        "target": "ResolvePackageDependenciesForBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResolvePackageDependenciesForBuildDependsOn)"
+      },
+      {
+        "target": "ResolveReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResolveReferencesDependsOn)"
+      },
+      {
+        "target": "ResolveSDKReferences",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(ResolveSDKReferencesDependsOn)"
+      },
+      {
+        "target": "RunPackageValidation",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(RunPackageValidationDependsOn)"
+      },
+      {
+        "target": "SatelliteDllsProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SatelliteDllsProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "SatelliteDllsProjectOutputGroupDependencies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SatelliteDllsProjectOutputGroupDependenciesDependsOn)"
+      },
+      {
+        "target": "SDKRedistOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SDKRedistOutputGroupDependsOn)"
+      },
+      {
+        "target": "SGenFilesOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SGenFilesOutputGroupDependsOn)"
+      },
+      {
+        "target": "SGenFilesOutputGroupDependencies",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SGenFilesOutputGroupDependenciesDependsOn)"
+      },
+      {
+        "target": "SourceFilesProjectOutputGroup",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(SourceFilesProjectOutputGroupDependsOn)"
+      },
+      {
+        "target": "UnmanagedRegistration",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(UnmanagedRegistrationDependsOn)"
+      },
+      {
+        "target": "UnmanagedUnregistration",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(UnmanagedUnregistrationDependsOn)"
+      },
+      {
+        "target": "XamlPreCompile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CoreCompileDependsOn);GenerateMSBuildEditorConfigFile"
+      },
+      {
+        "target": "_AddPriFileToPackBuildOutput",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(AddPriFileDependsOn)"
+      },
+      {
+        "target": "_AOTCompile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_AOTCompileDependsOn)"
+      },
+      {
+        "target": "_BeforeCreateIpaForDistribution",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_BeforeCreateIpaForDistributionDependsOn)"
+      },
+      {
+        "target": "_CodesignAppBundle",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CodesignAppBundleDependsOn)"
+      },
+      {
+        "target": "_CollectBundleResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CollectBundleResourcesDependsOn)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CollectCodesigningDataDependsOn)"
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CollectItemsForPostProcessingDependsOn)"
+      },
+      {
+        "target": "_CompileAppManifest",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileAppManifestDependsOn)"
+      },
+      {
+        "target": "_CompileColladaAssets",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CompileColladaAssetsDependsOn)"
+      },
+      {
+        "target": "_CompileCoreMLModels",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileCoreMLModelsDependsOn)"
+      },
+      {
+        "target": "_CompileEntitlements",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileEntitlementsDependsOn)"
+      },
+      {
+        "target": "_CompileImageAssets",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileImageAssetsDependsOn)"
+      },
+      {
+        "target": "_CompileInterfaceDefinitions",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileInterfaceDefinitionsDependsOn)"
+      },
+      {
+        "target": "_CompileITunesMetadata",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileITunesMetadataDependsOn)"
+      },
+      {
+        "target": "_CompileNativeExecutable",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileNativeExecutableDependsOn)"
+      },
+      {
+        "target": "_CompileSceneKitAssets",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileSceneKitAssetsDependsOn)"
+      },
+      {
+        "target": "_CompileTextureAtlases",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileTextureAtlasesDependsOn)"
+      },
+      {
+        "target": "_CompileToNative",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CompileToNativeDependsOn)"
+      },
+      {
+        "target": "_ComputeAssembliesToPostprocessOnPublish",
+        "kind": "dynamic-depends-on-targets",
+        "value": "_ComputeUserRuntimeAssemblies;$(_ComputeManagedRuntimePackAssembliesIfSelfContained)"
+      },
+      {
+        "target": "_ComputeCompileApiDefinitionsInputs",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeCompileApiDefinitionsInputsDependsOn)"
+      },
+      {
+        "target": "_ComputeFrameworkFilesToPublish",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeFrameworkFilesToPublishDependsOn)"
+      },
+      {
+        "target": "_ComputeLinkerArguments",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeLinkerArgumentsDependsOn)"
+      },
+      {
+        "target": "_ComputeLinkMode",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeLinkModeDependsOn)"
+      },
+      {
+        "target": "_ComputePublishLocation",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputePublishLocationDependsOn)"
+      },
+      {
+        "target": "_ComputeTargetArchitectures",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeTargetArchitecturesDependsOn)"
+      },
+      {
+        "target": "_ComputeVariables",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ComputeVariablesDependsOn)"
+      },
+      {
+        "target": "_CoreCompileCoreMLModels",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CoreCompileCoreMLModelsDependsOn)"
+      },
+      {
+        "target": "_CoreCompileImageAssets",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CoreCompileImageAssetsDependsOn)"
+      },
+      {
+        "target": "_CoreCompileInterfaceDefinitions",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CoreCompileInterfaceDefinitionsDependsOn)"
+      },
+      {
+        "target": "_CreateAppBundle",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(CreateAppBundleDependsOn)"
+      },
+      {
+        "target": "_CreateFrameworksForDylibs",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CreateFrameworksForDylibsDependsOn)"
+      },
+      {
+        "target": "_CreateInstaller",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CreateInstallerDependsOn)"
+      },
+      {
+        "target": "_CreateR2RDylib",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CreateR2RDylibDependsOn)"
+      },
+      {
+        "target": "_CreateR2RFramework",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_CreateR2RFrameworkDependsOn)"
+      },
+      {
+        "target": "_DeploymentComputeClickOnceManifestInfo",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(DeploymentComputeClickOnceManifestInfoDependsOn)"
+      },
+      {
+        "target": "_DetectSigningIdentity",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_DetectSigningIdentityDependsOn)"
+      },
+      {
+        "target": "_GenerateBindings",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_GenerateBindingsDependsOn)"
+      },
+      {
+        "target": "_GenerateSourceLinkFile",
+        "kind": "dynamic-depends-on-targets",
+        "value": "_SetSourceLinkFilePath;$(_GenerateSourceLinkFileDependsOnTargets);_InitializeSourceRootMappedPathsOpt;$(SourceLinkUrlInitializerTargets)"
+      },
+      {
+        "target": "_GetBuildOutputFilesWithTfm",
+        "kind": "dynamic-depends-on-targets",
+        "value": "BuiltProjectOutputGroup;DocumentationProjectOutputGroup;SatelliteDllsProjectOutputGroup;_AddPriFileToPackBuildOutput;$(TargetsForTfmSpecificBuildOutput)"
+      },
+      {
+        "target": "_GetDebugSymbolsWithTfm",
+        "kind": "dynamic-depends-on-targets",
+        "value": "DebugSymbolsProjectOutputGroup;$(TargetsForTfmSpecificDebugSymbolsInPackage)"
+      },
+      {
+        "target": "_GetProjectReferenceVersions",
+        "kind": "dynamic-depends-on-targets",
+        "value": "_GetAbsoluteOutputPathsForPack;$(GetPackageVersionDependsOn)"
+      },
+      {
+        "target": "_GetProjectVersion",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(GetPackageVersionDependsOn)"
+      },
+      {
+        "target": "_GetTfmSpecificContentForPackage",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(TargetsForTfmSpecificContentInPackage)"
+      },
+      {
+        "target": "_GetWatchAppBundlePath",
+        "kind": "dynamic-depends-on-targets",
+        "value": "_GenerateBundleName;$(_GetWatchAppBundlePathDependsOn)"
+      },
+      {
+        "target": "_InitializeSourceControlInformationFromSourceControlManager",
+        "kind": "dynamic-depends-on-targets",
+        "value": "InitializeSourceControlInformationFromSourceControlManager;_SourceLinkHasSingleProvider;$(SourceControlManagerUrlTranslationTargets);SourceControlManagerPublishTranslatedUrls"
+      },
+      {
+        "target": "_LinkNativeExecutable",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_LinkNativeExecutableDependsOn)"
+      },
+      {
+        "target": "_MauiAddXamlEmbeddedResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_MauiAddXamlEmbeddedResourcesDependsOn)"
+      },
+      {
+        "target": "_MauiInjectXamlCssAdditionalFiles",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_MauiInjectXamlCssAdditionalFilesDependsOn)"
+      },
+      {
+        "target": "_OptimizeLocalizationFiles",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(OptimizeLocalizationFilesDependsOn)"
+      },
+      {
+        "target": "_OptimizePngImages",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(OptimizePngImagesDependsOn)"
+      },
+      {
+        "target": "_OptimizePropertyLists",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(OptimizePropertyListsDependsOn)"
+      },
+      {
+        "target": "_PackLibraryResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_PackLibraryResourcesDependsOn)"
+      },
+      {
+        "target": "_PostProcessAppBundle",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_PostProcessAppBundleDependsOn)"
+      },
+      {
+        "target": "_PrepareForPostProcessing",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_PrepareForPostProcessingDependsOn)"
+      },
+      {
+        "target": "_PublishBuildAlternative",
+        "kind": "dynamic-depends-on-targets",
+        "value": "Build;$(_CorePublishTargets)"
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(PublishContainerDependsOn)"
+      },
+      {
+        "target": "_PublishNoBuildAlternative",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_PublishNoBuildAlternativeDependsOn)"
+      },
+      {
+        "target": "_ReadAppManifest",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ReadAppManifestDependsOn)"
+      },
+      {
+        "target": "_ReidentifyDynamicLibraries",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_ReidentifyDynamicLibrariesDependsOn)"
+      },
+      {
+        "target": "_RunRidSpecificBuild",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_RunRidSpecificBuildDependsOn)"
+      },
+      {
+        "target": "_SmeltMetal",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_SmeltMetalDependsOn)"
+      },
+      {
+        "target": "_UnpackLibraryResources",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_UnpackLibraryResourcesDependsOn)"
+      },
+      {
+        "target": "_WriteAppManifest",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_WriteAppManifestDependsOn)"
+      },
+      {
+        "target": "_WriteRemoteGeneratorProperties",
+        "kind": "dynamic-depends-on-targets",
+        "value": "$(_WriteGeneratorPropertiesDependsOn)"
+      }
+    ],
+    "callTargets": [
+      {
+        "target": "BuildProject",
+        "targets": "ShowMsbuildWithParameter",
+        "dynamicTargets": false
+      },
+      {
+        "target": "CoreCompile",
+        "targets": "$(TargetsTriggeredByCompilation)",
+        "dynamicTargets": true
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "targets": "_GetCopyToOutputDirectoryItemsFromTransitiveProjectReferences",
+        "dynamicTargets": false
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "targets": "_GetCopyToOutputDirectoryItemsFromThisProject",
+        "dynamicTargets": false
+      },
+      {
+        "target": "PublishContainer",
+        "targets": "_PublishMultiArchContainers",
+        "dynamicTargets": false
+      },
+      {
+        "target": "PublishContainer",
+        "targets": "_PublishSingleContainer",
+        "dynamicTargets": false
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "targets": "GetMauiItems",
+        "dynamicTargets": false
+      },
+      {
+        "target": "VSTest",
+        "targets": "_VSTestConsole",
+        "dynamicTargets": false
+      },
+      {
+        "target": "VSTest",
+        "targets": "_VSTestMSBuild",
+        "dynamicTargets": false
+      },
+      {
+        "target": "_VSTestConsole",
+        "targets": "BuildProject",
+        "dynamicTargets": false
+      },
+      {
+        "target": "_VSTestConsole",
+        "targets": "ShowCallOfVSTestTaskWithParameter",
+        "dynamicTargets": false
+      },
+      {
+        "target": "_VSTestMSBuild",
+        "targets": "BuildProject",
+        "dynamicTargets": false
+      },
+      {
+        "target": "_VSTestMSBuild",
+        "targets": "_TestRunStart",
+        "dynamicTargets": false
+      }
+    ],
+    "msbuildTasks": [
+      {
+        "target": "BuildCompileTraverse",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "BuildCompile",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "BuildGenerateSourcesTraverse",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "BuildGenerateSources",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework);"
+      },
+      {
+        "target": "BuildLinkTraverse",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "BuildLink",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "BuildProject",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "",
+        "properties": ""
+      },
+      {
+        "target": "CleanReferencedProjects",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "Clean",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetCopyToPublishDirectoryItems",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "GetReferenceTargetPlatformMonikers",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetTargetPathWithTargetPlatformMoniker",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "projects": "%(_ResizetizeCollectItemsProject.Identity)",
+        "targets": "GetMauiItems",
+        "properties": "TargetFramework=%(_ResizetizeCollectItemsProject.NearestTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetTargetPath",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "%(_MSBuildProjectReferenceExistent.Targets)",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform);  %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetNativeManifest",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "RestoreForComposeStore",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "Restore",
+        "properties": "RestoreGraphProjectInput=$(MSBuildProjectFullPath);\n                             RestoreOutputPath=$(BaseIntermediateOutputPath);\n                             StorePackageName=$(StorePackageName);\n                             StorePackageVersion=$(StorePackageVersion);\n                             RuntimeIdentifier=$(RuntimeIdentifier);\n                             TargetFramework=$(TargetFramework);"
+      },
+      {
+        "target": "StoreWorkerMain",
+        "projects": "%(_AllProjects.Identity)",
+        "targets": "StoreWorkerMapper",
+        "properties": "ComposeWorkingDir=$(ComposeWorkingDir);\n                             PublishDir=$(PublishDir);\n                             StoreStagingDir=$(StoreStagingDir);\n                             TargetFramework=$(_TFM);\n                             JitPath=$(JitPath);\n                             Crossgen=$(Crossgen);\n                             DisableImplicitFrameworkReferences=true;\n                             SkipUnchangedFiles=$(SkipUnchangedFiles);\n                             PreserveStoreLayout=$(PreserveStoreLayout);\n                             CreateProfilingSymbols=$(CreateProfilingSymbols);\n                             StoreSymbolsStagingDir=$(StoreSymbolsStagingDir)"
+      },
+      {
+        "target": "StoreWorkerMapper",
+        "projects": "@(PackageReferencesToStore)",
+        "targets": "RestoreForComposeStore",
+        "properties": ""
+      },
+      {
+        "target": "StoreWorkerMapper",
+        "projects": "@(PackageReferencesToStore)",
+        "targets": "StoreResolver",
+        "properties": "SelfContained=false;UseAppHost=false;MSBuildProjectExtensionsPath=$(ComposeWorkingDir)\\%(PackageReferencesToStore.PackageName)_$([System.String]::Copy(\u0027%(PackageReferencesToStore.PackageVersion)\u0027).Replace(\u0027*\u0027,\u0027-\u0027))\\;"
+      },
+      {
+        "target": "_FilterRestoreGraphProjectInputItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItemsWithoutDuplicates)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_FilterRestoreGraphProjectInputItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItemsWithoutDuplicates)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateProjectRestoreGraphAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateProjectRestoreGraphPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreGraph",
+        "projects": "@(_GenerateRestoreGraphProjectEntryInput)",
+        "targets": "_GenerateRestoreGraphProjectEntry",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreGraph",
+        "projects": "@(_RestoreProjectPathItems)",
+        "targets": "_GenerateProjectRestoreGraph",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateRestoreProjectPathItemsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathItemsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GenerateRestoreProjectPathItemsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathWalk",
+        "projects": "@(_CurrentRestoreProjectPathItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GenerateRestoreProjectPathWalk",
+        "projects": "@(_CurrentRestoreProjectPathItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(FilteredRestoreGraphProjectInputItems)",
+        "targets": "_GenerateRestoreProjectPathWalk",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(_RestoreProjectPathItemsWithoutDupes)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetAllRestoreProjectPathItems",
+        "projects": "@(_RestoreProjectPathItemsWithoutDupes)",
+        "targets": "_IsProjectRestoreSupported",
+        "properties": "$(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetCopyToOutputDirectoryItemsFromTransitiveProjectReferences",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "$(_RecursiveTargetForContentCopying)",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "_GetProjectReferenceTargetFrameworkProperties",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetTargetFrameworks",
+        "properties": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform)"
+      },
+      {
+        "target": "_GetProjectReferenceTargetFrameworkProperties",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "GetTargetFrameworks",
+        "properties": ""
+      },
+      {
+        "target": "_GetProjectReferenceVersions",
+        "projects": "@(_ProjectReferencesFromAssetsFile)",
+        "targets": "_GetProjectVersion",
+        "properties": "BuildProjectReferences=false;"
+      },
+      {
+        "target": "_GetReferencePathFromInnerProjects",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "GetReferencesForApiCompatValidatePackage",
+        "properties": "TargetFramework=%(_TargetFrameworks.Identity);\n                         BuildProjectReferences=false"
+      },
+      {
+        "target": "_GetRequiredWorkloads",
+        "projects": "@(_MSBuildProjectReferenceExistent)",
+        "targets": "_GetRequiredWorkloads",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsAllFrameworks",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "_GetRestoreSettingsPerFramework",
+        "properties": "TargetFramework=%(_RestoreTargetFrameworkItems.Identity);\r\n                  $(_GenerateRestoreGraphProjectEntryInputProperties)"
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestorePackagesPathOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreRepositoryPathOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreSourcesOverride",
+        "properties": ""
+      },
+      {
+        "target": "_GetRestoreSettingsOverrides",
+        "projects": "$(MSBuildThisFileFullPath)",
+        "targets": "_GetRestoreFallbackFoldersOverride",
+        "properties": ""
+      },
+      {
+        "target": "_MTPBuild",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "",
+        "properties": ""
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "projects": "@(_InnerBuild)",
+        "targets": "Publish;_ParseItemsForPublishingSingleContainer;_ComputeContainerExecutionArgs;_PublishSingleContainer",
+        "properties": ""
+      },
+      {
+        "target": "_ResolveAppExtensionReferences",
+        "projects": "@(_AppExtensionReferenceWithConfigurationExistent)",
+        "targets": "GetBundleTargetPath",
+        "properties": "%(_AppExtensionReferenceWithConfigurationExistent.SetConfiguration); %(_AppExtensionReferenceWithConfigurationExistent.SetPlatform)"
+      },
+      {
+        "target": "_ResolveAppExtensionReferences",
+        "projects": "@(_AppExtensionReferenceWithConfigurationExistent)",
+        "targets": "",
+        "properties": "%(_AppExtensionReferenceWithConfigurationExistent.SetConfiguration); %(_AppExtensionReferenceWithConfigurationExistent.SetPlatform)"
+      },
+      {
+        "target": "_ResolveWatchAppReferences",
+        "projects": "@(_WatchAppReferenceWithConfigurationExistent)",
+        "targets": "GetBundleTargetPath",
+        "properties": "%(_WatchAppReferenceWithConfigurationExistent.SetConfiguration); %(_WatchAppReferenceWithConfigurationExistent.SetPlatform)"
+      },
+      {
+        "target": "_ResolveWatchAppReferences",
+        "projects": "@(_WatchAppReferenceWithConfigurationExistent)",
+        "targets": "",
+        "properties": "%(_WatchAppReferenceWithConfigurationExistent.SetConfiguration); %(_WatchAppReferenceWithConfigurationExistent.SetPlatform)"
+      },
+      {
+        "target": "_RestoreCrossgen",
+        "projects": "$(MSBuildProjectFullPath)",
+        "targets": "Restore",
+        "properties": "RuntimeIdentifiers=$(RuntimeIdentifier);\n                             RestoreGraphProjectInput=$(MSBuildProjectFullPath);\n                             RestoreOutputPath=$(_CrossProjFileDir);\n                             StorePackageName=$(MicrosoftNETPlatformLibrary);\n                             StorePackageVersion=%(PackageReferenceForCrossGen.Version);"
+      },
+      {
+        "target": "_RunOptimizer",
+        "projects": "@(AssembliestoCrossgen)",
+        "targets": "RunCrossGen",
+        "properties": ""
+      },
+      {
+        "target": "_RunRidSpecificBuild",
+        "projects": "$(MSBuildProjectFile)",
+        "targets": "_BuildRidSpecificAppBundle",
+        "properties": "\n\t\t\t\tAppendRuntimeIdentifierToOutputPath=true;\n\t\t\t\tRuntimeIdentifier=%(_RuntimeIdentifiersAsItems.Identity);\n\t\t\t\t_CodesignItemsPath=%(_RuntimeIdentifiersAsItems.RidSpecificCodesignItemsPath);\n\t\t\t\t_MtouchSymbolsList=%(_RuntimeIdentifiersAsItems.RidSpecificSymbolsListPath);\n\t\t\t\t_UserFrameworksWithoutDebugSymbolsPath=%(_RuntimeIdentifiersAsItems.RidSpecificUserFrameworksWithoutDebugSymbolsPath);\n\t\t\t\t$(_RidSpecificProperties);\n\t\t\t\t"
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetBuildOutputFilesWithTfm",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetTfmSpecificContentForPackage",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFM)",
+        "targets": "_GetDebugSymbolsWithTfm",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "SourceFilesProjectOutputGroup",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "_GetFrameworkAssemblyReferences",
+        "properties": ""
+      },
+      {
+        "target": "_WalkEachTargetPerFramework",
+        "projects": "@(_ProjectsWithTFMNoBuild)",
+        "targets": "_GetFrameworksWithSuppressedDependencies",
+        "properties": ""
+      }
+    ],
+    "cscTasks": [
+      {
+        "target": "CoreCompile",
+        "sources": "@(Compile)",
+        "references": "@(ReferencePathWithRefAssemblies)",
+        "analyzers": "@(Analyzer)",
+        "additionalFiles": "@(AdditionalFiles)",
+        "analyzerConfigFiles": "@(EditorConfigFiles)",
+        "generatedFilesOutputPath": "$(CompilerGeneratedFilesOutputPath)",
+        "skipAnalyzers": "$(_SkipAnalyzers)",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "sources": "$(_AssemblyInfoFile)",
+        "references": "@(_SatelliteAssemblyReferences)",
+        "analyzers": "",
+        "additionalFiles": "",
+        "analyzerConfigFiles": "",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "XamlPreCompile",
+        "sources": "@(Compile)",
+        "references": "@(ReferencePath)",
+        "analyzers": "@(Analyzer)",
+        "additionalFiles": "@(AdditionalFiles)",
+        "analyzerConfigFiles": "@(EditorConfigFiles)",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "true",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "_CompileApiDefinitions",
+        "sources": "@(_CompiledApiDefinitionsCompile)",
+        "references": "@(_CompiledApiDefinitionReferences)",
+        "analyzers": "",
+        "additionalFiles": "",
+        "analyzerConfigFiles": "",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "",
+        "useSharedCompilation": "$(UseSharedCompilation)"
+      },
+      {
+        "target": "_CreateAOTDedupAssembly",
+        "sources": "$(_IntermediateNativeLibraryDir)aot-instances.cs",
+        "references": "@(ReferencePath)",
+        "analyzers": "",
+        "additionalFiles": "",
+        "analyzerConfigFiles": "",
+        "generatedFilesOutputPath": "",
+        "skipAnalyzers": "",
+        "useSharedCompilation": ""
+      }
+    ],
+    "targetBatchingSites": [
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "inputs": "$(MSBuildAllProjects);@(_SatelliteAssemblyResourceInputs);$(IntermediateOutputPath)$(TargetName)$(TargetExt)",
+        "outputs": "$(IntermediateOutputPath)%(Culture)\\$(TargetName).resources.dll"
+      },
+      {
+        "target": "GenerateSatelliteAssemblies",
+        "inputs": "$(MSBuildAllProjects);@(_SatelliteAssemblyResourceInputs);$(IntermediateOutputPath)$(TargetName)$(TargetExt)",
+        "outputs": "$(IntermediateOutputPath)%(Culture)\\$(TargetName).resources.dll"
+      },
+      {
+        "target": "_BeforeUnpackLibraryResources",
+        "inputs": "@(_UnpackLibraryResourceItems)",
+        "outputs": "@(_UnpackLibraryResourceItems -\u003E \u0027%(StampFile)\u0027)"
+      },
+      {
+        "target": "_CalculateXcodeProjectOutputPaths",
+        "inputs": "",
+        "outputs": "%(XcodeProject.Identity)"
+      },
+      {
+        "target": "_CompileNativeExecutable",
+        "inputs": "@(_CompileNativeExecutableFile)",
+        "outputs": "@(_CompileNativeExecutableFile -\u003E \u0027%(OutputFile)\u0027)"
+      },
+      {
+        "target": "_CopyAppConfigFile",
+        "inputs": "@(AppConfigWithTargetPath)",
+        "outputs": "@(AppConfigWithTargetPath-\u003E\u0027$(OutDir)%(TargetPath)\u0027)"
+      },
+      {
+        "target": "_CopyAppExtensionsToBundle",
+        "inputs": "@(_ResolvedAppExtensionReferences)",
+        "outputs": "$(_AppExtensionRoot)%(_ResolvedAppExtensionReferences.ContainerName)\\%(_ResolvedAppExtensionReferences.FileName)%(_ResolvedAppExtensionReferences.Extension)"
+      },
+      {
+        "target": "_CopyDirectoriesToBundle",
+        "inputs": "@(_DirectoriesToPublish)",
+        "outputs": "@(_DirectoriesToPublish -\u003E \u0027%(StampLocation)\u0027)"
+      },
+      {
+        "target": "_CopyITunesArtwork",
+        "inputs": "@(_ITunesArtworkWithLogicalName)",
+        "outputs": "$(DeviceSpecificOutputPath)%(_ITunesArtworkWithLogicalName.LogicalName)"
+      },
+      {
+        "target": "_CopyOutOfDateSourceItemsToOutputDirectory",
+        "inputs": "@(_SourceItemsToCopyToOutputDirectory)",
+        "outputs": "@(_SourceItemsToCopyToOutputDirectory-\u003E\u0027$(OutDir)%(TargetPath)\u0027)"
+      },
+      {
+        "target": "_CopyResolvedFilesToPublishPreserveNewest",
+        "inputs": "@(_ResolvedFileToPublishPreserveNewest)",
+        "outputs": "@(_ResolvedFileToPublishPreserveNewest-\u003E\u0027$(PublishDir)%(RelativePath)\u0027)"
+      },
+      {
+        "target": "_CopyResourcesToBundle",
+        "inputs": "@(_BundleResourceWithOutputPath)",
+        "outputs": "@(_BundleResourceWithOutputPath -\u003E \u0027%(OutputPath)\u0027)"
+      },
+      {
+        "target": "_CoreOptimizeLocalizationFiles",
+        "inputs": "@(_LocalizationFile)",
+        "outputs": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_LocalizationFile.LogicalName)"
+      },
+      {
+        "target": "_CoreOptimizePngImages",
+        "inputs": "@(_PngImage)",
+        "outputs": "@(_PngImage -\u003E \u0027$(DeviceSpecificIntermediateOutputPath)optimized\\%(LogicalName)\u0027)"
+      },
+      {
+        "target": "_CoreOptimizePropertyLists",
+        "inputs": "@(_PropertyList)",
+        "outputs": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_PropertyList.LogicalName)"
+      },
+      {
+        "target": "_CreateInfoPlistForFrameworks",
+        "inputs": "@(_CreatedFrameworksFromDylibs-\u003E\u0027%(OriginatingDylib)\u0027);$(_ComputeFrameworksToCreateAppManifestHashedInputs)",
+        "outputs": "@(_CreatedFrameworksFromDylibs-\u003E\u0027%(AppManifestPath)\u0027)"
+      },
+      {
+        "target": "_CreateR2RImages",
+        "inputs": "$(MSBuildAllProjects);@(_ReadyToRunCompileList);@(_ReadyToRunCompositeBuildInput);@(_ReadyToRunPgoFiles)",
+        "outputs": "%(_ReadyToRunCompileList.OutputR2RImage);%(_ReadyToRunCompileList.OutputPDBImage)"
+      },
+      {
+        "target": "_CreateR2RSymbols",
+        "inputs": "$(MSBuildAllProjects);@(_ReadyToRunSymbolsCompileList)",
+        "outputs": "%(_ReadyToRunSymbolsCompileList.OutputPDBImage)"
+      },
+      {
+        "target": "_DecompressPlugIns",
+        "inputs": "@(_CompressedPlugIns)",
+        "outputs": "@(_CompressedPlugIns -\u003E \u0027$(_IntermediateDecompressionDir)%(Filename)%(Extension).stamp\u0027)"
+      },
+      {
+        "target": "_DecompressXpcServices",
+        "inputs": "@(_CompressedXpcServices)",
+        "outputs": "@(_CompressedXpcServices -\u003E \u0027$(_IntermediateDecompressionDir)%(Filename)%(Extension).stamp\u0027)"
+      },
+      {
+        "target": "_GenerateDSym",
+        "inputs": "@(_GenerateDSymItems-\u003E\u0027$(_AppContainerDir)%(Identity)\u0027)",
+        "outputs": "%(_GenerateDSymItems.dSYMUtilStampFile)"
+      },
+      {
+        "target": "_InitializeAzureReposGitSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeBitbucketGitSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeGitHubSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InitializeGitLabSourceLinkUrl",
+        "inputs": "",
+        "outputs": "%(SourceRoot.Identity)"
+      },
+      {
+        "target": "_InstallNameTool",
+        "inputs": "@(_DynamicLibraryToReidentify)",
+        "outputs": "@(_DynamicLibraryToReidentify -\u003E \u0027%(ReidentifiedPath)\u0027)"
+      },
+      {
+        "target": "_NativeStripFiles",
+        "inputs": "@(_NativeStripItems-\u003E\u0027$(_AppContainerDir)%(Identity)\u0027)",
+        "outputs": "%(_NativeStripItems.StripStampFile)"
+      },
+      {
+        "target": "_UnpackLibraryResources",
+        "inputs": "@(_UnpackLibraryResourceItems)",
+        "outputs": "@(_UnpackLibraryResourceItems-\u003E\u0027%(StampFile)\u0027)"
+      }
+    ],
+    "taskBatchingSites": [
+      {
+        "target": "AddImplicitDefineConstants",
+        "task": "PropertyGroup",
+        "parameter": "FinalDefineConstants",
+        "value": "$(FinalDefineConstants),@(_ImplicitDefineConstant-\u003E\u0027%(Identity)=-1\u0027, \u0027,\u0027)"
+      },
+      {
+        "target": "BuildCompileTraverse",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "BuildCompileTraverse",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "BuildGenerateSourcesTraverse",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "BuildGenerateSourcesTraverse",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework);"
+      },
+      {
+        "target": "BuildLinkTraverse",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "BuildLinkTraverse",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "BuiltProjectOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "BuiltProjectOutputGroupOutput",
+        "include": "@(_BuiltProjectOutputGroupOutputIntermediate-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "BuiltProjectOutputGroupDependencies",
+        "task": "ItemGroup",
+        "parameter": "BuiltProjectOutputGroupDependency",
+        "include": "@(ReferencePath-\u003E\u0027%(FullPath)\u0027);\n                                                         @(ReferenceDependencyPaths-\u003E\u0027%(FullPath)\u0027);\n                                                         @(NativeReferenceFile-\u003E\u0027%(FullPath)\u0027);\n                                                         @(_DeploymentLooseManifestFile-\u003E\u0027%(FullPath)\u0027);\n                                                         @(ResolvedIsolatedComModules-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "CleanReferencedProjects",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "CleanReferencedProjects",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ComputeIntermediateSatelliteAssemblies",
+        "task": "ItemGroup",
+        "parameter": "IntermediateSatelliteAssembliesWithTargetPath",
+        "include": "$(IntermediateOutputPath)%(EmbeddedResource.Culture)\\$(TargetName).resources.dll",
+        "remove": ""
+      },
+      {
+        "target": "ComputeRefAssembliesToPublish",
+        "task": "ItemGroup",
+        "parameter": "_RefAssembliesToExclude",
+        "include": "@(_ResolvedCopyLocalPublishAssets-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ContentFilesProjectOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "ContentFilesProjectOutputGroupOutput",
+        "include": "@(ContentWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "CopyFilesToOutputDirectory",
+        "task": "Message",
+        "parameter": "Text",
+        "value": "$(MSBuildProjectName) -\u003E @(MainAssembly-\u003E\u0027%(FullPath)\u0027)"
+      },
+      {
+        "target": "CopyFilesToOutputDirectory",
+        "task": "Copy",
+        "parameter": "DestinationFiles",
+        "value": "@(IntermediateSatelliteAssembliesWithTargetPath-\u003E\u0027$(OutDir)%(Culture)\\$(TargetName).resources.dll\u0027)"
+      },
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "task": "MakeDir",
+        "parameter": "Directories",
+        "value": "@(_SatelliteAssemblyResourceInputs-\u003E\u0027$(IntermediateOutputPath)%(Culture)\u0027)"
+      },
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "task": "PropertyGroup",
+        "parameter": "_AssemblyInfoFile",
+        "value": "$(IntermediateOutputPath)%(_SatelliteAssemblyResourceInputs.Culture)\\$(TargetName).resources.cs"
+      },
+      {
+        "target": "CoreGenerateSatelliteAssemblies",
+        "task": "PropertyGroup",
+        "parameter": "_OutputAssembly",
+        "value": "$(IntermediateOutputPath)%(_SatelliteAssemblyResourceInputs.Culture)\\$(TargetName).resources.dll"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedManifestPrefix",
+        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "PublicClass",
+        "value": "%(EmbeddedResource.PublicClass)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedLanguage",
+        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedNamespace",
+        "value": "%(EmbeddedResource.StronglyTypedNamespace)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedFileName",
+        "value": "%(EmbeddedResource.StronglyTypedFileName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedClassName",
+        "value": "%(EmbeddedResource.StronglyTypedClassName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedManifestPrefix",
+        "value": "%(EmbeddedResource.StronglyTypedManifestPrefix)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "PublicClass",
+        "value": "%(EmbeddedResource.PublicClass)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedLanguage",
+        "value": "%(EmbeddedResource.StronglyTypedLanguage)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedNamespace",
+        "value": "%(EmbeddedResource.StronglyTypedNamespace)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedFileName",
+        "value": "%(EmbeddedResource.StronglyTypedFileName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "StronglyTypedClassName",
+        "value": "%(EmbeddedResource.StronglyTypedClassName)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "GenerateResource",
+        "parameter": "OutputResources",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(ManifestResourceName).resources\u0027)"
+      },
+      {
+        "target": "CoreResGen",
+        "task": "ItemGroup",
+        "parameter": "ManifestResourceWithNoCulture",
+        "include": "@(EmbeddedResource-\u003E\u0027%(OutputResource)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "CoreResGen",
+        "task": "ItemGroup",
+        "parameter": "ManifestResourceWithCulture",
+        "include": "@(EmbeddedResource-\u003E\u0027%(OutputResource)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "CreateGeneratedAssemblyInfoInputsCacheFile",
+        "task": "Hash",
+        "parameter": "ItemsToHash",
+        "value": "@(AssemblyAttribute-\u003E\u0027%(Identity)%(_Parameter1)%(_Parameter2)%(_Parameter3)%(_Parameter4)%(_Parameter5)%(_Parameter6)%(_Parameter7)%(_Parameter8)\u0027)"
+      },
+      {
+        "target": "DebugSymbolsProjectOutputGroupDependencies",
+        "task": "ItemGroup",
+        "parameter": "DebugSymbolsProjectOutputGroupDependency",
+        "include": "@(_ReferenceRelatedPaths-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "DocumentationProjectOutputGroupDependencies",
+        "task": "ItemGroup",
+        "parameter": "DocumentationProjectOutputGroupDependency",
+        "include": "@(_ReferenceRelatedPaths-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "FindReferenceAssembliesForReferences",
+        "task": "ItemGroup",
+        "parameter": "ReferencePathWithRefAssemblies",
+        "include": "@(ReferencePath-\u003E\u0027%(ReferenceAssembly)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GenerateMSBuildEditorConfigFileCore",
+        "task": "ItemGroup",
+        "parameter": "_GeneratedEditorConfigMetadata",
+        "include": "@(%(CompilerVisibleItemMetadata.Identity))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_SupportedFrameworkVersions",
+        "include": "@(SupportedNETCoreAppTargetFramework-\u003E\u0027%(Identity)\u0027-\u003ETrimStart(\u0027.NETCoreApp,Version=v\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_SupportedFrameworkVersions",
+        "include": "@(SupportedNETFrameworkTargetFramework-\u003E\u0027%(Identity)\u0027-\u003ETrimStart(\u0027.NETFramework,Version=v\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_SupportedFrameworkVersions",
+        "include": "@(SupportedNETStandardTargetFramework-\u003E\u0027%(Identity)\u0027-\u003ETrimStart(\u0027.NETStandard,Version=v\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_FormattedCompatibleFrameworkVersions",
+        "include": "@(_CompatibleFrameworkVersions-\u003E\u0027%(Identity)\u0027-\u003EReplace(\u0027.\u0027, \u0027\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_ImplicitDefineConstant",
+        "include": "@(_FormattedCompatibleFrameworkVersions-\u003E\u0027$(_FrameworkIdentifierForImplicitDefine)%(Identity)_OR_GREATER\u0027-\u003EReplace(\u0027.\u0027, \u0027_\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateNETCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_ImplicitDefineConstant",
+        "include": "@(_FormattedCompatibleFrameworkVersions-\u003E\u0027NETCOREAPP%(Identity)_OR_GREATER\u0027-\u003EReplace(\u0027.\u0027, \u0027_\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GeneratePlatformCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_SupportedPlatformCompatibleVersions",
+        "include": "@(SdkSupportedTargetPlatformVersion-\u003E\u0027%(NormalizedSupportedTargetPlatformVersion)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GeneratePlatformCompatibleDefineConstants",
+        "task": "ItemGroup",
+        "parameter": "_ImplicitDefineConstant",
+        "include": "@(_SupportedPlatformCompatibleVersions-\u003EDistinct()-\u003E\u0027$(TargetPlatformIdentifier.ToUpper())%(Identity)_OR_GREATER\u0027-\u003EReplace(\u0027.\u0027, \u0027_\u0027))",
+        "remove": ""
+      },
+      {
+        "target": "GenerateSatelliteAssemblies",
+        "task": "MakeDir",
+        "parameter": "Directories",
+        "value": "@(EmbeddedResource-\u003E\u0027$(IntermediateOutputPath)%(Culture)\u0027)"
+      },
+      {
+        "target": "GenerateSatelliteAssemblies",
+        "task": "AL",
+        "parameter": "OutputAssembly",
+        "value": "$(IntermediateOutputPath)%(Culture)\\$(TargetName).resources.dll"
+      },
+      {
+        "target": "GenerateSatelliteAssemblies",
+        "task": "AL",
+        "parameter": "Culture",
+        "value": "%(Culture)"
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_TransitiveItemsToCopyToOutputDirectoryAlways",
+        "include": "@(_TransitiveItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_TransitiveItemsToCopyToOutputDirectoryPreserveNewest",
+        "include": "@(_TransitiveItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_TransitiveItemsToCopyToOutputDirectoryIfDifferent",
+        "include": "@(_TransitiveItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_ThisProjectItemsToCopyToOutputDirectoryAlways",
+        "include": "@(_ThisProjectItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_ThisProjectItemsToCopyToOutputDirectoryPreserveNewest",
+        "include": "@(_ThisProjectItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_ThisProjectItemsToCopyToOutputDirectoryIfDifferent",
+        "include": "@(_ThisProjectItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToOutputDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "AllItemsFullPathWithTargetPath",
+        "include": "@(_SourceItemsToCopyToOutputDirectoryAlways-\u003E\u0027%(FullPath)\u0027);@(_SourceItemsToCopyToOutputDirectory-\u003E\u0027%(FullPath)\u0027);@(_SourceItemsToCopyToOutputDirectoryIfDifferent-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryAlways",
+        "include": "@(_AllChildProjectPublishItemsWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectory",
+        "include": "@(_AllChildProjectPublishItemsWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryIfDifferent",
+        "include": "@(_AllChildProjectPublishItemsWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryAlways",
+        "include": "@(ContentWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectory",
+        "include": "@(ContentWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryIfDifferent",
+        "include": "@(ContentWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryAlways",
+        "include": "@(EmbeddedResource-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectory",
+        "include": "@(EmbeddedResource-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryIfDifferent",
+        "include": "@(EmbeddedResource-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_CompileItemsToPublish",
+        "include": "@(Compile-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryAlways",
+        "include": "@(_NoneWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectory",
+        "include": "@(_NoneWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "_SourceItemsToCopyToPublishDirectoryIfDifferent",
+        "include": "@(_NoneWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetCopyToPublishDirectoryItems",
+        "task": "ItemGroup",
+        "parameter": "AllPublishItemsFullPathWithTargetPath",
+        "include": "@(_SourceItemsToCopyToPublishDirectoryAlways-\u003E\u0027%(FullPath)\u0027);@(_SourceItemsToCopyToPublishDirectory-\u003E\u0027%(FullPath)\u0027);@(_SourceItemsToCopyToPublishDirectoryIfDifferent-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "GetReferenceTargetPlatformMonikers",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "GetReferenceTargetPlatformMonikers",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "GetTargetFrameworks",
+        "task": "CombineXmlElements",
+        "parameter": "XmlElements",
+        "value": "@(_TargetFrameworkInfo-\u003E\u0027%(AdditionalPropertiesFromProject)\u0027)"
+      },
+      {
+        "target": "PrepareForBuild",
+        "task": "MakeDir",
+        "parameter": "Directories",
+        "value": "$(OutDir);$(IntermediateOutputPath);@(DocFileItem-\u003E\u0027%(RelativeDir)\u0027);@(CreateDirectory)"
+      },
+      {
+        "target": "PrepareForILLink",
+        "task": "PropertyGroup",
+        "parameter": "_ExtraTrimmerArgs",
+        "value": "$(_ExtraTrimmerArgs) --link-attributes \u0022@(_ILLinkSuppressions-\u003E\u0027%(Identity)\u0027, \u0027\u0022 --link-attributes \u0022\u0027)\u0022"
+      },
+      {
+        "target": "PriFilesOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "PriFilesOutputGroupOutput",
+        "include": "@(_ReferenceRelatedPaths-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ProcessMauiSplashScreens",
+        "task": "ItemGroup",
+        "parameter": "BundleResource",
+        "include": "@(_MauiSplashImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizeCollectItemsProjectWithItemSpec",
+        "include": "@(_ResizetizeCollectItemsProjectWithOIS-\u003E\u0027%(OriginalProjectReferenceItemSpec)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "TargetFramework=%(_ResizetizeCollectItemsProject.NearestTargetFramework)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "MSBuild",
+        "parameter": "Projects",
+        "value": "%(_ResizetizeCollectItemsProject.Identity)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(MauiImage-\u003E\u0027File=%(Identity);Link=%(Link);BaseSize=%(BaseSize);Resize=%(Resize);TintColor=%(TintColor);Color=%(Color);IsAppIcon=%(IsAppIcon);ForegroundScale=%(ForegroundScale);ForegroundFile=%(ForegroundFile);MonochromeFile=%(MonochromeFile)\u0027)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(MauiFont-\u003E\u0027File=%(Identity);Link=%(Link);Alias=%(Alias)\u0027)"
+      },
+      {
+        "target": "ResizetizeCollectItems",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(_MauiSplashScreenWithHashes-\u003E\u0027File=%(Identity);Link=%(Link);BaseSize=%(BaseSize);Resize=%(Resize);TintColor=%(TintColor);Color=%(Color);ForegroundScale=%(ForegroundScale);FileHash=%(FileHash)\u0027)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerImagesToDelete",
+        "include": "@(_ResizetizerExistingImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerCollectedImages",
+        "include": "@(_ResizetizerExistingImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "ItemGroup",
+        "parameter": "_ResizetizerCollectedBundleResourceImages",
+        "include": "@(_ResizetizerCollectedImages-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "PropertyGroup",
+        "parameter": "ApplicationIcon",
+        "value": "%(_MauiAppIconFile.Identity)"
+      },
+      {
+        "target": "ResizetizeImages",
+        "task": "WriteLinesToFile",
+        "parameter": "Lines",
+        "value": "@(_ResizetizerCollectedImages-\u003E\u0027%(Identity)\u0027)"
+      },
+      {
+        "target": "ResolveFrameworkReferences",
+        "task": "ItemGroup",
+        "parameter": "_ApphostsForShimRuntimeIdentifiers",
+        "include": "%(_ApphostsForShimRuntimeIdentifiersGetPackageDirectory.PackageDirectory)\\%(_ApphostsForShimRuntimeIdentifiersGetPackageDirectory.PathInPackage)",
+        "remove": ""
+      },
+      {
+        "target": "ResolveFrameworkReferences",
+        "task": "PropertyGroup",
+        "parameter": "AppHostSourcePath",
+        "value": "@(ResolvedAppHostPack-\u003E\u0027%(Path)\u0027)"
+      },
+      {
+        "target": "ResolveFrameworkReferences",
+        "task": "PropertyGroup",
+        "parameter": "SingleFileHostSourcePath",
+        "value": "@(ResolvedSingleFileHostPack-\u003E\u0027%(Path)\u0027)"
+      },
+      {
+        "target": "ResolveFrameworkReferences",
+        "task": "PropertyGroup",
+        "parameter": "ComHostSourcePath",
+        "value": "@(ResolvedComHostPack-\u003E\u0027%(Path)\u0027)"
+      },
+      {
+        "target": "ResolveFrameworkReferences",
+        "task": "PropertyGroup",
+        "parameter": "IjwHostSourcePath",
+        "value": "@(ResolvedIjwHostPack-\u003E\u0027%(Path)\u0027)"
+      },
+      {
+        "target": "ResolveLockFileReferences",
+        "task": "ItemGroup",
+        "parameter": "ResolvedCompileFileDefinitionsToAdd",
+        "include": "",
+        "remove": "%(_JoinedResolvedCompileFileDefinitions.HintPath)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "Targets",
+        "value": "%(_MSBuildProjectReferenceExistent.Targets)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform);  %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "RemoveProperties",
+        "value": "%(_MSBuildProjectReferenceExistent.GlobalPropertiesToRemove)$(_GlobalPropertiesToRemoveFromProjectReferences)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "%(_MSBuildProjectReferenceExistent.SetConfiguration); %(_MSBuildProjectReferenceExistent.SetPlatform); %(_MSBuildProjectReferenceExistent.SetTargetFramework)"
+      },
+      {
+        "target": "ResolveProjectReferences",
+        "task": "MSBuildInternalMessage",
+        "parameter": "FormatArguments",
+        "value": "@(_MSBuildProjectReferenceNonexistent-\u003E\u0027%(Identity)\u0027)"
+      },
+      {
+        "target": "ResolveReadyToRunCompilers",
+        "task": "PropertyGroup",
+        "parameter": "_FlattenedCrossgen2Packs",
+        "value": "@(ResolvedCrossgen2Pack-\u003E\u0027%(PackageDirectory)\u0027)"
+      },
+      {
+        "target": "SatelliteDllsProjectOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "SatelliteDllsProjectOutputGroupOutputIntermediate",
+        "include": "$(IntermediateOutputPath)%(EmbeddedResource.Culture)\\$(TargetName).resources.dll",
+        "remove": ""
+      },
+      {
+        "target": "SatelliteDllsProjectOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "SatelliteDllsProjectOutputGroupOutput",
+        "include": "@(SatelliteDllsProjectOutputGroupOutputIntermediate-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "SatelliteDllsProjectOutputGroupDependencies",
+        "task": "ItemGroup",
+        "parameter": "SatelliteDllsProjectOutputGroupDependency",
+        "include": "@(ReferenceSatellitePaths-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "SGenFilesOutputGroupDependencies",
+        "task": "ItemGroup",
+        "parameter": "SGenFilesOutputGroupDependency",
+        "include": "@(_ReferenceSerializationAssemblyPaths-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "SourceFilesProjectOutputGroup",
+        "task": "ItemGroup",
+        "parameter": "SourceFilesProjectOutputGroupOutput",
+        "include": "@(_CompileWithTargetPath-\u003E\u0027%(FullPath)\u0027);@(EmbeddedResource-\u003E\u0027%(FullPath)\u0027);@(_LicxFile-\u003E\u0027%(FullPath)\u0027);@(AppConfigWithTargetPath-\u003E\u0027%(FullPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "StoreFinalizer",
+        "task": "ItemGroup",
+        "parameter": "ListOfPackageReference",
+        "include": "@(AllResolvedPackagesPublishedAfterFilter -\u003E \u0027%20%20\u003CPackage Id=\u0022%(Identity)\u0022 Version=\u0022%(Version)\u0022 /\u003E\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "StoreWorkerMain",
+        "task": "MSBuild",
+        "parameter": "Projects",
+        "value": "%(_AllProjects.Identity)"
+      },
+      {
+        "target": "StoreWorkerMapper",
+        "task": "MSBuild",
+        "parameter": "Properties",
+        "value": "SelfContained=false;UseAppHost=false;MSBuildProjectExtensionsPath=$(ComposeWorkingDir)\\%(PackageReferencesToStore.PackageName)_$([System.String]::Copy(\u0027%(PackageReferencesToStore.PackageVersion)\u0027).Replace(\u0027*\u0027,\u0027-\u0027))\\;"
+      },
+      {
+        "target": "UnmanagedRegistration",
+        "task": "RegisterAssembly",
+        "parameter": "TypeLibFiles",
+        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetName).tlb\u0027)"
+      },
+      {
+        "target": "UnmanagedRegistration",
+        "task": "RegisterAssembly",
+        "parameter": "Assemblies",
+        "value": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetFileName)\u0027)"
+      },
+      {
+        "target": "UnmanagedRegistration",
+        "task": "ItemGroup",
+        "parameter": "FileWrites",
+        "include": "@(_OutputPathItem-\u003E\u0027%(FullPath)$(TargetName).tlb\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "WarnForExplicitVersions",
+        "task": "NetSdkWarning",
+        "parameter": "FormattedText",
+        "value": "%(SdkBuildWarning.Identity)"
+      },
+      {
+        "target": "XamlPreCompile",
+        "task": "ItemGroup",
+        "parameter": "AdditionalFiles",
+        "include": "@(%(AdditionalFileItems.Identity))",
+        "remove": ""
+      },
+      {
+        "target": "_AddDebugSymbolsToBundle",
+        "task": "ItemGroup",
+        "parameter": "ReferenceCopyLocalPaths",
+        "include": "@(ReferenceCopyLocalPaths-\u003E\u0027%(RootDir)%(Directory)%(Filename).pdb\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_AfterCoreOptimizeLocalizationFiles",
+        "task": "CreateItem",
+        "parameter": "AdditionalMetadata",
+        "value": "LogicalName=%(_LocalizationFile.LogicalName);Optimize=\u0027false\u0027"
+      },
+      {
+        "target": "_AfterCoreOptimizeLocalizationFiles",
+        "task": "CreateItem",
+        "parameter": "Include",
+        "value": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_LocalizationFile.LogicalName)"
+      },
+      {
+        "target": "_AfterCoreOptimizePngImages",
+        "task": "CreateItem",
+        "parameter": "AdditionalMetadata",
+        "value": "LogicalName=%(_PngImage.LogicalName);Optimize=\u0027false\u0027;ResourceTags=%(_PngImage.ResourceTags)"
+      },
+      {
+        "target": "_AfterCoreOptimizePngImages",
+        "task": "CreateItem",
+        "parameter": "Include",
+        "value": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_PngImage.LogicalName)"
+      },
+      {
+        "target": "_AfterCoreOptimizePropertyLists",
+        "task": "CreateItem",
+        "parameter": "AdditionalMetadata",
+        "value": "LogicalName=%(_PropertyList.LogicalName);Optimize=\u0027false\u0027"
+      },
+      {
+        "target": "_AfterCoreOptimizePropertyLists",
+        "task": "CreateItem",
+        "parameter": "Include",
+        "value": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_PropertyList.LogicalName)"
+      },
+      {
+        "target": "_AOTCompile",
+        "task": "AOTCompile",
+        "parameter": "OutputDirectory",
+        "value": "$(_AOTOutputDirectory)\\%(_AssembliesToAOT.Arch)"
+      },
+      {
+        "target": "_AOTCompile",
+        "task": "ItemGroup",
+        "parameter": "_XamarinMainLibraries",
+        "include": "@(_AssembliesToAOT -\u003E \u0027%(ObjectFile)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_AOTCompile",
+        "task": "ItemGroup",
+        "parameter": "_XamarinMainLibraries",
+        "include": "@(_AssembliesToAOT -\u003E \u0027%(LLVMFile)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_AOTCompile",
+        "task": "ItemGroup",
+        "parameter": "ResolvedFileToPublish",
+        "include": "%(_AssembliesToAOT.AOTData)",
+        "remove": ""
+      },
+      {
+        "target": "_BeforeUnpackLibraryResources",
+        "task": "ItemGroup",
+        "parameter": "_UnpackLibraryResourceToDelete",
+        "include": "@(_UnpackLibraryResourceItems-\u003E\u0027%(StampFile)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_BeforeUnpackLibraryResources",
+        "task": "ItemGroup",
+        "parameter": "_UnpackLibraryResourceToDelete",
+        "include": "@(_UnpackLibraryResourceItems-\u003E\u0027%(ItemsFile)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_BeforeVBCSCoreCompile",
+        "task": "ItemGroup",
+        "parameter": "AdditionalFiles",
+        "include": "@(%(AdditionalFileItems.Identity))",
+        "remove": ""
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "RemoveDir",
+        "parameter": "Directories",
+        "value": "@(XcodeProject-\u003E\u0027%(OutputPath)archives\u0027)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "RemoveDir",
+        "parameter": "Directories",
+        "value": "@(XcodeProject-\u003E\u0027%(OutputPath)xcframeworks\u0027)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "OutputPath",
+        "value": "%(XcodeProject.OutputPath)archives/%(XcodeProject.SchemeName)$(TargetPlatformIdentifier).xcarchive"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "SchemeName",
+        "value": "%(XcodeProject.SchemeName)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "ProjectPath",
+        "value": "%(XcodeProject.FullPath)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "WorkingDirectory",
+        "value": "%(XcodeProject.RootDir)%(XcodeProject.Directory)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "Configuration",
+        "value": "%(XcodeProject.Configuration)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "OutputPath",
+        "value": "%(XcodeProject.OutputPath)archives/%(XcodeProject.SchemeName)$(TargetPlatformIdentifier)Simulator.xcarchive"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "SchemeName",
+        "value": "%(XcodeProject.SchemeName)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "ProjectPath",
+        "value": "%(XcodeProject.FullPath)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "WorkingDirectory",
+        "value": "%(XcodeProject.RootDir)%(XcodeProject.Directory)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcArchive",
+        "parameter": "Configuration",
+        "value": "%(XcodeProject.Configuration)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcFramework",
+        "parameter": "OutputPath",
+        "value": "%(XcodeProject.OutputPath)xcframeworks/%(XcodeProject.SchemeName)$(TargetPlatformIdentifier).xcframework"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcFramework",
+        "parameter": "FrameworkName",
+        "value": "%(XcodeProject.SchemeName).framework"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcFramework",
+        "parameter": "WorkingDirectory",
+        "value": "%(XcodeProject.RootDir)%(XcodeProject.Directory)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "CreateXcFramework",
+        "parameter": "XcArchivePath",
+        "value": "%(XcodeProject.OutputPath)archives"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "ItemGroup",
+        "parameter": "_XcodeProjectXcFrameworkOutputs",
+        "include": "%(XcodeProject.OutputPath)xcframeworks/%(XcodeProject.SchemeName)$(TargetPlatformIdentifier).xcframework",
+        "remove": ""
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "MacDevMessage",
+        "parameter": "FormatArguments",
+        "value": "%(_XcodeProjectXcFrameworkOutputs.Identity)"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "task": "ItemGroup",
+        "parameter": "FileWrites",
+        "include": "$(_BuildXcodeProjectsStamp);%(XcodeProject.OutputPath)**/*",
+        "remove": ""
+      },
+      {
+        "target": "_CalculateInputsOutputsForPack",
+        "task": "ItemGroup",
+        "parameter": "NuGetPackInput",
+        "include": "@(_BuildOutputInPackage-\u003E\u0027%(FinalOutputPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CalculateInputsOutputsForPack",
+        "task": "ItemGroup",
+        "parameter": "NuGetPackInput",
+        "include": "@(_TargetPathsToSymbols-\u003E\u0027%(FinalOutputPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CalculateXcodeProjectOutputPaths",
+        "task": "Hash",
+        "parameter": "ItemsToHash",
+        "value": "%(XcodeProject.Identity)"
+      },
+      {
+        "target": "_CheckForEolWorkloads",
+        "task": "NETSdkWarning",
+        "parameter": "FormatArguments",
+        "value": "%(EolWorkload.Identity);$([MSBuild]::ValueOrDefault(\u0027%(EolWorkload.Url)\u0027, \u0027https://aka.ms/dotnet-core-support\u0027))"
+      },
+      {
+        "target": "_CheckForObsoleteDotNetCliToolReferences",
+        "task": "NETSdkWarning",
+        "parameter": "FormatArguments",
+        "value": "%(_ReferenceToObsoleteDotNetCliTool.Identity)"
+      },
+      {
+        "target": "_CleanXcodeProjects",
+        "task": "RemoveDir",
+        "parameter": "Directories",
+        "value": "@(XcodeProject-\u003E\u0027%(OutputPath)\u0027)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "@(_ResolvedAppExtensionReferences-\u003E\u0027%(Identity)\\..\\codesign-bundle.items\u0027)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ItemGroup",
+        "parameter": "_CodesignBundle",
+        "include": "@(_CodesignAppExtensionBundle-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/%(BundleRelativePath)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "@(_ResolvedAppExtensionReferences-\u003E\u0027%(Identity)\\..\\codesign.items\u0027)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ItemGroup",
+        "parameter": "_CodesignItems",
+        "include": "@(_CodesignAppExtensionItem-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/%(BundleRelativePath)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "@(_ResolvedWatchAppReferences-\u003E\u0027%(Identity)\\..\\codesign-bundle.items\u0027)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ItemGroup",
+        "parameter": "_CodesignBundle",
+        "include": "@(_CodesignWatchBundle-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/Watch/%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "@(_ResolvedWatchAppReferences-\u003E\u0027%(Identity)\\..\\codesign.items\u0027)"
+      },
+      {
+        "target": "_CollectCodesigningData",
+        "task": "ItemGroup",
+        "parameter": "_CodesignItems",
+        "include": "@(_CodesignWatchItem-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/Watch/%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectDecompressedPlugIns",
+        "task": "ItemGroup",
+        "parameter": "_DecompressedPlugIns",
+        "include": "@(_CompressedPlugIns -\u003E \u0027%(ExtractionPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectDecompressedXpcServices",
+        "task": "ItemGroup",
+        "parameter": "_DecompressedXpcServices",
+        "include": "@(_CompressedXpcServices -\u003E \u0027%(ExtractionPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_FilteredFrameworkToPublish-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/$(_AppFrameworksRelativePath)%(Filename)%(Extension).framework/%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_FileNativeReference-\u003E\u0027$(_AppBundleName)$(AppBundleExtension)/$(_AppContentsRelativePathForPostProcessing)%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_MergedAppBundleDylib -\u003E \u0027$(_AppBundleName)$(AppBundleExtension)/$(_AppContentsRelativePathForPostProcessing)%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_PostProcessingAppExtensions -\u003E \u0027$(_AppBundleName)$(AppBundleExtension)\\$(_AppPlugInsRelativePath)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_PostProcessingXpcServices -\u003E \u0027$(_AppBundleName)$(AppBundleExtension)\\$(_AppXpcServicesRelativePath)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_WatchAppPostProcessingItems -\u003E \u0027$(_AppBundleName)$(AppBundleExtension)/Watch/%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectLocalizationFiles",
+        "task": "ItemGroup",
+        "parameter": "FileWrites",
+        "include": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_LocalizationFile.LogicalName)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectPropertyLists",
+        "task": "ItemGroup",
+        "parameter": "FileWrites",
+        "include": "$(DeviceSpecificIntermediateOutputPath)optimized\\%(_PropertyList.LogicalName)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectR2RFrameworksForPostProcessing",
+        "task": "ItemGroup",
+        "parameter": "_PostProcessingItem",
+        "include": "@(_CreatedFrameworksFromDylibs-\u003E\u0027$([System.IO.Path]::GetFileName($(AppBundleDir)))/$(_AppFrameworksRelativePath)%(Filename).framework/%(Filename)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectR2RObjectFilesForLinking",
+        "task": "ItemGroup",
+        "parameter": "_R2RObjectFilesForLinking",
+        "include": "@(_ReadyToRunObjectFilesToLink-\u003E\u0027%(NativeLinkerInputPath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectRidSpecificCodesignItems",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "%(_RidSpecificCodesignItemsPath.Identity)"
+      },
+      {
+        "target": "_CollectRidSpecificCodesignItems",
+        "task": "ItemGroup",
+        "parameter": "_CodesignItems",
+        "include": "@(_RidSpecificCodesignItems -\u003E \u0027$(_RelativePublishDir)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_CollectRidSpecificSymbolLists",
+        "task": "ReadLinesFromFile",
+        "parameter": "File",
+        "value": "%(_RidSpecificSymbolsListPath.Identity)"
+      },
+      {
+        "target": "_CollectRidSpecificUserFrameworksWithoutDebugSymbols",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "%(_RidSpecificUserFrameworksWithoutDebugSymbolsPath.Identity)"
+      },
+      {
+        "target": "_CompileNativeExecutable",
+        "task": "ItemGroup",
+        "parameter": "_NativeExecutableObjectFiles",
+        "include": "@(_CompileNativeExecutableFile -\u003E \u0027%(OutputFile)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeCodesignItems",
+        "task": "ItemGroup",
+        "parameter": "_CreateDumpExecutableToSign",
+        "include": "@(_CreateDumpExecutable -\u003E \u0027$(_DylibPublishDir)%(RelativePath)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeCodesignItems",
+        "task": "ItemGroup",
+        "parameter": "_CodesignItems",
+        "include": "@(_CreateDumpExecutableToSign -\u003E \u0027$(_RelativePublishDir)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeFrameworkFilesToPublish",
+        "task": "ReadItemsFromFile",
+        "parameter": "File",
+        "value": "@(_ResolvedAppExtensionReferences-\u003E\u0027%(Identity)\\..\\native-frameworks.items\u0027)"
+      },
+      {
+        "target": "_ComputeFrameworksToCreate",
+        "task": "ItemGroup",
+        "parameter": "_CreatedFrameworksFromDylibs",
+        "include": "@(_DylibsToConvertToFrameworks-\u003E\u0027$(_ComputeFrameworksForDylibsIntermediatePath)%(Filename).framework\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeFrameworksToCreate",
+        "task": "ItemGroup",
+        "parameter": "_CreatedFrameworkExecutableFromDylibs",
+        "include": "@(_CreatedFrameworksFromDylibs-\u003E\u0027%(OriginatingDylib)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "task": "PropertyGroup",
+        "parameter": "_XamarinSdkRuntimePackDirectory",
+        "value": "%(_XamarinFrameworkReference.RuntimePackPath)"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "task": "PropertyGroup",
+        "parameter": "_XamarinRefPackageDirectory",
+        "value": "%(_XamarinFrameworkReference.TargetingPackPath)"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "task": "PropertyGroup",
+        "parameter": "_MonoRuntimePackPath",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027%(_MonoFrameworkReference.RuntimePackPath)/runtimes/$(RuntimeIdentifier)/\u0027))"
+      },
+      {
+        "target": "_ComputeLinkerInputs",
+        "task": "PropertyGroup",
+        "parameter": "_CustomLinkerOptions",
+        "value": "\n\t\t\t\tAreAnyAssembliesTrimmed=$(_AreAnyAssembliesTrimmed)\n\t\t\t\tAssemblyName=$(AssemblyName).dll\n\t\t\t\t@(_AotArguments -\u003E \u0027AOTArgument=%(Identity)\u0027)\n\t\t\t\tAOTCompiler=$(_XamarinAOTCompiler)\n\t\t\t\tAOTOutputDirectory=$(_AOTOutputDirectory)\n\t\t\t\tDedupAssembly=$(_DedupAssembly)\n\t\t\t\tAppBundleManifestPath=$(_AppBundleManifestPath)\n\t\t\t\tCacheDirectory=$(_LinkerCacheDirectory)\n\t\t\t\t@(_BundlerDlsym -\u003E \u0027Dlsym=%(Identity)\u0027)\n\t\t\t\tDebug=$(_BundlerDebug)\n\t\t\t\tDeploymentTarget=$(_MinimumOSVersion)\n\t\t\t\t@(_CustomLinkFlags -\u003E \u0027CustomLinkFlags=%(Identity)\u0027)\n\t\t\t\t@(_DylibsToConvertToFrameworks -\u003E \u0027DylibToConvertToFramework=%(Identity)\u0027)\n\t\t\t\tEnableSGenConc=$(EnableSGenConc)\n\t\t\t\t@(_BundlerEnvironmentVariables -\u003E \u0027EnvironmentVariable=Overwrite=%(Overwrite)|%(Identity)=%(Value)\u0027)\n\t\t\t\t@(_XamarinFrameworkAssemblies -\u003E \u0027FrameworkAssembly=%(Filename)\u0027)\n\t\t\t\tInterpreter=$(MtouchInterpreter)\n\t\t\t\tIntermediateLinkDir=$(IntermediateLinkDir)\n\t\t\t\tInvariantGlobalization=$(InvariantGlobalization)\n\t\t\t\tHybridGlobalization=$(HybridGlobalization)\n\t\t\t\tItemsDirectory=$(_LinkerItemsDirectory)\n\t\t\t\tIsAppExtension=$(IsAppExtension)\n\t\t\t\tIsSimulatorBuild=$(_SdkIsSimulator)\n\t\t\t\tLibMonoLinkMode=$(_LibMonoLinkMode)\n\t\t\t\tLibXamarinLinkMode=$(_LibXamarinLinkMode)\n\t\t\t\tMarshalManagedExceptionMode=$(MarshalManagedExceptionMode)\n\t\t\t\tMarshalObjectiveCExceptionMode=$(MarshalObjectiveCExceptionMode)\n\t\t\t\t@(_MonoLibrary -\u003E \u0027MonoLibrary=%(Identity)\u0027)\n\t\t\t\tMtouchFloat32=$(MtouchFloat32)\n\t\t\t\tNoWarn=$(_BundlerNoWarn)\n\t\t\t\tOptimize=$(_BundlerOptimize)\n\t\t\t\tPartialStaticRegistrarLibrary=$(_LibPartialStaticRegistrar)\n\t\t\t\tPlatform=$(_PlatformName)\n\t\t\t\tPlatformAssembly=$(_PlatformAssemblyName).dll\n\t\t\t\tPublishReadyToRun=$(PublishReadyToRun)\n\t\t\t\tPublishReadyToRunContainerFormat=$(PublishReadyToRunContainerFormat)\n\t\t\t\tRelativeAppBundlePath=$(_RelativeAppBundlePath)\n\t\t\t\tRegistrar=$(Registrar)\n\t\t\t\t@(ReferenceNativeSymbol -\u003E \u0027ReferenceNativeSymbol=%(SymbolType):%(SymbolMode):%(Identity)\u0027)\n\t\t\t\tRequireLinkWithAttributeForObjectiveCClassSearch=$(RequireLinkWithAttributeForObjectiveCClassSearch)\n\t\t\t\tRequirePInvokeWrappers=$(_RequirePInvokeWrappers)\n\t\t\t\tRuntimeConfigurationFile=$(_RuntimeConfigurationFile)\n\t\t\t\tSdkDevPath=$(_SdkDevPath)\n\t\t\t\tSdkRootDirectory=$(_XamarinSdkRootDirectory)\n\t\t\t\tSdkVersion=$(_SdkVersion)\n\t\t\t\tSkipMarkingNSObjectsInUserAssemblies=$(_SkipMarkingNSObjectsInUserAssemblies)\n\t\t\t\tTargetArchitectures=$(TargetArchitectures)\n\t\t\t\tTargetFramework=$(_ComputedTargetFrameworkMoniker)\n\t\t\t\tUseLlvm=$(MtouchUseLlvm)\n\t\t\t\tVerbosity=$(_BundlerVerbosity)\n\t\t\t\tWarn=$(_BundlerWarn)\n\t\t\t\tWarnAsError=$(_BundlerWarnAsError)\n\t\t\t\tXamarinNativeLibraryDirectory=$(_XamarinNativeLibraryDirectory)\n\t\t\t\tXamarinRuntime=$(_XamarinRuntime)\n\t\t\t"
+      },
+      {
+        "target": "_ComputeLinkNativeExecutableInputs",
+        "task": "ItemGroup",
+        "parameter": "_AllLinkerFlags",
+        "include": "@(_ProcessedReferenceNativeSymbol-\u003E\u0027-u%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeManagedAssemblyToLink",
+        "task": "ItemGroup",
+        "parameter": "_LinkedResolvedFileToPublishCandidate",
+        "include": "@(ManagedAssemblyToLink-\u003E\u0027$(IntermediateLinkDir)%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeManagedAssemblyToLink",
+        "task": "ItemGroup",
+        "parameter": "_LinkedResolvedFileToPublishCandidate",
+        "include": "@(_PDBToLink-\u003E\u0027$(IntermediateLinkDir)%(Filename)%(Extension)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputeMonoComponents",
+        "task": "ItemGroup",
+        "parameter": "_MonoLibrary",
+        "include": "",
+        "remove": "@(_MonoRuntimeComponentDontLink -\u003E \u0027$(_MonoRuntimePackPathNative)%(Identity)\u0027)"
+      },
+      {
+        "target": "_ComputeMonoComponents",
+        "task": "ItemGroup",
+        "parameter": "_MonoLibrary",
+        "include": "@(_MonoRuntimeComponentLink -\u003E \u0027$(_MonoRuntimePackPathNative)%(Identity)\u0027)",
+        "remove": ""
+      },
+      {
+        "target": "_ComputePublishLocation",
+        "task": "ItemGroup",
+        "parameter": "ResolvedFileToPublish",
+        "include": "",
+        "remove": "@(_MonoRuntimeComponentDontLink -\u003E \u0027$(_MonoRuntimePackPath)/native/%(Identity)\u0027)"
+      },
+      {
+        "target": "_ComputePublishLocation",
+        "task": "ItemGroup",
+        "parameter": "_FrameworkNativeReference",
+        "include": "@(ResolvedFileToPublish -\u003E \u0027%(Identity)/%(Filename)\u0027)",
+        "remove": ""
+      }
+    ],
+    "propertyFunctionSites": [
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisCSharpCodeStyle",
+        "expressionKind": "Property:AnalysisLevelPrefixStyle",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelStyle), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisCSharpCodeStyle",
+        "expressionKind": "Property:AnalysisLevelSuffixStyle",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelStyle), \u0027$(AnalysisLevelPrefixStyle)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisCSharpCodeStyle",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "Exists(\u0027$(_GlobalAnalyzerConfigFile_MicrosoftCodeAnalysisCSharpCodeStyle)\u0027) and\n                           (\u0027$(AnalysisLevelStyle)\u0027 != \u0027$(AnalysisLevel)\u0027 or \u0027$(AnalysisModeStyle)\u0027 != \u0027$(AnalysisMode)\u0027 or (\u0027$(EffectiveAnalysisLevelStyle)\u0027 != \u0027\u0027 and $([MSBuild]::VersionGreaterThanOrEquals(\u0027$(EffectiveAnalysisLevelStyle)\u0027, \u002711.0\u0027))))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzers",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevel), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDesign",
+        "expressionKind": "Property:AnalysisLevelPrefixDesign",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelDesign), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDesign",
+        "expressionKind": "Property:AnalysisLevelSuffixDesign",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelDesign), \u0027$(AnalysisLevelPrefixDesign)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDesign",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersDesignRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelDesign), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDocumentation",
+        "expressionKind": "Property:AnalysisLevelPrefixDocumentation",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelDocumentation), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDocumentation",
+        "expressionKind": "Property:AnalysisLevelSuffixDocumentation",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelDocumentation), \u0027$(AnalysisLevelPrefixDocumentation)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersDocumentation",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersDocumentationRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelDocumentation), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersGlobalization",
+        "expressionKind": "Property:AnalysisLevelPrefixGlobalization",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelGlobalization), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersGlobalization",
+        "expressionKind": "Property:AnalysisLevelSuffixGlobalization",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelGlobalization), \u0027$(AnalysisLevelPrefixGlobalization)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersGlobalization",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersGlobalizationRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelGlobalization), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersInteroperability",
+        "expressionKind": "Property:AnalysisLevelPrefixInteroperability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelInteroperability), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersInteroperability",
+        "expressionKind": "Property:AnalysisLevelSuffixInteroperability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelInteroperability), \u0027$(AnalysisLevelPrefixInteroperability)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersInteroperability",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersInteroperabilityRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelInteroperability), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersMaintainability",
+        "expressionKind": "Property:AnalysisLevelPrefixMaintainability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelMaintainability), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersMaintainability",
+        "expressionKind": "Property:AnalysisLevelSuffixMaintainability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelMaintainability), \u0027$(AnalysisLevelPrefixMaintainability)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersMaintainability",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersMaintainabilityRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelMaintainability), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersNaming",
+        "expressionKind": "Property:AnalysisLevelPrefixNaming",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelNaming), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersNaming",
+        "expressionKind": "Property:AnalysisLevelSuffixNaming",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelNaming), \u0027$(AnalysisLevelPrefixNaming)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersNaming",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersNamingRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelNaming), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersPerformance",
+        "expressionKind": "Property:AnalysisLevelPrefixPerformance",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelPerformance), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersPerformance",
+        "expressionKind": "Property:AnalysisLevelSuffixPerformance",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelPerformance), \u0027$(AnalysisLevelPrefixPerformance)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersPerformance",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersPerformanceRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelPerformance), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersReliability",
+        "expressionKind": "Property:AnalysisLevelPrefixReliability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelReliability), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersReliability",
+        "expressionKind": "Property:AnalysisLevelSuffixReliability",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelReliability), \u0027$(AnalysisLevelPrefixReliability)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersReliability",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersReliabilityRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelReliability), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersSecurity",
+        "expressionKind": "Property:AnalysisLevelPrefixSecurity",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelSecurity), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersSecurity",
+        "expressionKind": "Property:AnalysisLevelSuffixSecurity",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelSecurity), \u0027$(AnalysisLevelPrefixSecurity)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersSecurity",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersSecurityRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelSecurity), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersUsage",
+        "expressionKind": "Property:AnalysisLevelPrefixUsage",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelUsage), \u0027-(.)*\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersUsage",
+        "expressionKind": "Property:AnalysisLevelSuffixUsage",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(AnalysisLevelUsage), \u0027$(AnalysisLevelPrefixUsage)-\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AddGlobalAnalyzerConfigForPackage_MicrosoftCodeAnalysisNetAnalyzersUsage",
+        "expressionKind": "Property:MicrosoftCodeAnalysisNetAnalyzersUsageRulesVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Replace($(EffectiveAnalysisLevelUsage), \u0027(\\.0)*$\u0027, \u0027\u0027))"
+      },
+      {
+        "target": "AssignLinkMetadata",
+        "expressionKind": "AssignLinkMetadata.Condition",
+        "value": "\u0027@(Resource)\u0027 != \u0027\u0027 and \u0027%(Resource.DefiningProjectFullPath)\u0027 != \u0027$(MSBuildProjectFullPath)\u0027 and $([MSBuild]::AreFeaturesEnabled(\u002717.10\u0027))"
+      },
+      {
+        "target": "AssignLinkMetadata",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "$([MSBuild]::AreFeaturesEnabled(\u002717.10\u0027))"
+      },
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:RoslynAssembliesPath",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027$(CSharpCoreTargetsPath)\u0027))"
+      },
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:RoslynAssembliesPath",
+        "value": "$([System.IO.Path]::Combine(\u0027$(RoslynAssembliesPath)\u0027, \u0027bincore\u0027))"
+      },
+      {
+        "target": "CollectApiCompatInputs",
+        "expressionKind": "Property:_apiCompatDefaultProjectSuppressionFile",
+        "value": "$([MSBuild]::NormalizePath(\u0027$(MSBuildProjectDirectory)\u0027, \u0027CompatibilitySuppressions.xml\u0027))"
+      },
+      {
+        "target": "ComputeContainerConfig",
+        "expressionKind": "Property:ContainerImageTag",
+        "value": "$([System.DateTime]::UtcNow.ToString(\u0027yyyyMMddhhmmss\u0027))"
+      },
+      {
+        "target": "ComputeContainerConfig",
+        "expressionKind": "Property:ContainerImageTag",
+        "value": "$([System.DateTime]::UtcNow.ToString(\u0027yyyyMMddhhmmss\u0027))"
+      },
+      {
+        "target": "ComputeEmbeddedApphostPaths",
+        "expressionKind": "GetEmbeddedApphostPaths.PackagedShimOutputDirectory",
+        "value": "$([MSBuild]::NormalizeDirectory($(PackagedShimOutputRootDirectory), \u0027shims\u0027, $(TargetFramework)))"
+      },
+      {
+        "target": "CopyFilesToOutputDirectory",
+        "expressionKind": "Message.Text",
+        "value": "$(MSBuildProjectName) -\u003E $([System.IO.Path]::GetFullPath(\u0027$(_WindowsMetadataOutputPath)\u0027))"
+      },
+      {
+        "target": "GenerateBuildDependencyFile",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00278.0\u0027))\n        and @(RuntimeHostConfigurationOption-\u003EWithMetadataValue(\u0027Identity\u0027, \u0027System.Runtime.Loader.UseRidGraph\u0027)-\u003EWithMetadataValue(\u0027Value\u0027, \u0027true\u0027)-\u003ECount()) == 0\n        and \u0027@(_KnownRuntimeIdentifierPlatformsForTargetFramework)\u0027 != \u0027\u0027"
+      },
+      {
+        "target": "GenerateGlobalnfloatUsing",
+        "expressionKind": "Condition",
+        "value": "\u0027$(Language)\u0027 == \u0027C#\u0027\n\t\t\t\t\t\tAnd \u0027$(NoNFloatUsing)\u0027 != \u0027true\u0027\n\t\t\t\t\t\tAnd (\u0027$(LangVersion)\u0027 == \u0027\u0027\n\t\t\t\t\t\t\tOr \u0027$(LangVersion)\u0027 == \u0027preview\u0027\n\t\t\t\t\t\t\tOr \u0027$(LangVersion)\u0027 == \u0027latest\u0027\n\t\t\t\t\t\t\tOr \u0027$(LangVersion)\u0027 == \u0027latestMajor\u0027\n\t\t\t\t\t\t\tOr \u0027$(LangVersion)\u0027 == \u0027default\u0027\n\t\t\t\t\t\t\tOr $([MSBuild]::VersionGreaterThanOrEquals(\u0027$(LangVersion)\u0027,\u002710.0\u0027))\n\t\t\t\t\t)"
+      },
+      {
+        "target": "GeneratePlatformCompatibleDefineConstants",
+        "expressionKind": "Condition",
+        "value": " \u0027$(DisableImplicitFrameworkDefines)\u0027 != \u0027true\u0027 and \u0027$(TargetPlatformIdentifier)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) "
+      },
+      {
+        "target": "GenerateTargetPlatformDefineConstants",
+        "expressionKind": "Condition",
+        "value": " \u0027$(DisableImplicitFrameworkDefines)\u0027 != \u0027true\u0027 and \u0027$(TargetPlatformIdentifier)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) "
+      },
+      {
+        "target": "GetAssemblyAttributes",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "\u0027$(GenerateTargetPlatformAttribute)\u0027 == \u0027true\u0027\n                         and \u0027$(TargetPlatformIdentifier)\u0027 != \u0027\u0027\n                         and \u0027$(TargetPlatformVersion)\u0027 != \u0027\u0027\n                         and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027\n                         and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027))"
+      },
+      {
+        "target": "GetAssemblyAttributes",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "\u0027$(GenerateSupportedOSPlatformAttribute)\u0027 == \u0027true\u0027\n                         and \u0027$(TargetPlatformIdentifier)\u0027 != \u0027\u0027\n                         and \u0027$(SupportedOSPlatformVersion)\u0027 != \u0027\u0027\n                         and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027\n                         and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027))"
+      },
+      {
+        "target": "GetAssemblyAttributes",
+        "expressionKind": "ItemGroup.Condition",
+        "value": "\u0027$(GenerateDisableRuntimeMarshallingAttribute)\u0027 == \u0027true\u0027\n                         and \u0027$(DisableRuntimeMarshalling)\u0027 == \u0027true\u0027\n                         and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027\n                         and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00277.0\u0027))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:DefaultProfilingSymbolsDir",
+        "value": "$([System.IO.Path]::Combine($(DefaultComposeDir), $(_ProfilingSymbolsDirectoryName)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ProfilingSymbolsDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeDir), $(_ProfilingSymbolsDirectoryName)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ProfilingSymbolsDir",
+        "value": "$([System.IO.Path]::Combine($(ProfilingSymbolsDir), $(PlatformTarget)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ProfilingSymbolsDir",
+        "value": "$([System.IO.Path]::Combine($(ProfilingSymbolsDir), $(_TFM)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ComposeDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeDir), $(PlatformTarget)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ComposeDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeDir), $(_TFM)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:StoreArtifactXml",
+        "value": "$([System.IO.Path]::Combine($(ComposeDir),\u0022artifact.xml\u0022))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:PublishDir",
+        "value": "$([System.IO.Path]::GetFullPath($(ComposeDir)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:_RandomFileName",
+        "value": "$([System.IO.Path]::GetRandomFileName())"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:TEMP",
+        "value": "$([System.IO.Path]::GetTempPath())"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ComposeWorkingDir",
+        "value": "$([System.IO.Path]::Combine($(TEMP), $(_RandomFileName)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:ComposeWorkingDir",
+        "value": "$([System.IO.Path]::GetFullPath($(ComposeWorkingDir)))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:StoreStagingDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeWorkingDir),\u0022StagingDir\u0022))"
+      },
+      {
+        "target": "PrepareForComposeStore",
+        "expressionKind": "Property:StoreSymbolsStagingDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeWorkingDir),\u0022SymbolsStagingDir\u0022))"
+      },
+      {
+        "target": "PrepforRestoreForComposeStore",
+        "expressionKind": "Property:StoreWorkerWorkingDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeWorkingDir),\u0022$(StorePackageName)_$(StorePackageVersionForFolderName)\u0022))"
+      },
+      {
+        "target": "PrepforRestoreForComposeStore",
+        "expressionKind": "Property:_PackageProjFile",
+        "value": "$([System.IO.Path]::Combine($(StoreWorkerWorkingDir), \u0022Restore.csproj\u0022))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:_CoreclrDir",
+        "value": "$([System.IO.Path]::GetDirectoryName($(_CoreclrPath)))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:_CoreclrPkgDir",
+        "value": "$([System.IO.Path]::Combine($(_CoreclrDir),\u0022..\\..\\..\\\u0022))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:CrossgenDir",
+        "value": "$([System.IO.Path]::Combine($(_CoreclrPkgDir),\u0022tools\u0022))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:Crossgen",
+        "value": "$([System.IO.Path]::Combine($(CrossgenDir),\u0022crossgen\u0022))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:Crossgen",
+        "value": "$([System.IO.Path]::Combine($(CrossgenDir),\u0022crossgen.exe\u0022))"
+      },
+      {
+        "target": "PrepOptimizer",
+        "expressionKind": "Property:Crossgen",
+        "value": "$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(_NetCoreRefDir), $([System.IO.Path]::GetFileName($(Crossgen)))))))"
+      },
+      {
+        "target": "ResizetizeImages",
+        "expressionKind": "Property:ResizetizerIntermediateOutputAbsolutePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(_MauiIntermediateImages)\u0027))"
+      },
+      {
+        "target": "ResolveTargetingPackAssets",
+        "expressionKind": "Property:PackageConflictPreferredPackages",
+        "value": "$([MSBuild]::Unescape($(PackageConflictPreferredPackages)))"
+      },
+      {
+        "target": "RunCrossGen",
+        "expressionKind": "Property:CrossgenProfilingSymbolsOutputDirectory",
+        "value": "$([System.IO.Path]::GetDirectoryName($(_RuntimeSymbolsDir)\\$(CrossgenSubOutputPath)))"
+      },
+      {
+        "target": "RunCrossGen",
+        "expressionKind": "Property:CrossgenSymbolsStagingDirectory",
+        "value": "$([System.IO.Path]::GetDirectoryName($(StoreSymbolsStagingDir)\\$(CrossgenSubOutputPath)))"
+      },
+      {
+        "target": "RunCrossGen",
+        "expressionKind": "Exec.Condition",
+        "value": "!Exists($([System.IO.Path]::Combine($(PublishDir),$(CrossgenSubOutputPath))))"
+      },
+      {
+        "target": "RunCrossGen",
+        "expressionKind": "Copy.Condition",
+        "value": "!Exists($([System.IO.Path]::Combine($(PublishDir),$(CrossgenSubOutputPath))))"
+      },
+      {
+        "target": "RunPackageValidation",
+        "expressionKind": "Property:PackageValidationBaselinePath",
+        "value": "$([MSBuild]::NormalizePath(\u0027$(NuGetPackageRoot)\u0027, \u0027$(PackageValidationBaselineName.ToLower())\u0027, \u0027$(PackageValidationBaselineVersion)\u0027, \u0027$(PackageValidationBaselineName.ToLower()).$(PackageValidationBaselineVersion).nupkg\u0027))"
+      },
+      {
+        "target": "RunPackageValidation",
+        "expressionKind": "MakeDir.Directories",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027$(_ApiCompatValidatePackageSemaphoreFile)\u0027))"
+      },
+      {
+        "target": "ShowRunHelp",
+        "expressionKind": "Error.Condition",
+        "value": "$([MSBuild]::IsOSPlatform(\u0027windows\u0027))"
+      },
+      {
+        "target": "StoreWorkerMapper",
+        "expressionKind": "MSBuild.Properties",
+        "value": "SelfContained=false;UseAppHost=false;MSBuildProjectExtensionsPath=$(ComposeWorkingDir)\\%(PackageReferencesToStore.PackageName)_$([System.String]::Copy(\u0027%(PackageReferencesToStore.PackageVersion)\u0027).Replace(\u0027*\u0027,\u0027-\u0027))\\;"
+      },
+      {
+        "target": "_BlockWinMDsOnUnsupportedTFMs",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), \u00275.0\u0027))"
+      },
+      {
+        "target": "_BuildXcodeProjects",
+        "expressionKind": "Condition",
+        "value": " \u0027@(XcodeProject-\u003ECount())\u0027 != \u00270\u0027 and $([MSBuild]::IsOSPlatform(\u0027osx\u0027)) "
+      },
+      {
+        "target": "_CalculateXcodeProjectOutputPaths",
+        "expressionKind": "Condition",
+        "value": " \u0027@(XcodeProject-\u003ECount())\u0027 != \u00270\u0027 and $([MSBuild]::IsOSPlatform(\u0027osx\u0027)) "
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishWeb",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_WebDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishWorker",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_WorkerDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_CheckContainersPackage",
+        "expressionKind": "Property:_SdkCanPublishConsole",
+        "value": "$([MSBuild]::VersionGreaterThanOrEquals(\u0027$(NETCoreSdkVersion)\u0027, \u0027$(_ConsoleDefaultSdkVersion)\u0027))"
+      },
+      {
+        "target": "_CheckForAspireWorkloadDeprecation",
+        "expressionKind": "Condition",
+        "value": "\u0027$(IsAspireHost)\u0027 == \u0027true\u0027 and (\u0027$(AspireHostingSDKVersion)\u0027 == \u0027\u0027 or $([MSBuild]::VersionLessThan(\u0027$(AspireHostingSDKVersion)\u0027, \u00279.0.0\u0027)))"
+      },
+      {
+        "target": "_CheckForEolWorkloads",
+        "expressionKind": "NETSdkWarning.FormatArguments",
+        "value": "%(EolWorkload.Identity);$([MSBuild]::ValueOrDefault(\u0027%(EolWorkload.Url)\u0027, \u0027https://aka.ms/dotnet-core-support\u0027))"
+      },
+      {
+        "target": "_CheckForInvalidTargetPlatformVersion",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetPlatformVersion)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) and (\u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027 or \u0027$(_EnablePackageReferencesInVCProjects)\u0027 == \u0027true\u0027)"
+      },
+      {
+        "target": "_CheckForInvalidWindowsDesktopTargetingConfiguration",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027)) and (\u0027$(UseWindowsForms)\u0027 == \u0027true\u0027 or \u0027$(UseWPF)\u0027 == \u0027true\u0027)"
+      },
+      {
+        "target": "_CheckForMauiMinimumSupportedWorkloadVersion",
+        "expressionKind": "Condition",
+        "value": "\r\n      \u0027$(SkipCheckForMauiMinimumSupportedWorkloadVersion)\u0027 != \u0027true\u0027 and\r\n      \u0027$(MauiWorkloadVersion)\u0027 != \u0027\u0027 and\r\n      $([MSBuild]::VersionLessThan(\u0027$(MauiWorkloadVersion)\u0027, \u0027$(MauiMinimumSupportedWorkloadVersion)\u0027))"
+      },
+      {
+        "target": "_CheckForNotRecommendedNETStandardVersion",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETStandard\u0027 and $([MSBuild]::VersionLessThan($(TargetFrameworkVersion), \u00272.0\u0027))"
+      },
+      {
+        "target": "_CheckForSupportedOSPlatformVersionHigherThanTargetPlatformVersion",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetPlatformVersion)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0))"
+      },
+      {
+        "target": "_CheckForSupportedOSPlatformVersionHigherThanTargetPlatformVersion",
+        "expressionKind": "NETSdkError.Condition",
+        "value": "\u0027$(SupportedOSPlatformVersion)\u0027 != \u0027\u0027 and $(TargetPlatformVersion) != \u0027\u0027 and $([MSBuild]::VersionGreaterThan($(SupportedOSPlatformVersion), $(TargetPlatformVersion)))"
+      },
+      {
+        "target": "_CheckForTransitiveWindowsDesktopDependencies",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027)) and \u0027$(TargetPlatformIdentifier)\u0027 != \u0027Windows\u0027 and \u0027@(TransitiveFrameworkReference)\u0027 != \u0027\u0027"
+      },
+      {
+        "target": "_CheckForUnnecessaryWindowsDesktopSDK",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u00275.0\u0027)) and \u0027$(_MicrosoftWindowsDesktopSdkImported)\u0027 == \u0027true\u0027 and \u0027$(TargetFrameworks)\u0027 == \u0027\u0027"
+      },
+      {
+        "target": "_CheckForUnsupportedAppHostUsage",
+        "expressionKind": "NETSdkWarning.Condition",
+        "value": "\u0027$(RuntimeIdentifier)\u0027 != \u0027\u0027 and \u0027$(_TargetFrameworkVersionWithoutV)\u0027 != \u0027\u0027 and $([MSBuild]::VersionLessThan($(_TargetFrameworkVersionWithoutV), \u00278.0\u0027)) and \u0027$(_SelfContainedWasSpecified)\u0027 != \u0027true\u0027"
+      },
+      {
+        "target": "_CheckForUnsupportedTargetFramework",
+        "expressionKind": "NETSdkError.FormatArguments",
+        "value": "$([MSBuild]::Escape(\u0027$(TargetFramework)\u0027))"
+      },
+      {
+        "target": "_CheckForUnsupportedTargetFramework",
+        "expressionKind": "NETSdkError.FormatArguments",
+        "value": "$([MSBuild]::Escape(\u0027$(TargetFramework)\u0027))"
+      },
+      {
+        "target": "_CheckForUnsupportedTargetPlatformIdentifier",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetPlatformIdentifier)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) And (\u0027$(DesignTimeBuild)\u0027 != \u0027true\u0027 Or \u0027@(MissingWorkloadPack)\u0027 == \u0027\u0027)"
+      },
+      {
+        "target": "_CleanXcodeProjects",
+        "expressionKind": "Condition",
+        "value": " \u0027@(XcodeProject-\u003ECount())\u0027 != \u00270\u0027 and $([MSBuild]::IsOSPlatform(\u0027osx\u0027)) "
+      },
+      {
+        "target": "_CollectItemsForPostProcessing",
+        "expressionKind": "Item:_PostProcessingItem.Include",
+        "value": "$([System.IO.Path]::GetFileName(\u0027$(AppBundleDir)\u0027))/$(_NativeExecutableRelativePath)"
+      },
+      {
+        "target": "_CollectR2RFrameworksForPostProcessing",
+        "expressionKind": "Item:_PostProcessingItem.Include",
+        "value": "@(_CreatedFrameworksFromDylibs-\u003E\u0027$([System.IO.Path]::GetFileName($(AppBundleDir)))/$(_AppFrameworksRelativePath)%(Filename).framework/%(Filename)\u0027)"
+      },
+      {
+        "target": "_CollectR2RFrameworksForPostProcessing",
+        "expressionKind": "Item:_PostProcessingItem.Include",
+        "value": "$([System.IO.Path]::GetFileName(\u0027$(AppBundleDir)\u0027))/$(_AppFrameworksRelativePath)$(_R2RFrameworkName).framework/$(_R2RFrameworkName)"
+      },
+      {
+        "target": "_CompileEntitlements",
+        "expressionKind": "Item:EmbedInBinlog.Include",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(CodesignEntitlements)\u0027))"
+      },
+      {
+        "target": "_ComputeCompileApiDefinitionsInputs",
+        "expressionKind": "Property:_CompiledApiDefinitionLibPaths",
+        "value": "$(AdditionalLibPaths);$([System.IO.Path]::GetDirectoryName(\u0027$(BaseLibDllPath)\u0027))"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "expressionKind": "Property:_XamarinNativeLibraryDirectory",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027$(_XamarinSdkRuntimePackDirectory)/runtimes/$(RuntimeIdentifier)/native/\u0027))"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "expressionKind": "Property:_XamarinIncludeDirectory",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027$(_XamarinSdkRuntimePackDirectory)/runtimes/$(RuntimeIdentifier)/native/\u0027))"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "expressionKind": "Property:_XamarinRefAssemblyDirectory",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027$(_XamarinRefPackageDirectory)/ref/$(_XamarinDotNetVersion)/\u0027))"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "expressionKind": "Property:_MonoRuntimePackPath",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027%(_MonoFrameworkReference.RuntimePackPath)/runtimes/$(RuntimeIdentifier)/\u0027))"
+      },
+      {
+        "target": "_ComputeFrameworkVariables",
+        "expressionKind": "Property:_MonoRuntimePackPathNative",
+        "value": "$([MSBuild]::NormalizeDirectory(\u0027$(_MonoRuntimePackPath)native/\u0027))"
+      },
+      {
+        "target": "_ComputeLinkerInputs",
+        "expressionKind": "Property:_CustomLinkerOptionsFile",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)custom-linker-options.txt\u0027))"
+      },
+      {
+        "target": "_ComputeLinkerInputs",
+        "expressionKind": "Property:_LinkerItemsDirectory",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)linker-items\u0027))"
+      },
+      {
+        "target": "_ComputeLinkerInputs",
+        "expressionKind": "Property:_LinkerCacheDirectory",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)linker-cache\u0027))"
+      },
+      {
+        "target": "_ComputeMlaunchInstallArguments",
+        "expressionKind": "Error.Condition",
+        "value": "$([MSBuild]::IsOSPlatform(\u0027windows\u0027))"
+      },
+      {
+        "target": "_ComputeMlaunchRunArguments",
+        "expressionKind": "Error.Condition",
+        "value": "$([MSBuild]::IsOSPlatform(\u0027windows\u0027))"
+      },
+      {
+        "target": "_ComputeVariables",
+        "expressionKind": "Property:_AbsolutePublishDir",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(MSBuildProjectDirectory)\\$(PublishDir)\u0027))"
+      },
+      {
+        "target": "_ComputeVariables",
+        "expressionKind": "Property:_RelativePublishDir",
+        "value": "$([MSBuild]::MakeRelative($(MSBuildProjectDirectory),$(_AbsolutePublishDir)))"
+      },
+      {
+        "target": "_ComputeVariables",
+        "expressionKind": "Property:_RelativePublishDir",
+        "value": "$([MSBuild]::EnsureTrailingSlash($(_RelativePublishDir)))"
+      },
+      {
+        "target": "_ComputeVariables",
+        "expressionKind": "Property:_RelativeAppBundlePath",
+        "value": "$([MSBuild]::MakeRelative($(_AbsolutePublishDir),$(MSBuildProjectDirectory)/$(_AppBundlePath)))"
+      },
+      {
+        "target": "_ComputeVariables",
+        "expressionKind": "Property:_IntermediateDecompressionDir",
+        "value": "$([MSBuild]::EnsureTrailingSlash(\u0027$(DeviceSpecificIntermediateOutputPath)decompressed\u0027))"
+      },
+      {
+        "target": "_CopyDirectoriesToBundle",
+        "expressionKind": "Property:_DittoArchitectures",
+        "value": "--arch $([System.String]::Join(\u0027--arch \u0027,$(TargetArchitectures.ToLowerInvariant().Split(\u0027,\u0027))))"
+      },
+      {
+        "target": "_CoreCreateIpa",
+        "expressionKind": "Property:IpaPackageDir",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027$(IpaPackagePath)\u0027))"
+      },
+      {
+        "target": "_CoreCreateIpa",
+        "expressionKind": "Property:IpaPackageName",
+        "value": "$([System.IO.Path]::GetFileName(\u0027$(IpaPackagePath)\u0027))"
+      },
+      {
+        "target": "_CreateBindingResourcePackage",
+        "expressionKind": "MakeDir.Directories",
+        "value": "$([System.IO.Path]::GetDirectoryName($(BindingResourcePath)))"
+      },
+      {
+        "target": "_FindMachOToolchain",
+        "expressionKind": "Property:_XcodeVersion",
+        "value": "$([System.Text.RegularExpressions.Regex]::Match($(_XcodeVersionString), \u0027[1-9]\\d*\u0027))"
+      },
+      {
+        "target": "_GenerateBundleName",
+        "expressionKind": "Property:_AppContainerDir",
+        "value": "$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetDirectoryName($(AppBundleDir)))))"
+      },
+      {
+        "target": "_GenerateBundleName",
+        "expressionKind": "Property:_AppBundlePath",
+        "value": "$([MSBuild]::MakeRelative(\u0027$(MSBuildProjectDirectory)\u0027,\u0027$(AppBundleDir)\u0027))"
+      },
+      {
+        "target": "_GenerateBundleName",
+        "expressionKind": "Property:_AppBundlePath",
+        "value": "$([MSBuild]::EnsureTrailingSlash(\u0027$(_AppBundlePath)\u0027))"
+      },
+      {
+        "target": "_GenerateCompileDependencyCache",
+        "expressionKind": "Hash.IgnoreCase",
+        "value": "$([MSBuild]::ValueOrDefault(\u0060$(CoreCompileCacheIgnoreCase)\u0060, \u0060true\u0060))"
+      },
+      {
+        "target": "_GenerateDesignerDepsFile",
+        "expressionKind": "Item:DesignerRuntimeImplementationProjectOutputGroupOutput.Include",
+        "value": "$([MSBuild]::NormalizePath($(_DesignerDepsFilePath)))"
+      },
+      {
+        "target": "_GenerateDesignerRuntimeConfigFile",
+        "expressionKind": "Item:DesignerRuntimeImplementationProjectOutputGroupOutput.Include",
+        "value": "$([MSBuild]::NormalizePath($(_DesignerRuntimeConfigFilePath)))"
+      },
+      {
+        "target": "_GenerateProjectRestoreGraphPerFramework",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreProjectSpec",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GenerateRestoreSpecs",
+        "expressionKind": "Item:_RestoreGraphEntry.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_GetAppHostPaths",
+        "expressionKind": "Property:AppHostIntermediatePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)apphost$(_NativeExecutableExtension)\u0027))"
+      },
+      {
+        "target": "_GetAppHostPaths",
+        "expressionKind": "Property:AppHostForPublishIntermediatePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)apphost_publish$(_NativeExecutableExtension)\u0027))"
+      },
+      {
+        "target": "_GetAppHostPaths",
+        "expressionKind": "Property:SingleFileHostIntermediatePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)singlefilehost$(_NativeExecutableExtension)\u0027))"
+      },
+      {
+        "target": "_GetBuildXcodeProjectsInputs",
+        "expressionKind": "Condition",
+        "value": " \u0027@(XcodeProject-\u003ECount())\u0027 != \u00270\u0027 and $([MSBuild]::IsOSPlatform(\u0027osx\u0027)) "
+      },
+      {
+        "target": "_GetComHostPaths",
+        "expressionKind": "Property:ComHostIntermediatePath",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(IntermediateOutputPath)$(ComHostFileName)\u0027))"
+      },
+      {
+        "target": "_GetCrossgenProps",
+        "expressionKind": "Property:_CrossProjFileDir",
+        "value": "$([System.IO.Path]::Combine($(ComposeWorkingDir),\u0022Optimize\u0022))"
+      },
+      {
+        "target": "_GetCrossgenProps",
+        "expressionKind": "Property:_NetCoreRefDir",
+        "value": "$([System.IO.Path]::Combine($(_CrossProjFileDir), \u0022netcoreapp\u0022))"
+      },
+      {
+        "target": "_GetCrossgenProps",
+        "expressionKind": "Property:_CrossProjAssetsFile",
+        "value": "$([System.IO.Path]::Combine($(_CrossProjFileDir),  project.assets.json))"
+      },
+      {
+        "target": "_GetCurrentAndPriorPublishFileWrites",
+        "expressionKind": "Property:_NormalizedPublishDir",
+        "value": "$([MSBuild]::NormalizeDirectory($(PublishDir)))"
+      },
+      {
+        "target": "_GetRestoreSettingsPerFramework",
+        "expressionKind": "Item:_RestoreSettingsPerFramework.Include",
+        "value": "$([System.Guid]::NewGuid())"
+      },
+      {
+        "target": "_InitializeBasicProps",
+        "expressionKind": "Property:PathSeparator",
+        "value": "$([System.IO.Path]::PathSeparator)"
+      },
+      {
+        "target": "_InitializeBasicProps",
+        "expressionKind": "Property:DirectorySeparatorChar",
+        "value": "$([System.IO.Path]::DirectorySeparatorChar)"
+      },
+      {
+        "target": "_MauiGetAssemblyAttributesFromAppxManifest",
+        "expressionKind": "Property:_MauiAppxManifestContents",
+        "value": "$([System.IO.File]::ReadAllText(\u0027$(_MauiIntermediateManifest)Package.appxmanifest\u0027))"
+      },
+      {
+        "target": "_MauiXamlComputeInflator",
+        "expressionKind": "Warning.Condition",
+        "value": "\u0027$(MauiXamlInflator)\u0027 != \u0027\u0027 And !$([System.String]::new(\u0027$(MauiXamlInflator)\u0027).ToLowerInvariant().Contains(\u0027sourcegen\u0027))"
+      },
+      {
+        "target": "_MonoReadAvailableComponentsManifest",
+        "expressionKind": "Property:_MonoRuntimeComponentManifestJsonFilePath",
+        "value": "$([MSBuild]::NormalizePath(\u0027%(RuntimePackPath)\u0027, \u0027runtimes\u0027, \u0027$(RuntimeIdentifier)\u0027, \u0027build\u0027, \u0027RuntimeComponentManifest.json\u0027))"
+      },
+      {
+        "target": "_NativeStripFiles",
+        "expressionKind": "MakeDir.Directories",
+        "value": "$([System.IO.Path]::GetDirectoryName(\u0027%(_NativeStripItems.StripStampFile)\u0027))"
+      },
+      {
+        "target": "_NormalizeTargetPlatformVersion",
+        "expressionKind": "Condition",
+        "value": "\u0027$(TargetPlatformVersion)\u0027 != \u0027\u0027 and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), 5.0)) and (\u0027$(Language)\u0027 != \u0027C\u002B\u002B\u0027 or \u0027$(_EnablePackageReferencesInVCProjects)\u0027 == \u0027true\u0027)"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerLabel.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerLabel.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerPort.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerPort.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_ParseItemsForPublishingSingleContainer",
+        "expressionKind": "Item:ContainerEnvironmentVariables.Include",
+        "value": "$([System.String]::Copy(\u0027%(_ParsedContainerEnvironmentVariables.Identity)\u0027).Split(\u0027:\u0027)[0])"
+      },
+      {
+        "target": "_PublishMultiArchContainers",
+        "expressionKind": "MSBuild.BuildInParallel",
+        "value": "$([MSBuild]::ValueOrDefault(\u0027$(ContainerPublishInParallel)\u0027, \u0027true\u0027))"
+      },
+      {
+        "target": "_ResolveCompilerVersion",
+        "expressionKind": "Property:_RoslynApiVersion",
+        "value": "$([System.Version]::Parse(%(_CodeAnalysisIdentity.Version)).Major).$([System.Version]::Parse(%(_CodeAnalysisIdentity.Version)).Minor)"
+      },
+      {
+        "target": "_SetupStageForCrossgen",
+        "expressionKind": "Property:_RuntimeRefDir",
+        "value": "$([System.IO.Path]::Combine($(StoreWorkerWorkingDir), \u0022runtimeref\u0022))"
+      },
+      {
+        "target": "_SetupStageForCrossgen",
+        "expressionKind": "Property:_RuntimeOptimizedDir",
+        "value": "$([System.IO.Path]::Combine($(StoreWorkerWorkingDir), \u0022runtimopt\u0022))"
+      },
+      {
+        "target": "_SetupStageForCrossgen",
+        "expressionKind": "Property:_RuntimeSymbolsDir",
+        "value": "$([System.IO.Path]::Combine($(StoreWorkerWorkingDir), \u0022runtimesymbols\u0022))"
+      },
+      {
+        "target": "_TouchR2ROutputs",
+        "expressionKind": "Condition",
+        "value": "\u0027$(FilterReadyToRunAssemblies)\u0027 == \u0027true\u0027 And Exists(\u0027$(_R2RInputHashFile)\u0027) And Exists(\u0027$(_R2RInputHashFile).trigger\u0027) And $([System.IO.File]::GetLastWriteTime(\u0027$(_R2RInputHashFile)\u0027).Ticks) \u003C $([System.IO.File]::GetLastWriteTime(\u0027$(_R2RInputHashFile).trigger\u0027).Ticks)"
+      },
+      {
+        "target": "_ValidateMauiXamlHotReload",
+        "expressionKind": "Property:_MauiXamlHotReloadUpper",
+        "value": "$([System.String]::Copy(\u0027$(MauiXamlHotReload)\u0027).Trim().ToUpperInvariant())"
+      },
+      {
+        "target": "_ValidateXcodeVersion",
+        "expressionKind": "Property:_XcodeVersionMajorMinorOnly",
+        "value": "$([System.Version]::Parse(\u0027$(_XcodeVersion)\u0027).Major).$([System.Version]::Parse(\u0027$(_XcodeVersion)\u0027).Minor)"
+      },
+      {
+        "target": "_ValidateXcodeVersion",
+        "expressionKind": "Property:_RecommendedXcodeVersionMajorMinorOnly",
+        "value": "$([System.Version]::Parse(\u0027$(_RecommendedXcodeVersion)\u0027).Major).$([System.Version]::Parse(\u0027$(_RecommendedXcodeVersion)\u0027).Minor)"
+      },
+      {
+        "target": "_VSTestConsole",
+        "expressionKind": "VSTestTask.VSTestSetting",
+        "value": "$([MSBuild]::ValueOrDefault($(VSTestSetting), \u0027$(RunSettingsFilePath)\u0027))"
+      },
+      {
+        "target": "_VSTestMSBuild",
+        "expressionKind": "VSTestTask2.VSTestSetting",
+        "value": "$([MSBuild]::ValueOrDefault($(VSTestSetting), \u0027$(RunSettingsFilePath)\u0027))"
+      },
+      {
+        "target": "_WarnWhenUsingNET10AndVSPriorTo18",
+        "expressionKind": "Condition",
+        "value": "$([MSBuild]::VersionLessThan($(MSBuildVersion), \u002717.15.0\u0027)) and \u0027$(TargetFrameworkIdentifier)\u0027 == \u0027.NETCoreApp\u0027 and $([MSBuild]::VersionGreaterThanOrEquals($(_TargetFrameworkVersionWithoutV), \u002710.0\u0027))"
+      },
+      {
+        "target": "_WriteAppManifest",
+        "expressionKind": "Item:EmbedInBinlog.Include",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(_AppBundleManifestPath)\u0027))"
+      },
+      {
+        "target": "_WriteAppManifest",
+        "expressionKind": "Item:EmbedInBinlog.Include",
+        "value": "$([System.IO.Path]::GetFullPath(\u0027$(AppBundleManifest)\u0027))"
+      }
+    ],
+    "inlineUsingTasks": [
+      {
+        "TaskName": "MonoRuntimeComponentManifestReadTask",
+        "ExpandedTaskName": "MonoRuntimeComponentManifestReadTask",
+        "Condition": null,
+        "Notes": "TaskFactory=\u0027JsonToItemsTaskFactory.JsonToItemsTaskFactory\u0027 (factory binding) is not supported in v1"
+      },
+      {
+        "TaskName": "ILLink",
+        "ExpandedTaskName": "ILLink",
+        "Condition": "\u0027$(ILLinkTasksAssembly)\u0027 != \u0027\u0027",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1"
+      },
+      {
+        "TaskName": "ComputeManagedAssemblies",
+        "ExpandedTaskName": "ComputeManagedAssemblies",
+        "Condition": "\u0027$(ILLinkTasksAssembly)\u0027 != \u0027\u0027",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1"
+      }
+    ],
+    "unresolvedUsingTasks": [
+      {
+        "TaskName": "MonoRuntimeComponentManifestReadTask",
+        "ExpandedTaskName": "MonoRuntimeComponentManifestReadTask",
+        "DeclaredAssembly": "$(MonoTargetsTasksAssemblyPath)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027JsonToItemsTaskFactory.JsonToItemsTaskFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "ILLink",
+        "ExpandedTaskName": "ILLink",
+        "DeclaredAssembly": "$(ILLinkTasksAssembly)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "ComputeManagedAssemblies",
+        "ExpandedTaskName": "ComputeManagedAssemblies",
+        "DeclaredAssembly": "$(ILLinkTasksAssembly)",
+        "Status": "inline-unsupported",
+        "Notes": "TaskFactory=\u0027TaskHostFactory\u0027 (factory binding) is not supported in v1",
+        "IsUsed": true
+      },
+      {
+        "TaskName": "Microsoft.Maui.Controls.Build.Tasks.XamlCTask",
+        "ExpandedTaskName": "Microsoft.Maui.Controls.Build.Tasks.XamlCTask",
+        "DeclaredAssembly": "$(MSBuildThisFileDirectory)Microsoft.Maui.Controls.Build.Tasks.dll",
+        "Status": "unresolved",
+        "Notes": "AssemblyFile path does not exist after expansion: \u0027/Users/simonrozsival/Projects/playground/bsharp/fixtures/maui-net11/Microsoft.Maui.Controls.Build.Tasks.dll\u0027",
+        "IsUsed": true
+      }
+    ],
+    "taskMetadataLoadErrors": [
+      "task \u0027Microsoft.Build.Tasks.CopyRefAssembly\u0027: type not found in Microsoft.Build.Tasks.Core.dll"
+    ]
+  }
+}

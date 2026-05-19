@@ -2413,15 +2413,18 @@ static partial class TaskRunner {
         Process? _process;
         Stream? _stdin;
         Stream? _stdout;
+        readonly object _sync = new();
         public TaskServerClient(string path) => _path = path;
 
         public Bsharp.Generated.TaskModel.TaskResult Invoke(Bsharp.Generated.TaskModel.TaskInvocation invocation) {
-            EnsureStarted();
-            var payload = JsonSerializer.SerializeToUtf8Bytes(invocation, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskInvocation);
-            WriteFrame(_stdin!, payload);
-            var response = ReadFrame(_stdout!) ?? throw new EndOfStreamException("task server exited before writing a response");
-            return JsonSerializer.Deserialize(response, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskResult)
-                ?? new Bsharp.Generated.TaskModel.TaskResult { Success = false, Error = "task server returned an empty response" };
+            lock (_sync) {
+                EnsureStarted();
+                var payload = JsonSerializer.SerializeToUtf8Bytes(invocation, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskInvocation);
+                WriteFrame(_stdin!, payload);
+                var response = ReadFrame(_stdout!) ?? throw new EndOfStreamException("task server exited before writing a response");
+                return JsonSerializer.Deserialize(response, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskResult)
+                    ?? new Bsharp.Generated.TaskModel.TaskResult { Success = false, Error = "task server returned an empty response" };
+            }
         }
 
         void EnsureStarted() {
