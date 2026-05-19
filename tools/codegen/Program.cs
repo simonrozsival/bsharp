@@ -2055,6 +2055,14 @@ static bool IsCriticalBuildTarget(string name) {
         "CollectFrameworkReferences" => false,
         "AddPrunePackageReferences" => false,
         "_CollectTargetFrameworkForTelemetry" => false,
+        "InitializeSourceControlInformationFromSourceControlManager" => false,
+        "SetEmbeddedFilesFromSourceControlManagerUntrackedFiles" => false,
+        "SourceLinkHasSingleProvider" => false,
+        "_SourceLinkHasSingleProvider" => false,
+        "GetSourceLinkUrl" => false,
+        "TranslateRepositoryUrls" => false,
+        "GenerateSourceLinkFile" => false,
+        "_GenerateSourceLinkFile" => false,
         "_GetAllRestoreProjectPathItems" => false,
         "_FilterRestoreGraphProjectInputItems" => false,
         "ResolvePackageAssets" => false,
@@ -3594,22 +3602,16 @@ static partial class Tasks {
         if (!string.IsNullOrEmpty(target.Condition))
             sb.AppendLine($"            if ({NegateBoolExpr(CompileCondWithFallback(target.Condition, instance))}) {{ Log.TargetSkipped({CSharpLiteral(name)}, \"condition was false\"); return; }}");
 
-        // DependsOnTargets — consecutive static literals are de-duplicated and emitted as
-        // a parallel batch. Dynamic deps preserve order and form batch boundaries.
+        // DependsOnTargets are ordered by MSBuild semantics. We still de-duplicate a
+        // literal run because target methods are execute-once, but we must not flatten the
+        // run into Task.WhenAll: later targets often consume item/property mutations from
+        // earlier targets (e.g. CoreCompile needs references populated by ResolveReferences).
         var literalRun = new List<string>();
         var literalRunSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void FlushLiteralRun() {
             if (literalRun.Count == 0) return;
-            if (literalRun.Count == 1) {
-                sb.AppendLine($"            await {Method(literalRun[0])}();");
-            } else {
-                sb.AppendLine("            await Task.WhenAll(");
-                for (int i = 0; i < literalRun.Count; i++) {
-                    var suffix = i == literalRun.Count - 1 ? "" : ",";
-                    sb.AppendLine($"                Task.Run(static async () => await {Method(literalRun[i])}()){suffix}");
-                }
-                sb.AppendLine("            );");
-            }
+            foreach (var dependency in literalRun)
+                sb.AppendLine($"            await {Method(dependency)}();");
             literalRun.Clear();
             literalRunSeen.Clear();
         }
@@ -3899,6 +3901,26 @@ static partial class Tasks {
                     sb.AppendLine($"{iind}    {target}.RemoveAll(item => itemsToRemove.Contains(item.Identity));");
                 }
                 sb.AppendLine($"{iind}}}");
+            } else if (item.Metadata.Any()) {
+                var updateBatch = batch ?? TryCanonicalItemKey(item.ItemType);
+                sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(updateBatch)}) {{");
+                iind += "    ";
+                if (!string.IsNullOrEmpty(itemCondition)) {
+                    sb.AppendLine($"{iind}if ({CompileCond(itemCondition, updateBatch)}) {{");
+                    iind += "    ";
+                }
+                foreach (var m in item.Metadata) {
+                    var assign = $"batchItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, updateBatch)})";
+                    if (!string.IsNullOrEmpty(m.Condition))
+                        sb.AppendLine($"{iind}if ({CompileCond(m.Condition, updateBatch)}) {assign};");
+                    else
+                        sb.AppendLine($"{iind}{assign};");
+                }
+                if (!string.IsNullOrEmpty(itemCondition)) {
+                    iind = iind.Substring(4);
+                    sb.AppendLine($"{iind}}}");
+                }
+                sb.AppendLine($"{ind}}}");
             }
             if (openedBatch) sb.AppendLine($"{ind}}}");
         }
