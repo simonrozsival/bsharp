@@ -4,8 +4,8 @@
 > NativeAOT build host, with real SDK `UsingTask`s delegated to a persistent CoreCLR
 > task server.
 
-This is a playground, not a general MSBuild replacement. The current fixture is a
-simple `net11.0` console app under `fixtures/console-net11/`.
+This is a playground, not a general MSBuild replacement. The included fixture is a
+simple `net11.0` console app in `fixtures/console-net11/`.
 
 ## Requirements
 
@@ -21,11 +21,14 @@ Build the tools and run the default fixture:
 ./regenerate.sh
 ```
 
-Or use the tools directly:
+Or build and use the tools directly:
 
 ```bash
-export BSHARP=/Users/simonrozsival/Projects/playground/bsharp/tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp
-export BSHARP_CODEGEN=/Users/simonrozsival/Projects/playground/bsharp/tools/codegen/bin/Debug/net11.0/Codegen
+dotnet build tools/codegen/Codegen.csproj
+dotnet publish tools/bsharp/Bsharp.csproj -c Release -r osx-arm64
+
+export BSHARP="$PWD/tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp"
+export BSHARP_CODEGEN="$PWD/tools/codegen/bin/Debug/net11.0/Codegen"
 
 cd fixtures/console-net11
 $BSHARP build --no-cache -v:quiet run
@@ -73,12 +76,13 @@ The published per-project runtime shape is:
 | Generated host | NativeAOT, self-contained, single file | Fast startup and generated target/property/item logic |
 | Task server | CoreCLR ReadyToRun, framework-dependent | Persistent execution of real SDK `UsingTask`s that need dynamic assembly loading |
 
-The old per-task sub-CLI experiment has been removed. The task server is intentionally
-**not** NativeAOT.
+The task server is CoreCLR rather than NativeAOT because it loads SDK task assemblies
+dynamically. Keeping that dynamic code in a separate persistent process lets the
+generated host stay NativeAOT.
 
-## Current measurements
+## Measurements
 
-Latest observed `fixtures/console-net11` warm no-op numbers:
+Observed `fixtures/console-net11` warm no-op numbers:
 
 | Scenario | Time | What it measures |
 |---|---:|---|
@@ -146,16 +150,15 @@ public static async ValueTask T_123_CoreCompile() {
 }
 ```
 
-Current scheduling is deliberately conservative:
+Target scheduling is deliberately conservative:
 
 - `DependsOnTargets` and literal `BeforeTargets` prerequisites are expanded at codegen
   time and emitted as direct `await T_X()` calls.
 - Dynamic `CallTarget` or mutated dependency properties fall back to the generated
   `Targets.Run(string)` dispatcher.
-- Prerequisites are **not currently emitted as `Task.WhenAll` batches**. That was tried,
-  including a `CoreCompile`-only version, but clean builds exposed hidden mutable-state
-  ordering dependencies in SDK targets. Proper parallelism needs a coherent item/property
-  concurrency model first.
+- Prerequisites are emitted in order, not as `Task.WhenAll` batches. Many SDK targets
+  mutate shared property/item state, so parallel target execution needs an explicit
+  concurrency model before it can be enabled safely.
 - `AfterTargets` companions run after the target body/up-to-date check.
 
 ## Generated state
@@ -165,7 +168,7 @@ Current scheduling is deliberately conservative:
 - Empty item groups are lazy to avoid allocating hundreds of empty lists at startup.
 - Task helper methods read generated global state (`P.*`, `I.*`) directly rather than
   receiving long `p0`, `p1`, ... argument lists.
-- Generated locals use descriptive names; the old `__local` naming has been removed.
+- Generated locals use descriptive names.
 
 ## Task execution
 
@@ -189,7 +192,7 @@ the NativeAOT process.
 
 ## What works
 
-The current validated path:
+Validated path:
 
 ```bash
 cd fixtures/console-net11
