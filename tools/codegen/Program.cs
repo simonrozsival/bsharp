@@ -3757,6 +3757,7 @@ static partial class Tasks {
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
                 var projection = TryParseItemProjection(item.Include);
+                var semicolonSplit = batch == null ? TryParsePropertySemicolonSplit(item.Include) : null;
                 if (projection != null
                     && (batch == null || string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -3782,6 +3783,26 @@ static partial class Tasks {
                         } else {
                             sb.AppendLine($"{iind}        {assign};");
                         }
+                    }
+                    sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}    }}");
+                    sb.AppendLine($"{iind}}}");
+                    continue;
+                }
+
+                if (semicolonSplit != null) {
+                    var sourceCond = !string.IsNullOrEmpty(itemCondition)
+                        ? $"if ({CompileCond(itemCondition)}) "
+                        : "";
+                    sb.AppendLine($"{iind}foreach (var identity in new SemicolonSplit({semicolonSplit})) {{");
+                    sb.AppendLine($"{iind}    {sourceCond}{{");
+                    sb.AppendLine($"{iind}        var newItem = new Item(identity.ToString());");
+                    foreach (var m in item.Metadata) {
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value)})";
+                        if (!string.IsNullOrEmpty(m.Condition))
+                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition)}) {assign};");
+                        else
+                            sb.AppendLine($"{iind}        {assign};");
                     }
                     sb.AppendLine($"{iind}        {target}.Add(newItem);");
                     sb.AppendLine($"{iind}    }}");
@@ -4678,6 +4699,26 @@ static partial class Tasks {
                     case "Reverse" when args.Count == 0:
                         itemsExpr = $"{itemsExpr}.Reverse()";
                         break;
+                    case "Trim" when args.Count == 0:
+                        selector = $"({selector}).Trim()";
+                        break;
+                    case "TrimStart" when args.Count == 1:
+                        selector = $"({selector}).TrimStart(({args[0]}).ToCharArray())";
+                        break;
+                    case "TrimEnd" when args.Count == 1:
+                        selector = $"({selector}).TrimEnd(({args[0]}).ToCharArray())";
+                        break;
+                    case "ToUpper" when args.Count == 0:
+                    case "ToUpperInvariant" when args.Count == 0:
+                        selector = $"({selector}).ToUpperInvariant()";
+                        break;
+                    case "ToLower" when args.Count == 0:
+                    case "ToLowerInvariant" when args.Count == 0:
+                        selector = $"({selector}).ToLowerInvariant()";
+                        break;
+                    case "Replace" when args.Count == 2:
+                        selector = $"({selector}).Replace({args[0]}, {args[1]})";
+                        break;
                     default:
                         return null;
                 }
@@ -4687,6 +4728,22 @@ static partial class Tasks {
             else if (pos < inner.Length && inner[pos] != ',') break;
         }
         return (itemType, itemsExpr, selector.Replace("transformItem.", "sourceItem.", StringComparison.Ordinal));
+    }
+
+    static string? TryParsePropertySemicolonSplit(string expr) {
+        var trimmed = expr.Trim();
+        if (!trimmed.StartsWith("$(", StringComparison.Ordinal) || !trimmed.EndsWith(")", StringComparison.Ordinal)) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        foreach (var suffix in new[] { ".Split(';')", ".Split(`;`)" }) {
+            if (!inner.EndsWith(suffix, StringComparison.Ordinal)) continue;
+            var propertyName = inner.Substring(0, inner.Length - suffix.Length);
+            if (propertyName.Length == 0) return null;
+            foreach (var c in propertyName) {
+                if (!char.IsLetterOrDigit(c) && c != '_') return null;
+            }
+            return ExprCompiler.EmitPropertyRead(propertyName);
+        }
+        return null;
     }
 
     static List<string>? ParseProjectionArgs(string block) {
