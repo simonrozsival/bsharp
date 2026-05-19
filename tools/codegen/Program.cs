@@ -1523,6 +1523,7 @@ static class UsingTaskRegistry {
         ("AssignCulture",         "Microsoft.Build.Tasks.AssignCulture"),
         ("ResolveAssemblyReference", "Microsoft.Build.Tasks.ResolveAssemblyReference"),
         ("CopyRefAssembly",       "Microsoft.Build.Tasks.CopyRefAssembly"),
+        ("CreateCSharpManifestResourceName", "Microsoft.Build.Tasks.CreateCSharpManifestResourceName"),
     };
 
     // Find Microsoft.Build.Tasks.Core.dll. Probe the same property set we use for
@@ -2504,6 +2505,15 @@ static class ItemSerde {
         for (int i = 0; i < items.Count; i++) arr[i] = OneSpec(items[i]);
         return arr;
     }
+    public static Bsharp.Generated.TaskModel.ItemSpec[] ToSpecsWithIdentity(IEnumerable<Item> items, Func<Item, string> identitySelector) {
+        var specs = new List<Bsharp.Generated.TaskModel.ItemSpec>();
+        foreach (var item in items) {
+            var spec = OneSpec(item);
+            spec.Identity = identitySelector(item);
+            specs.Add(spec);
+        }
+        return specs.ToArray();
+    }
     public static Bsharp.Generated.TaskModel.ItemSpec[] SpecsFromScalar(string semicolonList) {
         if (string.IsNullOrEmpty(semicolonList)) return Array.Empty<Bsharp.Generated.TaskModel.ItemSpec>();
         var specs = new List<Bsharp.Generated.TaskModel.ItemSpec>();
@@ -2532,12 +2542,70 @@ static class StringList {
     }
 }
 
-static class StringSet {
-    public static HashSet<string> FromSemicolonList(string value) {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var part in new SemicolonSplit(value))
+sealed class StringSet {
+    readonly HashSet<string> _exact = new(StringComparer.OrdinalIgnoreCase);
+    readonly List<string> _patterns = new();
+
+    public static StringSet FromSemicolonList(string value) {
+        var set = new StringSet();
+        foreach (var part in new SemicolonSplit(value)) {
             set.Add(part.ToString());
+        }
         return set;
+    }
+
+    public static StringSet FromItems(IEnumerable<Item> items) {
+        var set = new StringSet();
+        foreach (var item in items)
+            set.Add(item.Identity);
+        return set;
+    }
+
+    void Add(string value) {
+        var item = Normalize(value);
+        if (item.Contains('*') || item.Contains('?')) {
+            _patterns.Add(item);
+            if (item.Contains("/**/", StringComparison.Ordinal))
+                _patterns.Add(item.Replace("/**/", "/", StringComparison.Ordinal));
+        } else {
+            _exact.Add(item);
+        }
+    }
+
+    public bool Contains(string value) {
+        value = Normalize(value);
+        if (_exact.Contains(value)) return true;
+        foreach (var pattern in _patterns)
+            if (GlobMatch(pattern, value, 0, 0))
+                return true;
+        return false;
+    }
+
+    static string Normalize(string value) => value.Replace('\\', '/');
+
+    static bool GlobMatch(string pattern, string value, int p, int v) {
+        while (p < pattern.Length) {
+            var c = pattern[p];
+            if (c == '*') {
+                while (p + 1 < pattern.Length && pattern[p + 1] == '*') p++;
+                if (p + 1 == pattern.Length) return true;
+                for (var i = v; i <= value.Length; i++)
+                    if (GlobMatch(pattern, value, p + 1, i))
+                        return true;
+                return false;
+            }
+            if (v >= value.Length) return false;
+            if (c == '?') {
+                p++;
+                v++;
+                continue;
+            }
+            if (char.ToUpperInvariant(c) != char.ToUpperInvariant(value[v]))
+                return false;
+            p++;
+            v++;
+        }
+        return v == value.Length;
     }
 }
 
@@ -2787,6 +2855,14 @@ static class Log {
         sb.AppendLine("    public static string GetExtra(string keyLower) => Extras.TryGetValue(keyLower, out var v) ? v : \"\";");
         sb.AppendLine("    public static void SetExtra(string keyLower, string value) => Extras[keyLower] = value ?? \"\";");
         sb.AppendLine();
+        sb.AppendLine("    public static string Get(string name) {");
+        sb.AppendLine("        switch (name.ToLowerInvariant()) {");
+        foreach (var kv in _props.OrderBy(p => p.Key, StringComparer.Ordinal))
+            sb.AppendLine($"            case \"{kv.Key}\": return {kv.Value};");
+        sb.AppendLine("            default: return Extras.TryGetValue(name.ToLowerInvariant(), out var v) ? v : \"\";");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
         // Set(string, value) is used for runtime csproj XML PropertyGroup reads (property names
         // come from the XML at runtime, so we can't always resolve to a typed field at codegen).
         sb.AppendLine("    public static void Set(string name, string value) {");
@@ -2841,12 +2917,14 @@ static class Log {
             || itemType.Equals("None", StringComparison.OrdinalIgnoreCase)
             || itemType.Equals("AdditionalFiles", StringComparison.OrdinalIgnoreCase);
 
+        var bakeMauiEvaluatedGlobs = ShouldBakeMauiEvaluatedGlobs(project);
+
         // Group evaluated items by lowercased item type. Skip:
         //  - source-like paths under obj/, bin/, and .bsharp/ (intermediate artifacts; would self-reference our outputs)
         //  - any item materialized from a glob (stale snapshot risk; see comment above)
         var itemsByType = project.AllEvaluatedItems
             .Where(i => !(IsSourceLikeItemType(i.ItemType) && IsBuildArtifactPath(i.EvaluatedInclude)))
-            .Where(i => !IsFromGlob(i))
+            .Where(i => !IsFromGlob(i) || ShouldKeepEvaluatedGlobItem(i.ItemType, bakeMauiEvaluatedGlobs))
             .GroupBy(i => i.ItemType.ToLowerInvariant(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
@@ -2911,6 +2989,20 @@ static class Log {
             return value;
         return value.Replace('\\', Path.DirectorySeparatorChar);
     }
+
+    static bool ShouldBakeMauiEvaluatedGlobs(Microsoft.Build.Evaluation.Project project) {
+        // MAUI single-project builds use SDK-evaluated glob includes/excludes to keep
+        // platform sources and XAML/CSS metadata in sync for each inner build. The generic
+        // runtime file walks are too broad and don't know MAUI item metadata.
+        return project.GetPropertyValue("SingleProject").Equals("true", StringComparison.OrdinalIgnoreCase)
+            || project.GetPropertyValue("UseMaui").Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool ShouldKeepEvaluatedGlobItem(string itemType, bool bakeMauiEvaluatedGlobs) =>
+        bakeMauiEvaluatedGlobs
+        && (itemType.Equals("Compile", StringComparison.OrdinalIgnoreCase)
+            || itemType.Equals("MauiXaml", StringComparison.OrdinalIgnoreCase)
+            || itemType.Equals("MauiCss", StringComparison.OrdinalIgnoreCase));
 
     static void EmitTasks(StringBuilder sb) {
         sb.AppendLine("""
@@ -3280,20 +3372,22 @@ static partial class Tasks {
         sb.AppendLine("        // SDK property defaults and initial items are baked as static field");
         sb.AppendLine("        // initializers in P and I (see those classes). No runtime population needed.");
         sb.AppendLine();
-        sb.AppendLine("        // Default Compile glob (EnableDefaultCompileItems).");
-        // Use typed field if available — the only place we'd have used P.Get(string).
-        string enableCompileExpr = TryCanonicalProp("enabledefaultcompileitems", out var enableCanon)
-            ? $"P.{enableCanon}"
-            : "P.GetExtra(\"enabledefaultcompileitems\")";
-        sb.AppendLine($"        if ({enableCompileExpr}.Equals(\"true\", StringComparison.OrdinalIgnoreCase)");
-        sb.AppendLine($"            || string.IsNullOrEmpty({enableCompileExpr})) {{");
-        if (TryCanonicalItem("compile", out var compileCanon)) {
-            sb.AppendLine($"            var existing = new HashSet<string>(I.{compileCanon}.Select(c => c.Identity), StringComparer.OrdinalIgnoreCase);");
-            sb.AppendLine("            foreach (var f in FastPathFileHelpers.EnumerateProjectSourceFiles(projectDir)) {");
-            sb.AppendLine($"                if (existing.Add(f)) I.{compileCanon}.Add(new Item(f));");
-            sb.AppendLine("            }");
+        if (!ShouldBakeMauiEvaluatedGlobs(project)) {
+            sb.AppendLine("        // Default Compile glob (EnableDefaultCompileItems).");
+            // Use typed field if available — the only place we'd have used P.Get(string).
+            string enableCompileExpr = TryCanonicalProp("enabledefaultcompileitems", out var enableCanon)
+                ? $"P.{enableCanon}"
+                : "P.GetExtra(\"enabledefaultcompileitems\")";
+            sb.AppendLine($"        if ({enableCompileExpr}.Equals(\"true\", StringComparison.OrdinalIgnoreCase)");
+            sb.AppendLine($"            || string.IsNullOrEmpty({enableCompileExpr})) {{");
+            if (TryCanonicalItem("compile", out var compileCanon)) {
+                sb.AppendLine($"            var existing = new HashSet<string>(I.{compileCanon}.Select(c => c.Identity), StringComparer.OrdinalIgnoreCase);");
+                sb.AppendLine("            foreach (var f in FastPathFileHelpers.EnumerateProjectSourceFiles(projectDir)) {");
+                sb.AppendLine($"                if (existing.Add(f)) I.{compileCanon}.Add(new Item(f));");
+                sb.AppendLine("            }");
+            }
+            sb.AppendLine("        }");
         }
-        sb.AppendLine("        }");
         // -p:X=Y global properties — unconditional final override after csproj + SDK defaults.
         // Matches MSBuild semantics: globals always win over csproj <PropertyGroup> values.
         var globals = project.GlobalProperties;
@@ -3760,7 +3854,34 @@ static partial class Tasks {
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
                 var projection = TryParseItemProjection(item.Include);
+                var dynamicInclude = TryParseDynamicItemInclude(item.Include);
                 var semicolonSplit = batch == null ? TryParsePropertySemicolonSplit(item.Include) : null;
+                if (dynamicInclude is { } dynamic
+                    && batch != null
+                    && string.Equals(dynamic.ItemType, batch, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!openedBatch) {
+                        sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                        iind += "    ";
+                        openedBatch = true;
+                    }
+                    sb.AppendLine($"{iind}{openCond}{{");
+                    sb.AppendLine($"{iind}    foreach (var sourceItem in I.Get(batchItem.GetMetadata({CSharpLiteral(dynamic.MetadataName.ToLowerInvariant())}))) {{");
+                    sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
+                    sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
+                    foreach (var m in item.Metadata) {
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
+                        if (!string.IsNullOrEmpty(m.Condition))
+                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch)}) {assign};");
+                        else
+                            sb.AppendLine($"{iind}        {assign};");
+                    }
+                    sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}    }}");
+                    sb.AppendLine($"{iind}}}");
+                    if (openedBatch) sb.AppendLine($"{ind}}}");
+                    continue;
+                }
                 if (projection != null
                     && (batch == null || string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -3892,9 +4013,9 @@ static partial class Tasks {
                 var direct = TryParseDirectItemRef(item.Remove);
                 sb.AppendLine($"{iind}{openCond}{{");
                 if (direct != null) {
-                    sb.AppendLine($"{iind}    var itemsToRemove = new HashSet<string>({ItemAccess(direct)}.Select(item => item.Identity), StringComparer.OrdinalIgnoreCase);");
+                    sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromItems({ItemAccess(direct)});");
                     sb.AppendLine($"{iind}    {target}.RemoveAll(item => itemsToRemove.Contains(item.Identity));");
-                } else if (IsPureLiteralNoSemicolon(item.Remove)) {
+                } else if (IsPureLiteralNoSemicolon(item.Remove) && !item.Remove.Contains('*') && !item.Remove.Contains('?')) {
                     sb.AppendLine($"{iind}    {target}.RemoveAll(item => string.Equals(item.Identity, {CSharpLiteral(item.Remove)}, StringComparison.OrdinalIgnoreCase));");
                 } else {
                     sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch)});");
@@ -4227,7 +4348,7 @@ static partial class Tasks {
         }
     }
 
-    sealed record GeneratedTaskArg(string ParameterName, string XmlName, string MethodArgName, string TypeName, string ValueExpr, TaskMetadataLoader.PropertyMeta Property, bool RequiresCallerValue);
+    sealed record GeneratedTaskArg(string ParameterName, string XmlName, string MethodArgName, string TypeName, string RawValue, string ValueExpr, TaskMetadataLoader.PropertyMeta Property, bool RequiresCallerValue);
 
     static readonly List<string> _generatedTaskHelpers = new();
     static int _generatedTaskHelperCounter;
@@ -4260,9 +4381,10 @@ static partial class Tasks {
                 continue;
             }
             var methodArgName = $"p{args.Count}";
-            var valueExpr = CompileExpr(kv.Value ?? "", batch);
+            var rawValue = kv.Value ?? "";
+            var valueExpr = CompileExpr(rawValue, batch);
             var typeName = "string";
-            var direct = TryParseDirectItemRef(kv.Value ?? "");
+            var direct = TryParseDirectItemRef(rawValue);
             if ((pm.PropertyTypeShort == "ITaskItem" || pm.PropertyTypeShort == "ITaskItem[]") && direct != null) {
                 typeName = "List<Item>";
                 valueExpr = ItemAccess(direct);
@@ -4273,7 +4395,7 @@ static partial class Tasks {
             // depend on the target body's current `batchItem`, so keep those rare values as caller
             // parameters.
             var requiresCallerValue = batch != null && ValueExprUsesCurrentBatchItem(valueExpr);
-            args.Add(new GeneratedTaskArg(kv.Key, pm.Name, methodArgName, typeName, valueExpr, pm, requiresCallerValue));
+            args.Add(new GeneratedTaskArg(kv.Key, pm.Name, methodArgName, typeName, rawValue, valueExpr, pm, requiresCallerValue));
         }
 
         var helperName = RegisterGeneratedTaskHelper(task.Name, shortName, args);
@@ -4372,6 +4494,10 @@ static partial class Tasks {
                 var direct = TryParseDirectItemRef(paramValue);
                 if (direct != null) {
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecs({ItemAccess(direct)}));");
+                } else if (TryParseItemProjection(paramValue) is { } projection) {
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({projection.ItemsExpr}, sourceItem => {projection.Selector}));");
+                } else if (TryParseSimpleMetadataProjection(paramValue) is { } simpleProjection) {
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({ItemAccess(simpleProjection.ItemType)}, sourceItem => sourceItem.GetMetadata({CSharpLiteral(simpleProjection.MetadataName.ToLowerInvariant())})));");
                 } else {
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.SpecsFromScalar({CompileExpr(paramValue, batch)}));");
                 }
@@ -4421,6 +4547,10 @@ static partial class Tasks {
             case "ITaskItem[]":
                 if (arg.TypeName == "List<Item>")
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecs({value}));");
+                else if (!arg.RequiresCallerValue && TryParseItemProjection(arg.RawValue) is { } projection)
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({projection.ItemsExpr}, sourceItem => {projection.Selector}));");
+                else if (!arg.RequiresCallerValue && TryParseSimpleMetadataProjection(arg.RawValue) is { } simpleProjection)
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({ItemAccess(simpleProjection.ItemType)}, sourceItem => sourceItem.GetMetadata({CSharpLiteral(simpleProjection.MetadataName.ToLowerInvariant())})));");
                 else
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.SpecsFromScalar({value}));");
                 return;
@@ -4751,6 +4881,41 @@ static partial class Tasks {
             else if (pos < inner.Length && inner[pos] != ',') break;
         }
         return (itemType, itemsExpr, selector.Replace("transformItem.", "sourceItem.", StringComparison.Ordinal));
+    }
+
+    static (string ItemType, string MetadataName)? TryParseSimpleMetadataProjection(string expr) {
+        var trimmed = expr.Trim();
+        if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) return null;
+        var itemType = inner.Substring(0, arrow).Trim();
+        if (itemType.Length == 0) return null;
+        foreach (var c in itemType) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+        var selector = inner.Substring(arrow + 2).Trim();
+        if (selector.StartsWith("'") && selector.EndsWith("'"))
+            selector = selector.Substring(1, selector.Length - 2).Trim();
+        if (!selector.StartsWith("%(") || !selector.EndsWith(")")) return null;
+        var metadata = selector.Substring(2, selector.Length - 3).Trim();
+        if (metadata.Length == 0) return null;
+        foreach (var c in metadata) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+        return (itemType, metadata);
+    }
+
+    static (string ItemType, string MetadataName)? TryParseDynamicItemInclude(string expr) {
+        var trimmed = expr.Trim();
+        if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        if (!inner.StartsWith("%(") || !inner.EndsWith(")")) return null;
+        var metaRef = inner.Substring(2, inner.Length - 3).Trim();
+        var dot = metaRef.IndexOf('.');
+        if (dot < 0) return null;
+        var itemType = metaRef.Substring(0, dot).Trim();
+        var metadata = metaRef.Substring(dot + 1).Trim();
+        if (itemType.Length == 0 || metadata.Length == 0) return null;
+        foreach (var c in itemType) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+        foreach (var c in metadata) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+        return (itemType, metadata);
     }
 
     static string? TryParsePropertySemicolonSplit(string expr) {
@@ -5319,7 +5484,7 @@ static class ExprCompiler {
                     var metaCompiled = TryCompile(inner, batchItemType);
                     if (metaCompiled == null) return null;
                     if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
-                    parts.Add($"P.GetExtra(({metaCompiled}).ToLowerInvariant())");
+                    parts.Add($"P.Get({metaCompiled})");
                     i = j + 1;
                     continue;
                 }
