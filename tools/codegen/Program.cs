@@ -3701,13 +3701,21 @@ static partial class Tasks {
         else sb.AppendLine($"{outer}{{");
         var ind = outer + "    ";
 
-        foreach (var item in ig.Items) {
+        var items = ig.Items.ToList();
+        for (var itemIndex = 0; itemIndex < items.Count; itemIndex++) {
+            var item = items[itemIndex];
+            var itemCondition = item.Condition;
+            if (TryMergeAdjacentItemAdditions(items, itemIndex, out var mergedCount, out var mergedCondition)) {
+                itemCondition = mergedCondition;
+                itemIndex += mergedCount - 1;
+            }
+
             var iind = ind;
             // Per-item batch inference: each item's metadata refs determine its own batch.
             // ItemGroups commonly mix item types where the same scope refs %(X.Y) for one
             // item and %(Z.W) for another — per-item lets us handle these without forcing
             // a multi-batch outer foreach.
-            var strs = new List<string?> { item.Condition, item.Include, item.Remove };
+            var strs = new List<string?> { itemCondition, item.Include, item.Remove };
             foreach (var m in item.Metadata) { strs.Add(m.Condition); strs.Add(m.Value); }
             // Self-batch hint: the item type being DEFINED can serve as the implicit batch
             // context for unqualified `%(Meta)` (matches MSBuild's <X Y="%(M)" /> semantics).
@@ -3734,8 +3742,8 @@ static partial class Tasks {
                     && !item.Metadata.Any())
                 {
                     var removeTarget = ItemAccess(item.ItemType);
-                    if (!string.IsNullOrEmpty(item.Condition)) {
-                        sb.AppendLine($"{ind}{removeTarget}.RemoveAll(batchItem => {CompileCond(item.Condition, batch)});");
+                    if (!string.IsNullOrEmpty(itemCondition)) {
+                        sb.AppendLine($"{ind}{removeTarget}.RemoveAll(batchItem => {CompileCond(itemCondition, batch)});");
                     } else {
                         sb.AppendLine($"{ind}{removeTarget}.Clear();");
                     }
@@ -3743,7 +3751,7 @@ static partial class Tasks {
                 }
             }
 
-            var openCond = !string.IsNullOrEmpty(item.Condition) ? $"if ({CompileCond(item.Condition, batch)}) " : "";
+            var openCond = !string.IsNullOrEmpty(itemCondition) ? $"if ({CompileCond(itemCondition, batch)}) " : "";
             var target = ItemAccess(item.ItemType);
             var openedBatch = false;
             if (!string.IsNullOrEmpty(item.Include)) {
@@ -3755,8 +3763,8 @@ static partial class Tasks {
                     var sourceEnumerable = string.Equals(TryCanonicalItemKey(item.ItemType), TryCanonicalItemKey(projection.Value.ItemType), StringComparison.OrdinalIgnoreCase)
                         ? $"{projection.Value.ItemsExpr}.ToArray()"
                         : projection.Value.ItemsExpr;
-                    var sourceCond = !string.IsNullOrEmpty(item.Condition)
-                        ? $"if ({(batch == null ? CompileCond(item.Condition) : CompileCond(item.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal))}) "
+                    var sourceCond = !string.IsNullOrEmpty(itemCondition)
+                        ? $"if ({(batch == null ? CompileCond(itemCondition) : CompileCond(itemCondition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal))}) "
                         : "";
                     sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
@@ -3873,6 +3881,182 @@ static partial class Tasks {
             if (openedBatch) sb.AppendLine($"{ind}}}");
         }
         sb.AppendLine($"{outer}}}");
+    }
+
+    static bool TryMergeAdjacentItemAdditions(
+        IReadOnlyList<ProjectItemGroupTaskItemInstance> items,
+        int start,
+        out int count,
+        out string mergedCondition)
+    {
+        count = 1;
+        mergedCondition = items[start].Condition;
+        var first = items[start];
+        if (string.IsNullOrEmpty(first.Include)
+            || !string.IsNullOrEmpty(first.Remove)
+            || string.IsNullOrEmpty(first.Condition))
+        {
+            return false;
+        }
+
+        var end = start + 1;
+        while (end < items.Count && HasSameItemAddBody(first, items[end])) end++;
+        for (var candidateCount = end - start; candidateCount >= 2; candidateCount--) {
+            var conditions = new string[candidateCount];
+            for (var i = 0; i < candidateCount; i++) conditions[i] = items[start + i].Condition;
+            if (TryBuildMutuallyExclusiveConditionOr(conditions, out mergedCondition)) {
+                count = candidateCount;
+                return true;
+            }
+        }
+
+        mergedCondition = first.Condition;
+        return false;
+    }
+
+    static bool HasSameItemAddBody(ProjectItemGroupTaskItemInstance first, ProjectItemGroupTaskItemInstance next) {
+        if (!string.Equals(first.ItemType, next.ItemType, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(first.Include, next.Include, StringComparison.Ordinal)) return false;
+        if (!string.IsNullOrEmpty(next.Remove)) return false;
+
+        var firstMetadata = first.Metadata.ToList();
+        var nextMetadata = next.Metadata.ToList();
+        if (firstMetadata.Count != nextMetadata.Count) return false;
+        for (var i = 0; i < firstMetadata.Count; i++) {
+            if (!string.Equals(firstMetadata[i].Name, nextMetadata[i].Name, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(firstMetadata[i].Value, nextMetadata[i].Value, StringComparison.Ordinal)) return false;
+            if (!string.Equals(firstMetadata[i].Condition, nextMetadata[i].Condition, StringComparison.Ordinal)) return false;
+        }
+        return true;
+    }
+
+    sealed record ParsedConditionTerm(string Normalized, string? MetadataRef, string? LiteralValue);
+
+    static bool TryBuildMutuallyExclusiveConditionOr(IReadOnlyList<string> conditions, out string mergedCondition) {
+        mergedCondition = "";
+        var parsed = new List<List<ParsedConditionTerm>>(conditions.Count);
+        foreach (var condition in conditions) {
+            if (string.IsNullOrWhiteSpace(condition)) return false;
+            var terms = SplitConditionAndTerms(condition)
+                .Select(ParseConditionTerm)
+                .ToList();
+            if (terms.Count == 0) return false;
+            parsed.Add(terms);
+        }
+
+        foreach (var candidate in parsed[0].Where(t => t.MetadataRef != null).Select(t => t.MetadataRef!).Distinct(StringComparer.OrdinalIgnoreCase)) {
+            var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? sharedRemainder = null;
+            var ok = true;
+            foreach (var terms in parsed) {
+                var matches = terms.Where(t => string.Equals(t.MetadataRef, candidate, StringComparison.OrdinalIgnoreCase)).ToList();
+                var literalValue = matches.Count == 1 ? matches[0].LiteralValue : null;
+                if (literalValue == null || !values.Add(literalValue)) {
+                    ok = false;
+                    break;
+                }
+
+                var remainder = string.Join("&&", terms
+                    .Where(t => !ReferenceEquals(t, matches[0]))
+                    .Select(t => t.Normalized)
+                    .OrderBy(t => t, StringComparer.Ordinal));
+                sharedRemainder ??= remainder;
+                if (!string.Equals(sharedRemainder, remainder, StringComparison.Ordinal)) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (ok) {
+                mergedCondition = string.Join(" OR ", conditions.Select(c => $"({c})"));
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    static IEnumerable<string> SplitConditionAndTerms(string condition) {
+        var start = 0;
+        var inQuote = false;
+        for (var i = 0; i < condition.Length; i++) {
+            if (condition[i] == '\'') {
+                inQuote = !inQuote;
+                continue;
+            }
+            if (inQuote || i + 3 > condition.Length) continue;
+            if (!condition.AsSpan(i, 3).Equals("AND".AsSpan(), StringComparison.OrdinalIgnoreCase)) continue;
+
+            var beforeOk = i == 0 || !char.IsLetterOrDigit(condition[i - 1]);
+            var afterOk = i + 3 == condition.Length || !char.IsLetterOrDigit(condition[i + 3]);
+            if (!beforeOk || !afterOk) continue;
+
+            var term = condition.Substring(start, i - start).Trim();
+            if (term.Length != 0) yield return term;
+            i += 2;
+            start = i + 1;
+        }
+
+        var last = condition.Substring(start).Trim();
+        if (last.Length != 0) yield return last;
+    }
+
+    static ParsedConditionTerm ParseConditionTerm(string term) {
+        var normalized = NormalizeConditionTerm(term);
+        var equals = IndexOfOutsideQuotes(term, "==");
+        if (equals < 0) return new ParsedConditionTerm(normalized, null, null);
+
+        var left = term.Substring(0, equals).Trim();
+        var right = term.Substring(equals + 2).Trim();
+        if (TryParseQuotedMetadataRef(left, out var metadataRef) && TryParseQuotedLiteral(right, out var literalValue)) {
+            return new ParsedConditionTerm(normalized, metadataRef, literalValue);
+        }
+        if (TryParseQuotedMetadataRef(right, out metadataRef) && TryParseQuotedLiteral(left, out literalValue)) {
+            return new ParsedConditionTerm(normalized, metadataRef, literalValue);
+        }
+        return new ParsedConditionTerm(normalized, null, null);
+    }
+
+    static int IndexOfOutsideQuotes(string text, string value) {
+        var inQuote = false;
+        for (var i = 0; i <= text.Length - value.Length; i++) {
+            if (text[i] == '\'') inQuote = !inQuote;
+            if (!inQuote && text.AsSpan(i, value.Length).Equals(value.AsSpan(), StringComparison.Ordinal)) return i;
+        }
+        return -1;
+    }
+
+    static bool TryParseQuotedMetadataRef(string text, out string metadataRef) {
+        metadataRef = "";
+        if (!TryParseQuotedLiteral(text, out var literal)) return false;
+        literal = literal.Trim();
+        if (!literal.StartsWith("%(", StringComparison.Ordinal) || !literal.EndsWith(")", StringComparison.Ordinal)) return false;
+        metadataRef = literal.Substring(2, literal.Length - 3).Trim().ToLowerInvariant();
+        return metadataRef.Length != 0;
+    }
+
+    static bool TryParseQuotedLiteral(string text, out string literal) {
+        literal = "";
+        text = text.Trim();
+        if (text.Length < 2 || text[0] != '\'' || text[^1] != '\'') return false;
+        literal = text.Substring(1, text.Length - 2);
+        return true;
+    }
+
+    static string NormalizeConditionTerm(string term) {
+        var sb = new StringBuilder(term.Length);
+        var inQuote = false;
+        foreach (var ch in term) {
+            if (ch == '\'') {
+                inQuote = !inQuote;
+                sb.Append(ch);
+            } else if (inQuote) {
+                sb.Append(ch);
+            } else if (!char.IsWhiteSpace(ch)) {
+                sb.Append(char.ToLowerInvariant(ch));
+            }
+        }
+        return sb.ToString();
     }
 
     // Returns the lowercase form of an item type if we have a canonical mapping for it
