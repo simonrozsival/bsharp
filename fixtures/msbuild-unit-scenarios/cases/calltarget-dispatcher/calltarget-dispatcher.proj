@@ -1,0 +1,13 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <TargetsToCall>Other</TargetsToCall>
+  </PropertyGroup>
+
+  <Target Name="Build">
+    <CallTarget Targets="$(TargetsToCall)" />
+  </Target>
+
+  <Target Name="Other">
+    <Message Text="called" />
+  </Target>
+</Project>

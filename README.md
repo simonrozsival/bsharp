@@ -113,6 +113,54 @@ outer-build detection, `CallTarget` and `<MSBuild>` task sites, dynamic imports,
 batching expressions, property functions, and `UsingTask` resolution issues. It is the
 bring-up tool for larger SDKs such as MAUI.
 
+## Tests
+
+Run the automated validation suite:
+
+```bash
+dotnet test tests/Bsharp.Tests/Bsharp.Tests.csproj --nologo
+```
+
+The default suite includes fast structural codegen/audit unit tests derived from
+regular `dotnet/msbuild` unit-test scenarios, plus the console fixture cold
+launcher build, warm cache-hit build, direct generated-host build/run, forced
+regeneration, incremental source-edit rebuild, shape invalidation, audit shape
+checks, and unsupported-shape audit checks.
+
+The minimized regular-unit scenarios live under
+`fixtures/msbuild-unit-scenarios/` with upstream `dotnet/msbuild` provenance in
+`unit-scenarios.json`. These tests run `tools/codegen` directly and assert audit
+JSON or generated-source structure; they intentionally avoid NativeAOT publish so
+they stay suitable for the default developer loop.
+
+The default codegen unit tests also cover the supported task-batching subset:
+local structural tasks are invoked sequentially once per distinct metadata value,
+with batched item lists filtered to the current metadata key and non-batching item
+lists passed through unchanged. Target batching is intentionally rejected during
+generation instead of being silently approximated.
+
+MAUI audit regression coverage is gated because it depends on local workload
+availability:
+
+```bash
+BSHARP_RUN_MAUI_AUDIT_TESTS=1 dotnet test tests/Bsharp.Tests/Bsharp.Tests.csproj --nologo --filter TestCategory=Maui
+```
+
+MSBuild corpus head-to-head coverage is also gated because it publishes generated
+hosts for vendored `dotnet/msbuild` E2E assets:
+
+```bash
+BSHARP_RUN_MSBUILD_CORPUS_TESTS=1 dotnet test tests/Bsharp.Tests/Bsharp.Tests.csproj --nologo --filter TestCategory=MSBuildCorpus
+```
+
+Corpus results are written to `artifacts/msbuild-corpus-results/*.json`. The
+vendored corpus lives under `fixtures/msbuild-e2e-corpus/` with upstream commit
+and license metadata. For exploratory mutations, use:
+
+```bash
+scripts/msbuild-corpus-mutate.sh single-project "try a small source edit"
+```
+
 ## Cache invalidation
 
 The launcher recomputes a shape hash on every invocation. A cache miss occurs when
@@ -195,6 +243,13 @@ Structural/simple tasks are hand-rolled in the generated host, including:
 `Message`, `MakeDir`, `WriteLinesToFile`, `Touch`, `Delete`, `Copy`, `Error`,
 `Warning`, `ConvertToAbsolutePath`, `RemoveDir`, `CreateProperty`, `CreateItem`,
 `FindUnderPath`, `ReadLinesFromFile`, `Exec`, and `Hash`.
+
+For hand-rolled structural tasks, codegen supports a narrow MSBuild task-batching
+subset: a single batching metadata dimension, qualified or inferable unqualified
+metadata references, `%(Identity)`, task `Condition` evaluation per batch, multiple
+item lists sharing the same metadata, and pass-through item lists without that
+metadata. Runtime batch execution remains sequential to preserve MSBuild ordering
+and mutation semantics.
 
 Real SDK tasks are represented as `TaskInvocation` objects and sent to the persistent
 task server over a length-prefixed JSON stream. The task server:

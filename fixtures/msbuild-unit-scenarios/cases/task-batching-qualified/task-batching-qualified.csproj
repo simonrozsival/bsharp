@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ExampColl Include="Item1" Number="1" />
+    <ExampColl Include="Item2" Number="2" />
+    <ExampColl Include="Item3" Number="3" />
+    <ExampColl Include="Item4" Number="1" />
+    <ExampColl Include="Item5" Number="2" />
+  </ItemGroup>
+
+  <Target Name="Batching">
+    <Delete Files="$(MSBuildProjectDirectory)/qualified.txt" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)/qualified.txt"
+      Lines="%(ExampColl.Number)|@(ExampColl, ',')" />
+  </Target>
+</Project>

@@ -1,0 +1,312 @@
+using System.Text.Json;
+
+namespace Bsharp.Tests;
+
+[TestClass]
+public sealed class CodegenUnitTests
+{
+    [ClassInitialize]
+    public static void Initialize(TestContext _) => BsharpTestEnvironment.EnsureCodegen();
+
+    [TestMethod]
+    public void LiteralDependsOnTargetsPreservesPropertyMutationFlow()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-depends-property-flow", "target-depends-property-flow.proj");
+        var generated = project.Generate();
+
+        StringAssert.Contains(generated.ProgramText, "P.Value = \"prepared\";");
+        AssertInOrder(
+            generated.ProgramText,
+            "public static async ValueTask T_002_Build()",
+            "await T_001_Prepare();",
+            "Log.TargetStarted(\"Build\")",
+            "P.Value + \" done\"");
+        Assert.IsFalse(generated.ProgramText.Contains("public static async ValueTask Run(string name)", StringComparison.Ordinal),
+            "Literal DependsOnTargets should not force the dynamic target dispatcher.");
+    }
+
+    [TestMethod]
+    public void MultiItemIncludePreservesMetadataForTransforms()
+    {
+        using var project = CodegenUnitProject.FromScenario("multi-item-include-metadata", "multi-item-include-metadata.proj");
+        var generated = project.Generate();
+
+        AssertInOrder(
+            generated.ProgramText,
+            "foreach (var sourceItem in I.A)",
+            "sourceItem.CopyMetadataTo(newItem);",
+            "I.Combined.Add(newItem);",
+            "foreach (var sourceItem in I.B)",
+            "sourceItem.CopyMetadataTo(newItem);",
+            "I.Combined.Add(newItem);");
+        StringAssert.Contains(generated.ProgramText, "I.Combined.Select(transformItem => transformItem.GetMetadata(\"targetpath\"))");
+    }
+
+    [TestMethod]
+    public void AuditFlagsDynamicDependsAndPropertyFunctions()
+    {
+        using var project = CodegenUnitProject.FromScenario("dynamic-depends-property-function", "dynamic-depends-property-function.proj");
+        using var document = project.Audit();
+        var root = document.RootElement;
+
+        Assert.AreEqual(1, root.GetProperty("counts").GetProperty("dynamicTargetDiagnostics").GetInt32());
+        Assert.IsTrue(root.GetProperty("counts").GetProperty("propertyFunctionSites").GetInt32() >= 2);
+
+        var dynamicTarget = root.GetProperty("diagnostics").GetProperty("dynamicTargets")[0];
+        Assert.AreEqual("Build", dynamicTarget.GetProperty("target").GetString());
+        Assert.AreEqual("dynamic-depends-on-targets", dynamicTarget.GetProperty("kind").GetString());
+
+        AssertJsonArrayContains(root.GetProperty("diagnostics").GetProperty("propertyFunctionSites"), "expressionKind", "Condition");
+        AssertJsonArrayContains(root.GetProperty("diagnostics").GetProperty("propertyFunctionSites"), "expressionKind", "Message.Text");
+    }
+
+    [TestMethod]
+    public void AuditFlagsTargetAndTaskBatchingSites()
+    {
+        using var project = CodegenUnitProject.FromScenario("batching-diagnostics", "batching-diagnostics.proj");
+        using var document = project.Audit();
+        var root = document.RootElement;
+
+        Assert.AreEqual(1, root.GetProperty("counts").GetProperty("targetBatchingSites").GetInt32());
+        Assert.AreEqual(1, root.GetProperty("counts").GetProperty("taskBatchingSites").GetInt32());
+        AssertJsonArrayContains(root.GetProperty("diagnostics").GetProperty("targetBatchingSites"), "target", "Build");
+        AssertJsonArrayContains(root.GetProperty("diagnostics").GetProperty("taskBatchingSites"), "task", "Message");
+    }
+
+    [TestMethod]
+    public void TaskBatchingGroupsItemsByQualifiedMetadata()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-qualified", "task-batching-qualified.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated qualified batching host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "qualified.txt"),
+            "1|Item1,Item4",
+            "2|Item2,Item5",
+            "3|Item3");
+    }
+
+    [TestMethod]
+    public void TaskBatchingInfersUnqualifiedMetadataFromSingleItemList()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-unqualified", "task-batching-unqualified.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated unqualified batching host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "unqualified.txt"),
+            "1|Item1,Item4",
+            "2|Item2");
+    }
+
+    [TestMethod]
+    public void TaskBatchingConditionFiltersBatches()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-condition", "task-batching-condition.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated batching condition host");
+
+        AssertFileLines(Path.Combine(project.DirectoryPath, "condition.txt"), "2|Item2,Item5");
+    }
+
+    [TestMethod]
+    public void TaskBatchingGroupsDuplicateIdentities()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-identity", "task-batching-identity.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated identity batching host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "identity.txt"),
+            "One|One:red,One:blue",
+            "Two|Two:green");
+    }
+
+    [TestMethod]
+    public void TaskBatchingCombinesMultipleListsAndPassThroughLists()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-multiple-lists", "task-batching-multiple-lists.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated multiple-list batching host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "multi.txt"),
+            "1|A=A1,A3|B=B1|C=C1,C2",
+            "2|A=A2|B=B2,B3|C=C1,C2");
+    }
+
+    [TestMethod]
+    public void TaskBatchingSkipsEmptyBatchingSource()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-empty-source", "task-batching-empty-source.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated empty-source batching host");
+
+        Assert.IsFalse(File.Exists(Path.Combine(project.DirectoryPath, "empty.txt")),
+            "An empty batching source should not execute the task once with a synthetic empty item.");
+    }
+
+    [TestMethod]
+    public void TaskBatchingAccumulatesOutputsInBatchOrder()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-outputs", "task-batching-outputs.csproj");
+        var generated = project.Generate("Batching");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated batching outputs host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "outputs.txt"),
+            "1:Item1,Item3",
+            "2:Item2");
+    }
+
+    [TestMethod]
+    public void LocalTaskPathParametersNormalizeBackslashes()
+    {
+        using var project = CodegenUnitProject.FromScenario("path-separator-normalization", "path-separator-normalization.csproj");
+        var generated = project.Generate("PathNormalization");
+
+        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizeSeparatorList");
+        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizeSeparators");
+
+        generated.BuildHost();
+        generated.RunHost().AssertSuccess("run generated path-normalization host");
+
+        Assert.IsFalse(File.Exists(Path.Combine(project.DirectoryPath, "nested", "normalized.txt")));
+        AssertFileLines(Path.Combine(project.DirectoryPath, "nested", "copied.txt"), "ok");
+    }
+
+    [TestMethod]
+    public void TargetBatchingIsRejectedDuringGeneration()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-batching-unsupported", "target-batching-unsupported.csproj");
+        var result = CommandRunner.Run(
+            BsharpTestEnvironment.CodegenPath,
+            ["--project", project.ProjectPath, "--out-dir", Path.Combine(project.DirectoryPath, "generated"), "--entry", "TargetBatching"],
+            project.DirectoryPath,
+            BsharpTestEnvironment.DotnetEnvironment,
+            BsharpTestEnvironment.CommandTimeout);
+
+        Assert.AreNotEqual(0, result.ExitCode);
+        StringAssert.Contains(result.StandardError + result.StandardOutput, "target batching is not supported");
+        StringAssert.Contains(result.StandardError + result.StandardOutput, "TargetBatching");
+        StringAssert.Contains(result.StandardError + result.StandardOutput, "Outputs");
+    }
+
+    [TestMethod]
+    public void CallTargetForcesRuntimeDispatcherAndRootsTargets()
+    {
+        using var project = CodegenUnitProject.FromScenario("calltarget-dispatcher", "calltarget-dispatcher.proj");
+        var generated = project.Generate();
+
+        StringAssert.Contains(generated.Result.StandardOutput, "Targets emitted: 2 (all, due to CallTarget)");
+        StringAssert.Contains(generated.ProgramText, "public static async ValueTask Run(string name)");
+        StringAssert.Contains(generated.ProgramText, "case \"other\": await T_002_Other(); break;");
+        StringAssert.Contains(generated.ProgramText, "using var taskLog = Log.Task(\"CallTarget\")");
+    }
+
+    [TestMethod]
+    public void AuditReportsMSBuildTaskRecursionSites()
+    {
+        using var project = CodegenUnitProject.FromScenario("msbuild-task-unsupported", "msbuild-task-unsupported.proj");
+        using var document = project.Audit();
+        var root = document.RootElement;
+
+        Assert.AreEqual(1, root.GetProperty("counts").GetProperty("msbuildTasks").GetInt32());
+        var site = root.GetProperty("diagnostics").GetProperty("msbuildTasks")[0];
+        Assert.AreEqual("Build", site.GetProperty("target").GetString());
+        Assert.AreEqual("@(ProjectReference)", site.GetProperty("projects").GetString());
+        Assert.AreEqual("Build", site.GetProperty("targets").GetString());
+    }
+
+    [TestMethod]
+    public void AuditReportsDynamicImports()
+    {
+        using var project = CodegenUnitProject.FromScenario("dynamic-import", "dynamic-import.proj");
+        using var document = project.Audit();
+        var root = document.RootElement;
+
+        Assert.AreEqual(1, root.GetProperty("counts").GetProperty("dynamicImports").GetInt32());
+        var import = root.GetProperty("diagnostics").GetProperty("dynamicImports")[0];
+        Assert.AreEqual("$(ImportName).targets", import.GetProperty("project").GetString());
+        Assert.IsTrue(import.GetProperty("dynamicProject").GetBoolean());
+    }
+
+    [TestMethod]
+    public void AuditRecordsGlobalProperties()
+    {
+        using var project = CodegenUnitProject.FromScenario("global-properties", "global-properties.proj");
+        using var document = project.Audit("-p", "Configuration=Release");
+        var root = document.RootElement;
+
+        Assert.AreEqual("Release", root.GetProperty("globalProperties").GetProperty("Configuration").GetString());
+        Assert.AreEqual("Release", root.GetProperty("shape").GetProperty("configuration").GetString());
+    }
+
+    [TestMethod]
+    public void UnitScenarioManifestIsSourceTraceable()
+    {
+        var manifestPath = Path.Combine(BsharpTestEnvironment.RepoRoot, "fixtures", "msbuild-unit-scenarios", "unit-scenarios.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+
+        Assert.AreEqual("dotnet-msbuild-unit-scenarios", root.GetProperty("name").GetString());
+        Assert.AreEqual("911bea0b57d3613eb9c29f49ff9858d03884c397", root.GetProperty("upstreamCommit").GetString());
+
+        foreach (var scenario in root.GetProperty("scenarios").EnumerateArray())
+        {
+            var projectFile = scenario.GetProperty("projectFile").GetString()!;
+            var path = Path.Combine(BsharpTestEnvironment.RepoRoot, "fixtures", "msbuild-unit-scenarios", "cases", projectFile);
+            Assert.IsTrue(File.Exists(path), $"Scenario project file is missing: {projectFile}");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(scenario.GetProperty("upstreamPath").GetString()));
+            Assert.IsFalse(string.IsNullOrWhiteSpace(scenario.GetProperty("upstreamTest").GetString()));
+            var tier = scenario.GetProperty("tier").GetString();
+            Assert.IsTrue(tier is "structural" or "runtime", $"Unexpected scenario tier: {tier}");
+        }
+    }
+
+    private static void AssertInOrder(string text, params string[] expected)
+    {
+        var index = -1;
+        foreach (var value in expected)
+        {
+            var next = text.IndexOf(value, index + 1, StringComparison.Ordinal);
+            Assert.IsTrue(next > index, $"Expected to find '{value}' after index {index}.");
+            index = next;
+        }
+    }
+
+    private static void AssertJsonArrayContains(JsonElement array, string propertyName, string expectedValue)
+    {
+        foreach (var element in array.EnumerateArray())
+        {
+            if (element.TryGetProperty(propertyName, out var property) &&
+                property.GetString() == expectedValue)
+            {
+                return;
+            }
+        }
+
+        Assert.Fail($"Expected JSON array to contain {propertyName}='{expectedValue}'.");
+    }
+
+    private static void AssertFileLines(string path, params string[] expected)
+    {
+        Assert.IsTrue(File.Exists(path), $"Expected file to exist: {path}");
+        CollectionAssert.AreEqual(expected, File.ReadAllLines(path));
+    }
+}

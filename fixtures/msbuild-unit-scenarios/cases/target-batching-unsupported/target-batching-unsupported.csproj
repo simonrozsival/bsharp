@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Foo Include="input.txt">
+      <OutputFile>out.txt</OutputFile>
+    </Foo>
+  </ItemGroup>
+
+  <Target Name="TargetBatching"
+          Inputs="@(Foo)"
+          Outputs="%(Foo.OutputFile)">
+    <Message Text="%(Foo.OutputFile)" />
+  </Target>
+</Project>

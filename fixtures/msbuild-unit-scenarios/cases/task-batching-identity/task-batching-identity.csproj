@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Thing Include="One" Color="red" />
+    <Thing Include="One" Color="blue" />
+    <Thing Include="Two" Color="green" />
+  </ItemGroup>
+
+  <Target Name="Batching">
+    <Delete Files="$(MSBuildProjectDirectory)/identity.txt" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)/identity.txt"
+      Lines="%(Identity)|@(Thing->'%(Identity):%(Color)', ',')" />
+  </Target>
+</Project>

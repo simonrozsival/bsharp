@@ -1,0 +1,51 @@
+{
+  "name": "dotnet-msbuild-e2e",
+  "upstreamRepository": "https://github.com/dotnet/msbuild",
+  "upstreamCommit": "911bea0b57d3613eb9c29f49ff9858d03884c397",
+  "upstreamRoot": "src/MSBuild.EndToEnd.Tests/TestAssets",
+  "licenseFile": "LICENSE.dotnet-msbuild",
+  "cases": [
+    {
+      "id": "single-project",
+      "sourceRoot": "src/MSBuild.EndToEnd.Tests/TestAssets/SingleProject",
+      "upstreamPath": "src/MSBuild.EndToEnd.Tests/TestAssets/SingleProject",
+      "entryProject": "SingleProject.csproj",
+      "kind": "sdk",
+      "expectedBsharp": "supported",
+      "normalizations": [ "pin-sdk", "retarget-net11" ],
+      "mutation": "console-write-line"
+    },
+    {
+      "id": "project-with-dependencies",
+      "sourceRoot": "src/MSBuild.EndToEnd.Tests/TestAssets/ProjectWithDependencies",
+      "upstreamPath": "src/MSBuild.EndToEnd.Tests/TestAssets/ProjectWithDependencies",
+      "entryProject": "ConsoleApp/ConsoleApp.csproj",
+      "kind": "sdk",
+      "expectedBsharp": "known-unsupported",
+      "unsupportedReason": "ProjectReference recursion is not modeled yet.",
+      "normalizations": [ "pin-sdk", "retarget-net11" ],
+      "mutation": "project-reference-console-write-line"
+    },
+    {
+      "id": "non-sdk-single-project",
+      "sourceRoot": "src/MSBuild.EndToEnd.Tests/TestAssets/NonSdkSingleProject",
+      "upstreamPath": "src/MSBuild.EndToEnd.Tests/TestAssets/NonSdkSingleProject",
+      "entryProject": "NonSdkSingleProject.csproj",
+      "kind": "non-sdk-single",
+      "expectedBsharp": "supported",
+      "normalizations": [ "pin-sdk", "convert-non-sdk-to-sdk", "retarget-net11" ],
+      "mutation": "console-write-line"
+    },
+    {
+      "id": "non-sdk-project-with-dependencies",
+      "sourceRoot": "src/MSBuild.EndToEnd.Tests/TestAssets/NonSdkProjectWithDependencies",
+      "upstreamPath": "src/MSBuild.EndToEnd.Tests/TestAssets/NonSdkProjectWithDependencies",
+      "entryProject": "ConsoleApp/ConsoleApp.csproj",
+      "kind": "non-sdk-project-with-dependencies",
+      "expectedBsharp": "known-unsupported",
+      "unsupportedReason": "ProjectReference recursion is not modeled yet.",
+      "normalizations": [ "pin-sdk", "convert-non-sdk-to-sdk", "retarget-net11" ],
+      "mutation": "project-reference-console-write-line"
+    }
+  ]
+}

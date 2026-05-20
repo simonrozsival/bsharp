@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ExampColl Include="Item1" Number="1" />
+    <ExampColl Include="Item2" Number="2" />
+    <ExampColl Include="Item5" Number="2" />
+  </ItemGroup>
+
+  <Target Name="Batching">
+    <Delete Files="$(MSBuildProjectDirectory)/condition.txt" />
+    <WriteLinesToFile
+      Condition="'%(Number)' == '2'"
+      File="$(MSBuildProjectDirectory)/condition.txt"
+      Lines="%(Number)|@(ExampColl, ',')" />
+  </Target>
+</Project>

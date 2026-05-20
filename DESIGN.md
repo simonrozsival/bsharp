@@ -54,6 +54,7 @@ The following sections describe the original v0.3 design draft. Below are the de
 
 - **Hybrid task strategy:** structural tasks stay hand-rolled, while real SDK tasks run in one persistent CoreCLR task server. This replaced the earlier per-task sub-CLI experiment, which was correct but far too slow due to process startup cost.
 - **Implemented natively:** `Message`, `MakeDir`, `WriteLinesToFile`, `Touch`, `Delete`, `Copy`, `Error`, `Warning`, `ConvertToAbsolutePath`, `RemoveDir`, `CreateProperty`, `CreateItem`, `FindUnderPath`, `ReadLinesFromFile`, `Exec`, `Csc`, `Hash`, plus small HelloConsole-oriented shims for restore/assets-file-dependent SDK tasks.
+- **Task batching:** hand-rolled structural tasks support sequential grouping by one metadata dimension, including qualified/unqualified metadata, `%(Identity)`, per-batch conditions, multiple lists sharing the metadata, and pass-through lists. Target batching remains an explicit v1 unsupported shape.
 - **In-proc task loading:** one `AssemblyLoadContext` per task assembly directory, with `Microsoft.Build.Framework`, `Microsoft.Build.Utilities.Core`, and `Microsoft.Build` unified with the host context so `IBuildEngine`/`ITaskItem` identity stays valid.
 - **Csc warm no-op:** `CoreCompile` still executes because the SDK includes `$(NonExistentFile)` in target outputs, but the hand-rolled `Csc` task performs a task-level timestamp check and returns without launching Roslyn.
 
@@ -83,7 +84,7 @@ The following sections describe the original v0.3 design draft. Below are the de
 - `ProjectReference` recursive shape hashing for multi-project solutions.
 - `exec()` replacement on Unix to drop the ~80ms `Process.Start` overhead on macOS.
 - Spectre.Console-based pretty logging (basic Console logging is in).
-- Correctness oracle (§7) suite. Currently single smoke test: `bsharp build` followed by `dotnet bin/Debug/net11.0/console-net11.dll` → `Hello, World!`.
+- Broader correctness oracle (§7) suite. Current MSTest coverage validates fast structural codegen/audit unit scenarios, task-batching semantics, console cold/warm/direct/incremental builds, forced regeneration, shape invalidation, audit shape checks, gated MAUI audit, and a gated vendored MSBuild E2E corpus.
 
 ---
 
@@ -328,8 +329,8 @@ distinct decisions:
 |---------------------------------------------------------------------|------------------|------------------------------------------------------------------------------------------------|
 | **(a) Item transforms** `@(X->'%(Identity).bak')`                   | **support**      | Pervasive in mainline targets. Compile to LINQ projection / plain `foreach`.                   |
 | **(b) Metadata expansion in task parameters** `%(FullPath)` in attrs | **support**      | Pervasive. Compile to inline expression evaluating against the item being passed.              |
-| **(c) Task batching** (same task invoked once per distinct metadata) | **support if needed** | Decide per-target after audit. Likely needed for at least a few SDK targets.            |
-| **(d) Target batching** (target fan-out when `%(...)` in `Inputs`)  | **ban (v1)**     | Rare in well-written SDK code; bannable with a clean diagnostic. Reconsider when concrete need arises. |
+| **(c) Task batching** (same task invoked once per distinct metadata) | **support local structural tasks** | Implemented as sequential grouped batches for the hand-rolled task path; real SDK task batching remains a narrower future slice. |
+| **(d) Target batching** (target fan-out when `%(...)` in `Inputs`/`Outputs`)  | **ban (v1)**     | Rejected during generation for project-authored targets with a clean diagnostic; revisit when concrete need arises. |
 
 ### Deferred — decide after audit of evaluated graph
 - **Property functions on arbitrary BCL static methods.** Probably ban; allow

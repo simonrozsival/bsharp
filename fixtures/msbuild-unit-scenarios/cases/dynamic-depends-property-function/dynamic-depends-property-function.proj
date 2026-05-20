@@ -1,0 +1,13 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <BuildDependsOn>Prepare</BuildDependsOn>
+  </PropertyGroup>
+
+  <Target Name="Prepare" />
+
+  <Target Name="Build"
+          DependsOnTargets="$(BuildDependsOn)"
+          Condition="'$([System.String]::Copy(`x`))' == 'x'">
+    <Message Text="$([System.String]::Copy(`message`))" />
+  </Target>
+</Project>

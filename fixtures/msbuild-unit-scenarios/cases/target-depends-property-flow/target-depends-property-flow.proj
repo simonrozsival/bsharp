@@ -1,0 +1,15 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <Value>initial</Value>
+  </PropertyGroup>
+
+  <Target Name="Prepare">
+    <PropertyGroup>
+      <Value>prepared</Value>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="Build" DependsOnTargets="Prepare">
+    <Message Text="$(Value) done" />
+  </Target>
+</Project>

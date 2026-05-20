@@ -287,6 +287,7 @@ static class Codegen {
         Emitter.SetTaskMetadata(taskMetadata);
 
         var sb = new StringBuilder();
+        ValidateNoUnsupportedTargetBatching(instance, sequence, project.FullPath);
         Emitter.Emit(sb, project, instance, sequence, entryTarget);
         var programPath = Path.Combine(outDir, "Program.cs");
         File.WriteAllText(programPath, sb.ToString());
@@ -329,6 +330,26 @@ static class Codegen {
     static bool ContainsBatching(string? value) =>
         !string.IsNullOrEmpty(value) && value.Contains("%(", StringComparison.Ordinal);
 
+    static void ValidateNoUnsupportedTargetBatching(ProjectInstance instance, List<string> sequence, string projectPath) {
+        var fullProjectPath = Path.GetFullPath(projectPath);
+        foreach (var targetName in sequence) {
+            if (!instance.Targets.TryGetValue(targetName, out var target)) continue;
+            var targetFile = target.Location.File;
+            if (string.IsNullOrEmpty(targetFile))
+                continue;
+            if (!string.Equals(Path.GetFullPath(targetFile), fullProjectPath, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (ContainsBatching(target.Condition))
+                throw new InvalidOperationException($"target batching is not supported in v1: target '{targetName}' attribute 'Condition' contains metadata batching");
+            if (ContainsBatching(target.Inputs))
+                throw new InvalidOperationException($"target batching is not supported in v1: target '{targetName}' attribute 'Inputs' contains metadata batching");
+            if (ContainsBatching(target.Outputs))
+                throw new InvalidOperationException($"target batching is not supported in v1: target '{targetName}' attribute 'Outputs' contains metadata batching");
+            if (ContainsBatching(target.Returns))
+                throw new InvalidOperationException($"target batching is not supported in v1: target '{targetName}' attribute 'Returns' contains metadata batching");
+        }
+    }
+
     static void AddPropertyFunctionSite(List<object> sites, string target, string expressionKind, string? value) {
         if (string.IsNullOrEmpty(value) || !value.Contains("$([", StringComparison.Ordinal))
             return;
@@ -354,6 +375,7 @@ static class Codegen {
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -361,6 +383,7 @@ namespace Bsharp.Generated.TaskModel;
 
 public sealed class TaskInvocation {
     public string TaskName { get; set; } = "";
+    public string? TargetName { get; set; }
     // Each property maps the task-parameter name to a JSON value of an arbitrary shape:
     //   string  → JsonValueKind.String
     //   bool    → JsonValueKind.True/False
@@ -407,7 +430,7 @@ public partial class TaskModelJson : JsonSerializerContext { }
 // for each task parameter or output without sprinkling JsonElement parsing everywhere.
 public static class TaskModelExt {
     public static void SetString(this TaskInvocation r, string name, string value)
-        => r.Properties[name] = JsonSerializer.SerializeToElement(value, TaskModelJson.Default.String);
+        => r.Properties[name] = JsonSerializer.SerializeToElement(NormalizeTaskString(name, value), TaskModelJson.Default.String);
     public static void SetBool(this TaskInvocation r, string name, bool value)
         => r.Properties[name] = JsonSerializer.SerializeToElement(value, TaskModelJson.Default.Boolean);
     public static void SetInt(this TaskInvocation r, string name, int value)
@@ -417,7 +440,7 @@ public static class TaskModelExt {
     public static void SetDouble(this TaskInvocation r, string name, double value)
         => r.Properties[name] = JsonSerializer.SerializeToElement(value, TaskModelJson.Default.Double);
     public static void SetStrings(this TaskInvocation r, string name, string[] value)
-        => r.Properties[name] = JsonSerializer.SerializeToElement(value, TaskModelJson.Default.StringArray);
+        => r.Properties[name] = JsonSerializer.SerializeToElement(NormalizeTaskStrings(name, value), TaskModelJson.Default.StringArray);
     public static void SetItem(this TaskInvocation r, string name, ItemSpec? value) {
         if (value == null) return;
         r.Properties[name] = JsonSerializer.SerializeToElement(value, TaskModelJson.Default.ItemSpec);
@@ -466,6 +489,31 @@ public static class TaskModelExt {
            : Array.Empty<ItemSpec>();
     public static string GetString(this TaskResult r, string name)
         => r.Outputs.TryGetValue(name, out var e) && e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
+
+    static string NormalizeTaskString(string name, string value) {
+        if (value.IndexOf('\\') < 0 || !IsPathLikeName(name)) return value;
+        return value.Replace('\\', Path.DirectorySeparatorChar);
+    }
+    static string[] NormalizeTaskStrings(string name, string[] values) {
+        if (!IsPathLikeName(name)) return values;
+        string[]? normalized = null;
+        for (int i = 0; i < values.Length; i++) {
+            var value = values[i];
+            if (value.IndexOf('\\') < 0) continue;
+            normalized ??= (string[])values.Clone();
+            normalized[i] = value.Replace('\\', Path.DirectorySeparatorChar);
+        }
+        return normalized ?? values;
+    }
+    static bool IsPathLikeName(string name) =>
+        name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Directory", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("File", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Manifest", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Jar", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Zip", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Apk", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Archive", StringComparison.OrdinalIgnoreCase);
 }
 """;
 
@@ -672,7 +720,7 @@ static class TaskServer {
             foreach (var kv in req.Properties) SetValue(type, task, kv.Key, kv.Value);
             var guard = CaptureTimestampGuard(req, desc);
             BsharpBuildEngine.CapturedErrors.Clear();
-            var execute = type.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance) ?? throw new MissingMethodException(desc.FullTypeName, "Execute");
+            var execute = type.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance, binder: null, Type.EmptyTypes, modifiers: null) ?? throw new MissingMethodException(desc.FullTypeName, "Execute");
             var success = execute.Invoke(task, Array.Empty<object?>()) as bool? ?? false;
             RestoreTimestampIfContentUnchanged(guard);
             var resp = new TaskResult { Success = success };
@@ -719,7 +767,7 @@ static class TaskServer {
     }
     static void SetBuildEngine(Type type, object task) {
         var prop = type.GetProperty("BuildEngine", BindingFlags.Public | BindingFlags.Instance);
-        if (prop != null && prop.CanWrite) prop.SetValue(task, new BsharpBuildEngine());
+        if (prop != null && prop.CanWrite) prop.SetValue(task, BsharpBuildEngine.Instance);
     }
     static void SetTaskEnvironment(Type type, object task) {
         var prop = type.GetProperty("TaskEnvironment", BindingFlags.Public | BindingFlags.Instance);
@@ -909,6 +957,8 @@ sealed class BsharpBuildEngine
       Microsoft.Build.Framework.IBuildEngine9,
       Microsoft.Build.Framework.IBuildEngine10
 {
+    public static readonly BsharpBuildEngine Instance = new();
+
     public string ProjectFileOfTaskNode => "";
     public int LineNumberOfTaskNode => 0;
     public int ColumnNumberOfTaskNode => 0;
@@ -1559,6 +1609,7 @@ static class UsingTaskRegistry {
         ("ResolveAssemblyReference", "Microsoft.Build.Tasks.ResolveAssemblyReference"),
         ("CopyRefAssembly",       "Microsoft.Build.Tasks.CopyRefAssembly"),
         ("CreateCSharpManifestResourceName", "Microsoft.Build.Tasks.CreateCSharpManifestResourceName"),
+        ("GetFileHash",           "Microsoft.Build.Tasks.GetFileHash"),
     };
 
     // Find Microsoft.Build.Tasks.Core.dll. Probe the same property set we use for
@@ -1815,20 +1866,12 @@ static class Emitter {
     public static TaskMetadataLoader.TaskMeta? GetTaskMeta(string taskName) {
         if (_taskMeta == null) return null;
         if (_keepHandrolled.Contains(taskName)) return null;
-        if (_taskMeta.ByTaskName.TryGetValue(taskName, out var m)) {
-            // Skip tasks whose full type name is multiply-defined across the referenced
-            // assembly closure. C# can't disambiguate without extern aliases (which we don't
-            // emit yet); fall back to NotImplemented. None of these are critical for
-            // HelloConsole — they're NuGet Pack/Restore-side tasks that don't run at build time.
-            if (_taskMeta.AmbiguousFullTypeNames.Contains(m.FullTypeName)) return null;
+        if (_taskMeta.ByTaskName.TryGetValue(taskName, out var m))
             return m;
-        }
         // Try a short-name fallback: scan metadata index for a type whose simple name matches.
         foreach (var kv in _taskMeta.ByTaskName)
-            if (LastSegment(kv.Key).Equals(taskName, StringComparison.OrdinalIgnoreCase)) {
-                if (_taskMeta.AmbiguousFullTypeNames.Contains(kv.Value.FullTypeName)) return null;
+            if (LastSegment(kv.Key).Equals(taskName, StringComparison.OrdinalIgnoreCase))
                 return kv.Value;
-            }
         return null;
     }
     static string LastSegment(string s) {
@@ -2284,22 +2327,29 @@ class Item {
     public Dictionary<string, string> M => _m ??= new Dictionary<string, string>(StringComparer.Ordinal);
     public Dictionary<string, string>? MetadataOrNull => _m;
     public Item(string id) {
-        Identity = id;
+        Identity = NormalizeIdentity(id);
     }
     public Item(string id, Dictionary<string, string> metadata) {
-        Identity = id;
-        _m = metadata.Count == 0 ? null : metadata;
+        Identity = NormalizeIdentity(id);
+        if (metadata.Count != 0) {
+            _m = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var kv in metadata)
+                _m[kv.Key.ToLowerInvariant()] = kv.Value;
+        }
     }
-    public string GetMetadata(string name) => name switch {
-        "identity"    => Identity,
-        "fullpath"    => Path.GetFullPath(Identity),
-        "filename"    => Path.GetFileNameWithoutExtension(Identity),
-        "extension"   => Path.GetExtension(Identity),
-        "directory"   => Path.GetDirectoryName(Identity) ?? "",
-        "relativedir" => RelativeDir(Identity),
-        "rootdir"     => Path.GetPathRoot(Identity) ?? "",
-        _ => _m != null && _m.TryGetValue(name, out var v) ? v : "",
-    };
+    public string GetMetadata(string name) {
+        name = name.ToLowerInvariant();
+        return name switch {
+            "identity"    => Identity,
+            "fullpath"    => Identity.Length == 0 ? "" : Path.GetFullPath(Identity),
+            "filename"    => Identity.Length == 0 ? "" : Path.GetFileNameWithoutExtension(Identity),
+            "extension"   => Identity.Length == 0 ? "" : Path.GetExtension(Identity),
+            "directory"   => Identity.Length == 0 ? "" : Path.GetDirectoryName(Identity) ?? "",
+            "relativedir" => RelativeDir(Identity),
+            "rootdir"     => Identity.Length == 0 ? "" : Path.GetPathRoot(Identity) ?? "",
+            _ => _m != null && _m.TryGetValue(name, out var v) ? v : "",
+        };
+    }
     // True iff this item's metadata `name` (lowercase) equals `value` case-insensitively.
     // Cheaper than the equivalent string.Equals(GetMetadata("name"), value, OrdinalIgnoreCase)
     // pattern that conditions / item filters used to generate.
@@ -2309,6 +2359,58 @@ class Item {
     public void CopyMetadataTo(Item destination) {
         if (_m == null) return;
         foreach (var kv in _m) destination.M[kv.Key] = kv.Value;
+    }
+    public static IEnumerable<Item> ExpandInclude(string identity) {
+        if (identity.IndexOfAny(['*', '?']) < 0) {
+            yield return new Item(identity);
+            yield break;
+        }
+        var rooted = Path.IsPathRooted(identity);
+        var normalized = identity.Replace('\\', Path.DirectorySeparatorChar);
+        var fullPattern = Path.GetFullPath(normalized);
+        var wildcard = fullPattern.IndexOfAny(['*', '?']);
+        var baseEnd = wildcard < 0 ? -1 : fullPattern.LastIndexOf(Path.DirectorySeparatorChar, wildcard);
+        var baseDir = baseEnd >= 0 ? fullPattern.Substring(0, baseEnd) : Directory.GetCurrentDirectory();
+        if (!Directory.Exists(baseDir))
+            yield break;
+        var filePattern = Path.GetFileName(fullPattern);
+        var normalizedPattern = Normalize(fullPattern);
+        var alternatePattern = normalizedPattern.Contains("/**/", StringComparison.Ordinal)
+            ? normalizedPattern.Replace("/**/", "/", StringComparison.Ordinal)
+            : null;
+        foreach (var file in Directory.EnumerateFiles(baseDir, filePattern, SearchOption.AllDirectories)) {
+            var normalizedFile = Normalize(file);
+            if (GlobMatch(normalizedPattern, normalizedFile, 0, 0) || (alternatePattern != null && GlobMatch(alternatePattern, normalizedFile, 0, 0)))
+                yield return new Item(rooted ? file : Path.GetRelativePath(Directory.GetCurrentDirectory(), file));
+        }
+    }
+    static string Normalize(string value) => value.Replace('\\', '/');
+    static string NormalizeIdentity(string value) =>
+        Path.DirectorySeparatorChar == '/' && value.IndexOf('\\') >= 0 && !value.Contains('=')
+            ? value.Replace('\\', '/')
+            : value;
+    static bool GlobMatch(string pattern, string value, int p, int v) {
+        while (p < pattern.Length) {
+            var c = pattern[p];
+            if (c == '*') {
+                while (p + 1 < pattern.Length && pattern[p + 1] == '*') p++;
+                if (p + 1 == pattern.Length) return true;
+                for (var i = v; i <= value.Length; i++)
+                    if (GlobMatch(pattern, value, p + 1, i))
+                        return true;
+                return false;
+            }
+            if (v >= value.Length) return false;
+            if (c == '?') {
+                p++;
+                v++;
+                continue;
+            }
+            if (char.ToUpperInvariant(c) != char.ToUpperInvariant(value[v])) return false;
+            p++;
+            v++;
+        }
+        return v == value.Length;
     }
     static string RelativeDir(string id) {
         var d = Path.GetDirectoryName(id);
@@ -2347,7 +2449,7 @@ static partial class TaskRunner {
         return new TaskInstance {
             Desc = desc,
             StartedTicks = Log.TaskStarted(desc.ShortName),
-            Invocation = new Bsharp.Generated.TaskModel.TaskInvocation { TaskName = desc.ShortName }
+            Invocation = new Bsharp.Generated.TaskModel.TaskInvocation { TaskName = desc.ShortName, TargetName = Log.CurrentTarget }
         };
     }
 
@@ -2379,15 +2481,23 @@ static partial class TaskRunner {
         if (!string.IsNullOrEmpty(value)) SetStrings(task, name, StringList.FromSemicolonList(value));
     }
     public static void SetItem(TaskInstance task, string name, Bsharp.Generated.TaskModel.ItemSpec? value) {
+        if (value is not null)
+            value.Identity = NormalizeTaskItemIdentity(value.Identity);
         task.Invocation.SetItem(name, value);
     }
     public static void SetItemFromString(TaskInstance task, string name, string identity) {
         if (!string.IsNullOrEmpty(identity))
-            SetItem(task, name, new Bsharp.Generated.TaskModel.ItemSpec { Identity = identity });
+            SetItem(task, name, new Bsharp.Generated.TaskModel.ItemSpec { Identity = NormalizeTaskItemIdentity(identity) });
     }
     public static void SetItems(TaskInstance task, string name, Bsharp.Generated.TaskModel.ItemSpec[] value) {
+        foreach (var item in value)
+            item.Identity = NormalizeTaskItemIdentity(item.Identity);
         task.Invocation.SetItems(name, value);
     }
+    static string NormalizeTaskItemIdentity(string value) =>
+        Path.DirectorySeparatorChar == '/' && value.IndexOf('\\') >= 0 && !value.Contains('=')
+            ? value.Replace('\\', '/')
+            : value;
 
     public static string? Execute(TaskInstance task) {
         try {
@@ -2398,13 +2508,18 @@ static partial class TaskRunner {
     }
 
     static string? ExecuteCore(TaskInstance task) {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try {
             var timestampGuard = CaptureTimestampGuard(task);
             task.Result = GetTaskServer().Invoke(task.Invocation);
             RestoreTimestampIfContentUnchanged(timestampGuard);
-            return task.Result.Success ? null : task.Result.Error ?? $"task '{task.Desc.ShortName}' returned false";
+            var error = task.Result.Success ? null : task.Result.Error ?? $"task '{task.Desc.ShortName}' returned false";
+            TaskDiagnostics.Write(task, started, error);
+            return error;
         } catch (Exception ex) {
-            return ex.GetType().Name + ": " + ex.Message + "\n" + ex.StackTrace;
+            var error = ex.GetType().Name + ": " + ex.Message + "\n" + ex.StackTrace;
+            TaskDiagnostics.Write(task, started, error);
+            return error;
         }
     }
 
@@ -2442,6 +2557,69 @@ static partial class TaskRunner {
         var current = File.ReadAllBytes(g.Path);
         if (current.AsSpan().SequenceEqual(g.Content))
             File.SetLastWriteTimeUtc(g.Path, g.TimestampUtc);
+    }
+
+    static class TaskDiagnostics {
+        static readonly object Sync = new();
+        static string? _path;
+        static bool _initialized;
+        static bool _warned;
+
+        public static void Write(TaskInstance task, long startedTicks, string? error) {
+            var path = GetPath();
+            if (path == null) return;
+            try {
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                using var ms = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(ms)) {
+                    writer.WriteStartObject();
+                    writer.WriteString("timestampUtc", DateTime.UtcNow);
+                    writer.WriteString("target", task.Invocation.TargetName ?? "");
+                    writer.WriteString("task", task.Desc.ShortName);
+                    writer.WriteString("type", task.Desc.FullTypeName);
+                    writer.WriteString("assembly", task.Desc.AssemblyPath);
+                    writer.WriteNumber("elapsedMilliseconds", (System.Diagnostics.Stopwatch.GetTimestamp() - startedTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                    writer.WriteBoolean("success", task.Result?.Success ?? false);
+                    if (!string.IsNullOrEmpty(error)) writer.WriteString("error", error);
+                    writer.WritePropertyName("properties");
+                    writer.WriteStartObject();
+                    foreach (var kv in task.Invocation.Properties.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)) {
+                        writer.WritePropertyName(kv.Key);
+                        kv.Value.WriteTo(writer);
+                    }
+                    writer.WriteEndObject();
+                    writer.WritePropertyName("outputs");
+                    writer.WriteStartObject();
+                    if (task.Result != null) {
+                        foreach (var kv in task.Result.Outputs.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)) {
+                            writer.WritePropertyName(kv.Key);
+                            kv.Value.WriteTo(writer);
+                        }
+                    }
+                    writer.WriteEndObject();
+                    writer.WriteEndObject();
+                }
+                lock (Sync) {
+                    File.AppendAllText(path, System.Text.Encoding.UTF8.GetString(ms.ToArray()) + Environment.NewLine);
+                }
+            } catch (Exception ex) {
+                if (_warned) return;
+                _warned = true;
+                Console.Error.WriteLine("bsharp: failed to write task diagnostics: " + ex.Message);
+            }
+        }
+
+        static string? GetPath() {
+            if (_initialized) return _path;
+            _initialized = true;
+            var value = Environment.GetEnvironmentVariable("BSHARP_TASK_DUMP");
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            _path = Directory.Exists(value)
+                ? Path.Combine(value, "task-invocations.jsonl")
+                : value;
+            return _path;
+        }
     }
 
     static TaskServerClient GetTaskServer() => _server ??= new TaskServerClient(ResolveTaskServerPath());
@@ -2540,11 +2718,23 @@ static class ItemSerde {
         for (int i = 0; i < items.Count; i++) arr[i] = OneSpec(items[i]);
         return arr;
     }
+    public static Bsharp.Generated.TaskModel.ItemSpec[] ConcatSpecs(params Bsharp.Generated.TaskModel.ItemSpec[][] groups) {
+        var count = 0;
+        foreach (var group in groups) count += group.Length;
+        if (count == 0) return Array.Empty<Bsharp.Generated.TaskModel.ItemSpec>();
+        var arr = new Bsharp.Generated.TaskModel.ItemSpec[count];
+        var offset = 0;
+        foreach (var group in groups) {
+            Array.Copy(group, 0, arr, offset, group.Length);
+            offset += group.Length;
+        }
+        return arr;
+    }
     public static Bsharp.Generated.TaskModel.ItemSpec[] ToSpecsWithIdentity(IEnumerable<Item> items, Func<Item, string> identitySelector) {
         var specs = new List<Bsharp.Generated.TaskModel.ItemSpec>();
         foreach (var item in items) {
             var spec = OneSpec(item);
-            spec.Identity = identitySelector(item);
+            spec.Identity = PathUtil.NormalizeSeparators(identitySelector(item));
             specs.Add(spec);
         }
         return specs.ToArray();
@@ -2553,17 +2743,34 @@ static class ItemSerde {
         if (string.IsNullOrEmpty(semicolonList)) return Array.Empty<Bsharp.Generated.TaskModel.ItemSpec>();
         var specs = new List<Bsharp.Generated.TaskModel.ItemSpec>();
         foreach (var part in new SemicolonSplit(semicolonList))
-            specs.Add(new Bsharp.Generated.TaskModel.ItemSpec { Identity = part.ToString() });
+            specs.Add(new Bsharp.Generated.TaskModel.ItemSpec { Identity = PathUtil.NormalizeSeparators(part.ToString()) });
         return specs.ToArray();
     }
     public static List<Item> FromSpecs(Bsharp.Generated.TaskModel.ItemSpec[] specs) {
         var list = new List<Item>(specs.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var s in specs) {
-            var it = new Item(s.Identity);
+            var it = new Item(PathUtil.NormalizeSeparators(s.Identity));
             if (s.Metadata != null) foreach (var kv in s.Metadata) it.SetMetadata(kv.Key, kv.Value);
+            var key = it.Identity + "|" + (it.MetadataOrNull == null ? "" : string.Join("\0", it.MetadataOrNull.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value)));
+            if (!seen.Add(key)) continue;
             list.Add(it);
         }
         return list;
+    }
+    public static void AddAndroidAarSidecarsFrom(List<Item> assemblies) {
+        var androidAarLibrary = I.Get("androidaarlibrary");
+        foreach (var assembly in assemblies) {
+            var dir = Path.GetDirectoryName(assembly.Identity);
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) continue;
+            foreach (var aar in Directory.EnumerateFiles(dir, "*.aar")) {
+                var identity = PathUtil.NormalizeSeparators(aar);
+                if (androidAarLibrary.Any(existing => string.Equals(existing.Identity, identity, StringComparison.OrdinalIgnoreCase))) continue;
+                var item = new Item(identity);
+                item.SetMetadata("androidskipresourceprocessing", "true");
+                androidAarLibrary.Add(item);
+            }
+        }
     }
 }
 
@@ -2705,16 +2912,25 @@ static class TargetIncrementality {
 }
 
 static class TargetRuntime {
-    public static bool TryEnter(ref int state, ref TaskCompletionSource? completion, out Task? waitTask) {
+    static readonly AsyncLocal<string[]?> _targetStack = new();
+
+    public static bool TryEnter(string targetName, ref int state, ref TaskCompletionSource? completion, out Task? waitTask) {
         waitTask = null;
+        var stack = _targetStack.Value ?? Array.Empty<string>();
         var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.CompareExchange(ref state, 1, 0) == 0) {
             Volatile.Write(ref completion, created);
+            Push(stack, targetName);
             return true;
         }
 
         if (Volatile.Read(ref state) == 2)
             return false;
+
+        if (stack.Contains(targetName, StringComparer.OrdinalIgnoreCase)) {
+            var cycle = string.Join(" -> ", stack.Concat(new[] { targetName }));
+            throw new InvalidOperationException($"Target deadlock detected: {cycle}");
+        }
 
         var spin = new SpinWait();
         TaskCompletionSource? existing;
@@ -2728,9 +2944,49 @@ static class TargetRuntime {
         return false;
     }
 
-    public static void MarkDone(ref int state, ref TaskCompletionSource? completion) {
+    public static async ValueTask WaitForCompletionAsync(string targetName, Task waitTask) {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var stack = string.Join(" -> ", _targetStack.Value ?? Array.Empty<string>());
+        while (!waitTask.IsCompleted) {
+            var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
+            if (completed == waitTask)
+                break;
+            Console.Error.WriteLine($"bsharp: still waiting after {(int)sw.Elapsed.TotalSeconds}s for target '{targetName}' to complete; current target stack: {stack}");
+        }
+        await waitTask;
+    }
+
+    public static void MarkDone(string targetName, ref int state, ref TaskCompletionSource? completion) {
         Volatile.Write(ref state, 2);
         Volatile.Read(ref completion)?.TrySetResult();
+        Pop(targetName);
+    }
+
+    static void Push(string[] stack, string targetName) {
+        var next = new string[stack.Length + 1];
+        Array.Copy(stack, next, stack.Length);
+        next[^1] = targetName;
+        _targetStack.Value = next;
+    }
+
+    static void Pop(string targetName) {
+        var stack = _targetStack.Value;
+        if (stack is null || stack.Length == 0)
+            return;
+
+        if (string.Equals(stack[^1], targetName, StringComparison.OrdinalIgnoreCase)) {
+            _targetStack.Value = stack.Length == 1 ? null : stack[..^1];
+            return;
+        }
+
+        var last = Array.FindLastIndex(stack, x => string.Equals(x, targetName, StringComparison.OrdinalIgnoreCase));
+        if (last < 0)
+            return;
+        var next = new List<string>(stack.Length - 1);
+        for (var i = 0; i < stack.Length; i++)
+            if (i != last)
+                next.Add(stack[i]);
+        _targetStack.Value = next.Count == 0 ? null : next.ToArray();
     }
 }
 
@@ -2740,6 +2996,8 @@ static class Log {
     public static Verbosity Level = Verbosity.Minimal;
     static readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
     static long _taskTicks;
+    static readonly AsyncLocal<string?> _currentTarget = new();
+    public static string? CurrentTarget => _currentTarget.Value;
     public static double CumulativeTaskMilliseconds =>
         System.Threading.Volatile.Read(ref _taskTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     public static void ResetTaskTiming() => System.Threading.Volatile.Write(ref _taskTicks, 0);
@@ -2782,6 +3040,7 @@ static class Log {
     // Target lifecycle is verbose/detailed output. Normal output stays task-focused.
     public static long TargetStarted(string name) {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        _currentTarget.Value = name;
         if (Level >= Verbosity.Detailed)
             Console.WriteLine($"{Prefix()} Target started:   {name}");
         return started;
@@ -2789,6 +3048,8 @@ static class Log {
     public static void TargetFinished(string name, long started) {
         if (Level >= Verbosity.Detailed)
             Console.WriteLine($"{Prefix()} Target finished:  {name} {DurationSuffix(System.Diagnostics.Stopwatch.GetTimestamp() - started)}");
+        if (string.Equals(_currentTarget.Value, name, StringComparison.Ordinal))
+            _currentTarget.Value = null;
     }
     public static void TargetSkipped(string name, string reason) {
         if (Level >= Verbosity.Detailed)
@@ -3190,6 +3451,52 @@ readonly ref struct SemicolonSplit {
     }
 }
 
+static class PathUtil {
+    public static string EnsureTrailingSlash(string value) {
+        if (string.IsNullOrEmpty(value)) return value ?? "";
+        var last = value[^1];
+        return last == '/' || last == '\\' ? value : value + Path.DirectorySeparatorChar;
+    }
+    public static string NormalizeSeparators(string value) =>
+        Path.DirectorySeparatorChar == '/' ? value.Replace('\\', '/') : value;
+    public static string NormalizeSeparatorList(string value) {
+        var normalized = new List<string>();
+        foreach (var item in new SplitList(value))
+            normalized.Add(NormalizeSeparators(item));
+        return string.Join(";", normalized);
+    }
+}
+
+static class BatchRuntime {
+    public static List<string> Keys(string metadataName, params IEnumerable<Item>[] sources) {
+        var keys = new List<string>();
+        foreach (var source in sources) {
+            foreach (var item in source) {
+                var key = item.GetMetadata(metadataName);
+                if (metadataName != "identity" && string.IsNullOrEmpty(key))
+                    continue;
+                if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+                    keys.Add(key);
+            }
+        }
+        return keys;
+    }
+
+    public static bool HasBatchMetadata(IEnumerable<Item> items, string metadataName) {
+        if (metadataName == "identity")
+            return items.Any();
+        return items.Any(item => !string.IsNullOrEmpty(item.GetMetadata(metadataName)));
+    }
+
+    public static List<Item> ItemsForBatch(List<Item> items, string metadataName, string key) {
+        if (!HasBatchMetadata(items, metadataName))
+            return items;
+        return items
+            .Where(item => string.Equals(item.GetMetadata(metadataName), key, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+}
+
 static partial class Tasks {
     public static void Message(ParamList p) { }
     public static void MakeDir(ParamList p, OutputList? outputs) {
@@ -3257,13 +3564,18 @@ static partial class Tasks {
         var abs = new List<Item>();
         foreach (var path in new SplitList(p.GetValueOrDefault("Paths")))
             abs.Add(new Item(Path.GetFullPath(path)));
-        if (outputs != null && outputs.TryGetValue("AbsolutePaths", out var spec)) I.Get(spec.itemName).AddRange(abs);
+        if (outputs != null && outputs.TryGetValue("AbsolutePaths", out var spec)) {
+            if (spec.metadataName == "property")
+                P.Set(spec.itemName, string.Join(";", abs.Select(item => item.Identity)));
+            else
+                I.Get(spec.itemName).AddRange(abs);
+        }
     }
     public static void RemoveDir(ParamList p) {
         foreach (var d in new SplitList(p.GetValueOrDefault("Directories"))) if (Directory.Exists(d)) Directory.Delete(d, true);
     }
     public static void CreateProperty(ParamList p, OutputList? outputs) {
-        var value = p.GetValueOrDefault("Value") ?? "";
+        var value = PathUtil.NormalizeSeparators(p.GetValueOrDefault("Value") ?? "");
         if (outputs != null && outputs.TryGetValue("Value", out var spec) && spec.itemName != null) P.Set(spec.itemName, value);
     }
     public static void CreateItem(ParamList p, OutputList? outputs) {
@@ -3356,7 +3668,7 @@ static partial class Tasks {
 
     public static void NetSdkWarning(ParamList p) { }
 
-    public static void MSBuild(ParamList p) {
+    public static void MSBuild(ParamList p, OutputList? outputs) {
         var projects = StringList.FromSemicolonList(p.GetValueOrDefault("Projects") ?? "");
         if (projects.Length == 0) return;
         var targets = StringList.FromSemicolonList(p.GetValueOrDefault("Targets") ?? "");
@@ -3368,8 +3680,18 @@ static partial class Tasks {
         if (!selfOnly)
             throw new InvalidOperationException("<MSBuild> cross-project recursion is not supported in v1");
 
-        foreach (var target in targets)
-            Targets.Run(target.Trim()).GetAwaiter().GetResult();
+        var targetOutputs = new List<Item>();
+        foreach (var target in targets) {
+            var trimmedTarget = target.Trim();
+            Targets.Run(trimmedTarget).GetAwaiter().GetResult();
+            targetOutputs.AddRange(Targets.GetReturns(trimmedTarget));
+        }
+        if (outputs != null && outputs.TryGetValue("TargetOutputs", out var spec)) {
+            if (spec.metadataName == "property")
+                P.Set(spec.itemName, string.Join(";", targetOutputs.Select(item => item.Identity)));
+            else
+                I.Get(spec.itemName).AddRange(targetOutputs);
+        }
     }
 
     public static void SetRidAgnosticValueForProjects(ParamList p) { }
@@ -3575,9 +3897,9 @@ static partial class Tasks {
             bodies.AppendLine($"    static int {method}State;");
             bodies.AppendLine($"    static TaskCompletionSource? {method}Completion;");
             bodies.AppendLine($"    public static async ValueTask {method}() {{");
-            bodies.AppendLine($"        if (!TargetRuntime.TryEnter(ref {method}State, ref {method}Completion, out var waitTask)) {{");
+            bodies.AppendLine($"        if (!TargetRuntime.TryEnter({CSharpLiteral(name)}, ref {method}State, ref {method}Completion, out var waitTask)) {{");
             bodies.AppendLine("            if (waitTask is not null)");
-            bodies.AppendLine("                await waitTask;");
+            bodies.AppendLine($"                await TargetRuntime.WaitForCompletionAsync({CSharpLiteral(name)}, waitTask);");
             bodies.AppendLine("            return;");
             bodies.AppendLine("        }");
             bodies.AppendLine("        try {");
@@ -3596,6 +3918,7 @@ static partial class Tasks {
                 EmitTargetMethodBody(
                     body, name, target, beforeCompanions, afterCompanions,
                     ParseDepString, Method,
+                    method,
                     onDynamicEmitted: () => anyDynamicEmitted = true,
                     instance: instance);
                 bodies.Append(body);
@@ -3604,7 +3927,7 @@ static partial class Tasks {
                 bodies.AppendLine("            // (target replaced with no-op; see comment above)");
             }
             bodies.AppendLine("        } finally {");
-            bodies.AppendLine($"            TargetRuntime.MarkDone(ref {method}State, ref {method}Completion);");
+            bodies.AppendLine($"            TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
             bodies.AppendLine("        }");
             bodies.AppendLine("    }");
             bodies.AppendLine();
@@ -3621,6 +3944,17 @@ static partial class Tasks {
             sb.AppendLine($"    public static ValueTask Restore() => {Method("Restore")}();");
         else
             sb.AppendLine("    public static ValueTask Restore() => ValueTask.CompletedTask;");
+        sb.AppendLine();
+        sb.AppendLine("    public static List<Item> GetReturns(string name) {");
+        sb.AppendLine("        return name.ToLowerInvariant() switch {");
+        foreach (var name in sequence) {
+            if (!instance.Targets.TryGetValue(name, out var target) || string.IsNullOrWhiteSpace(target.Returns))
+                continue;
+            sb.AppendLine($"            {CSharpLiteral(name.ToLowerInvariant())} => {CompileTargetReturns(target.Returns)},");
+        }
+        sb.AppendLine("            _ => new List<Item>(),");
+        sb.AppendLine("        };");
+        sb.AppendLine("    }");
         sb.AppendLine();
 
         if (anyDynamicEmitted || _hasCallTarget) {
@@ -3656,6 +3990,27 @@ static partial class Tasks {
         if (parseDeps(target.DependsOnTargets).Count != 0) return false;
         if (beforeCompanions.TryGetValue(name, out var befores) && befores.Count != 0) return false;
         if (afterCompanions.TryGetValue(name, out var afters) && afters.Count != 0) return false;
+        return true;
+    }
+
+    static string CompileTargetReturns(string returns) {
+        var trimmed = returns.Trim();
+        if (TryParsePureItemList(trimmed, out var itemType))
+            return $"new List<Item>({ItemAccess(itemType)})";
+        return $"ItemSerde.FromSpecs(ItemSerde.SpecsFromScalar({CompileExpr(returns)}))";
+    }
+
+    static bool TryParsePureItemList(string text, out string itemType) {
+        itemType = "";
+        if (!text.StartsWith("@(", StringComparison.Ordinal) || !text.EndsWith(")", StringComparison.Ordinal))
+            return false;
+        var inner = text.Substring(2, text.Length - 3).Trim();
+        if (inner.Length == 0 || inner.Contains("->", StringComparison.Ordinal) || inner.Contains(';'))
+            return false;
+        foreach (var ch in inner)
+            if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-' || ch == '.'))
+                return false;
+        itemType = inner;
         return true;
     }
 
@@ -3708,6 +4063,7 @@ static partial class Tasks {
         Dictionary<string, List<string>> afterCompanions,
         Func<string?, List<(string kind, string val)>> ParseDeps,
         Func<string, string> Method,
+        string method,
         Action onDynamicEmitted,
         ProjectInstance instance)
     {
@@ -3757,6 +4113,11 @@ static partial class Tasks {
         }
         FlushLiteralRun();
 
+        foreach (var implicitDependency in ImplicitGeneratedDependencies(name)) {
+            if (instance.Targets.ContainsKey(implicitDependency))
+                sb.AppendLine($"            await {Method(implicitDependency)}();");
+        }
+
         // Before-companions (literal X with X.BeforeTargets containing this target) run
         // after DependsOnTargets, but can run as their own static prerequisite batch.
         if (beforeCompanions.TryGetValue(name, out var befores))
@@ -3786,13 +4147,28 @@ static partial class Tasks {
         }
 
         if (hasAfters) {
+            sb.AppendLine($"            Log.TargetFinished({CSharpLiteral(name)}, targetStart);");
+            sb.AppendLine($"            TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
             foreach (var a in afters!) sb.AppendLine($"            await {Method(a)}();");
+        } else {
+            sb.AppendLine($"            Log.TargetFinished({CSharpLiteral(name)}, targetStart);");
         }
-
-        sb.AppendLine($"            Log.TargetFinished({CSharpLiteral(name)}, targetStart);");
         sb.AppendLine("        } catch (Exception ex) {");
         sb.AppendLine($"            AddError({CSharpLiteral(name)}, ex.Message);");
         sb.AppendLine("        }");
+    }
+
+    static IEnumerable<string> ImplicitGeneratedDependencies(string targetName) {
+        // Some Xamarin.Android targets rely on build-order property lists to have run before
+        // they are invoked directly from validation/package targets. The generated execute-once
+        // model can otherwise enter these leaf targets before the tooling discovery targets have
+        // populated Android SDK/JDK/API properties.
+        if (string.Equals(targetName, "_GetJavaPlatformJar", StringComparison.OrdinalIgnoreCase))
+            yield return "_ResolveAndroidTooling";
+        if (string.Equals(targetName, "_ResolveAndroidTooling", StringComparison.OrdinalIgnoreCase))
+            yield return "_ResolveSdks";
+        if (string.Equals(targetName, "_ResolveXamarinAndroidTools", StringComparison.OrdinalIgnoreCase))
+            yield return "_ResolveSdks";
     }
 
     static void EmitChild(StringBuilder sb, ProjectTargetInstanceChild child) {
@@ -3816,7 +4192,7 @@ static partial class Tasks {
         else sb.AppendLine($"{ind}{{");
         foreach (var prop in pg.Properties) {
             var iind = ind + "    ";
-            var setExpr = SetProperty(prop.Name, CompileExpr(prop.Value, batch));
+            var setExpr = SetProperty(prop.Name, CompileExpr(ApplyThisFileDirectory(prop.Value, prop.Location.File), batch));
             if (!string.IsNullOrEmpty(prop.Condition))
                 sb.AppendLine($"{iind}if ({CompileCond(prop.Condition, batch)}) {setExpr};");
             else
@@ -3824,6 +4200,15 @@ static partial class Tasks {
         }
         sb.AppendLine($"{ind}}}");
         if (batch != null) sb.AppendLine($"        }}");
+    }
+
+    static string ApplyThisFileDirectory(string value, string? declaringFile) {
+        if (string.IsNullOrEmpty(value) || !value.Contains("$(MSBuildThisFileDirectory)", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(declaringFile))
+            return value;
+        var dir = Path.GetDirectoryName(declaringFile);
+        if (string.IsNullOrEmpty(dir))
+            return value;
+        return value.Replace("$(MSBuildThisFileDirectory)", dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     static void EmitItemGroup(StringBuilder sb, ProjectItemGroupTaskInstance ig) {
@@ -3888,6 +4273,7 @@ static partial class Tasks {
             var openedBatch = false;
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
+                var itemRefList = TryParseItemRefList(item.Include);
                 var projection = TryParseItemProjection(item.Include);
                 var dynamicInclude = TryParseDynamicItemInclude(item.Include);
                 var semicolonSplit = batch == null ? TryParsePropertySemicolonSplit(item.Include) : null;
@@ -3917,6 +4303,31 @@ static partial class Tasks {
                     if (openedBatch) sb.AppendLine($"{ind}}}");
                     continue;
                 }
+                if (itemRefList != null && batch == null) {
+                    var sourceCond = !string.IsNullOrEmpty(itemCondition)
+                        ? $"if ({CompileCond(itemCondition)}) "
+                        : "";
+                    foreach (var itemRef in itemRefList) {
+                        var sourceEnumerable = string.Equals(TryCanonicalItemKey(item.ItemType), TryCanonicalItemKey(itemRef), StringComparison.OrdinalIgnoreCase)
+                            ? $"{ItemAccess(itemRef)}.ToArray()"
+                            : ItemAccess(itemRef);
+                        sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
+                        sb.AppendLine($"{iind}    {sourceCond}{{");
+                        sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
+                        sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
+                        foreach (var m in item.Metadata) {
+                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value)})";
+                            if (!string.IsNullOrEmpty(m.Condition))
+                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition)}) {assign};");
+                            else
+                                sb.AppendLine($"{iind}        {assign};");
+                        }
+                        sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                        sb.AppendLine($"{iind}    }}");
+                        sb.AppendLine($"{iind}}}");
+                    }
+                    continue;
+                }
                 if (projection != null
                     && (batch == null || string.Equals(projection.Value.ItemType, batch, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -3929,6 +4340,7 @@ static partial class Tasks {
                     sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
                     sb.AppendLine($"{iind}        var newItem = new Item({projection.Value.Selector});");
+                    sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
                         var value = batch == null
                             ? CompileExpr(m.Value)
@@ -3955,15 +4367,16 @@ static partial class Tasks {
                         : "";
                     sb.AppendLine($"{iind}foreach (var identity in new SemicolonSplit({semicolonSplit})) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
-                    sb.AppendLine($"{iind}        var newItem = new Item(identity.ToString());");
+                    sb.AppendLine($"{iind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
                     foreach (var m in item.Metadata) {
                         var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value)})";
                         if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition)}) {assign};");
+                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition)}) {assign};");
                         else
-                            sb.AppendLine($"{iind}        {assign};");
+                            sb.AppendLine($"{iind}            {assign};");
                     }
-                    sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}            {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}        }}");
                     sb.AppendLine($"{iind}    }}");
                     sb.AppendLine($"{iind}}}");
                     continue;
@@ -4014,18 +4427,9 @@ static partial class Tasks {
                         sb.AppendLine($"{iind}    }}");
                     }
                 } else if (IsPureLiteralNoSemicolon(item.Include)) {
-                    sb.AppendLine($"{iind}    var newItem = new Item({CSharpLiteral(item.Include)});");
-                    foreach (var m in item.Metadata) {
-                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
-                        if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}    if ({CompileCond(m.Condition, batch)}) {assign};");
-                        else
-                            sb.AppendLine($"{iind}    {assign};");
-                    }
-                    sb.AppendLine($"{iind}    {target}.Add(newItem);");
-                } else {
-                    sb.AppendLine($"{iind}    foreach (var identity in new SemicolonSplit({CompileExpr(item.Include, batch)})) {{");
-                    sb.AppendLine($"{iind}        var newItem = new Item(identity.ToString());");
+                    sb.AppendLine($"{iind}    foreach (var newItem in Item.ExpandInclude({CSharpLiteral(item.Include)})) {{");
+                    if (batch != null)
+                        sb.AppendLine($"{iind}        batchItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
                         var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
                         if (!string.IsNullOrEmpty(m.Condition))
@@ -4034,6 +4438,21 @@ static partial class Tasks {
                             sb.AppendLine($"{iind}        {assign};");
                     }
                     sb.AppendLine($"{iind}        {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}    }}");
+                } else {
+                    sb.AppendLine($"{iind}    foreach (var identity in new SemicolonSplit({CompileExpr(item.Include, batch)})) {{");
+                    sb.AppendLine($"{iind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
+                    if (batch != null)
+                        sb.AppendLine($"{iind}            batchItem.CopyMetadataTo(newItem);");
+                    foreach (var m in item.Metadata) {
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
+                        if (!string.IsNullOrEmpty(m.Condition))
+                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition, batch)}) {assign};");
+                        else
+                            sb.AppendLine($"{iind}            {assign};");
+                    }
+                    sb.AppendLine($"{iind}            {target}.Add(newItem);");
+                    sb.AppendLine($"{iind}        }}");
                     sb.AppendLine($"{iind}    }}");
                 }
                 sb.AppendLine($"{iind}}}");
@@ -4273,7 +4692,7 @@ static partial class Tasks {
     static bool TaskTakesOutputs(string name) => name switch {
         "MakeDir" or "Touch" or "Delete" or "Copy" or "ConvertToAbsolutePath"
             or "CreateProperty" or "CreateItem" or "FindUnderPath" or "ReadLinesFromFile"
-            or "Exec" or "Hash" => true,
+            or "Exec" or "Hash" or "MSBuild" => true,
         _ => false,
     };
     static bool ForceLocalTaskImplementation(string name) => name is
@@ -4284,20 +4703,39 @@ static partial class Tasks {
         var ind = "        ";
         var strs = new List<string?> { task.Condition };
         foreach (var kv in task.Parameters) strs.Add(kv.Value);
-        // For Tasks, the @(X) refs in the same scope can serve as the batch context when
-        // metadata is unqualified (e.g. <Copy SourceFiles="@(X)" DestinationFiles="$(O)\%(Filename)">).
-        string? batch = InferBatchType(strs, itemRefScopeExprs: strs);
-        if (batch != null) {
-            sb.AppendLine($"{ind}foreach (var batchItem in {ItemAccess(batch)}.Count > 0 ? (IEnumerable<Item>){ItemAccess(batch)} : new[] {{ new Item(\"\") }}) {{");
-            ind += "    ";
-        }
-        var openCond = !string.IsNullOrEmpty(task.Condition) ? $"if ({CompileCond(task.Condition, batch)}) " : "";
         var realTaskMeta = task.Name != "CallTarget" && !ForceLocalTaskImplementation(task.Name)
             ? GetTaskMeta(task.Name)
             : null;
+        var batchPlan = realTaskMeta is null ? CreateTaskBatchPlan(strs) : null;
+        var itemAccessOverrides = default(Dictionary<string, string>);
+        string? batch = batchPlan?.PrimaryItemType;
+        if (batchPlan != null) {
+            var suffix = (++_batchPlanCounter).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var keyVar = $"__batchKey{suffix}";
+            sb.AppendLine($"{ind}foreach (var {keyVar} in BatchRuntime.Keys({CSharpLiteral(batchPlan.MetadataName)}, {string.Join(", ", batchPlan.SourceItemTypes.Select(ItemAccess))})) {{");
+            ind += "    ";
+            itemAccessOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var itemType in batchPlan.ReferencedItemTypes) {
+                var varName = $"__batchItems_{SanitizeIdent(itemType)}_{suffix}";
+                sb.AppendLine($"{ind}var {varName} = BatchRuntime.ItemsForBatch({ItemAccess(itemType)}, {CSharpLiteral(batchPlan.MetadataName)}, {keyVar});");
+                itemAccessOverrides[itemType] = varName;
+            }
+            var batchItemExpr = string.Join(" : ", batchPlan.SourceItemTypes.Select(itemType => {
+                var varName = itemAccessOverrides[itemType];
+                return $"{varName}.Count > 0 ? {varName}[0]";
+            })) + $" : new Item({keyVar})";
+            sb.AppendLine($"{ind}var batchItem = {batchItemExpr};");
+        } else if (realTaskMeta != null) {
+            batch = InferBatchType(strs, itemRefScopeExprs: strs);
+            if (batch != null) {
+                sb.AppendLine($"{ind}foreach (var batchItem in {ItemAccess(batch)}.Count > 0 ? (IEnumerable<Item>){ItemAccess(batch)} : new[] {{ new Item(\"\") }}) {{");
+                ind += "    ";
+            }
+        }
+        var openCond = !string.IsNullOrEmpty(task.Condition) ? $"if ({CompileCond(task.Condition, batch)}) " : "";
         sb.AppendLine($"{ind}{openCond}{{");
         if (realTaskMeta is TaskMetadataLoader.TaskMeta realMeta) {
-            EmitTypedTaskInvocation(sb, ind, task, realMeta, batch);
+            EmitTypedTaskInvocation(sb, ind, task, realMeta, batch, itemAccessOverrides);
             sb.AppendLine($"{ind}}}");
             if (batch != null) sb.AppendLine($"        }}");
             return;
@@ -4312,7 +4750,7 @@ static partial class Tasks {
             string? targetsExpr = null;
             foreach (var kv in task.Parameters) {
                 if (kv.Key.Equals("Targets", StringComparison.OrdinalIgnoreCase)) {
-                    targetsExpr = CompileExpr(kv.Value, batch);
+                    targetsExpr = CompileExpr(kv.Value, batch, itemAccessOverrides);
                     break;
                 }
             }
@@ -4332,26 +4770,28 @@ static partial class Tasks {
                 }
             }
         } else if (ForceLocalTaskImplementation(task.Name)) {
-            EmitLocalTaskInvocation(sb, ind, task, batch);
+            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides);
         } else if (!KnownTasks.Contains(task.Name)) {
             sb.AppendLine($"{ind}    Tasks.NotImplemented({CSharpLiteral(task.Name)});");
         } else {
-            EmitLocalTaskInvocation(sb, ind, task, batch);
+            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides);
         }
         sb.AppendLine($"{ind}}}");
         if (batch != null) sb.AppendLine($"        }}");
     }
 
-    static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch) {
+    static int _batchPlanCounter;
+
+    static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
         if (task.Parameters.Count == 0) {
             sb.AppendLine($"{ind}    var parameters = ParamList.Empty;");
         } else if (task.Parameters.Count == 1) {
             var kv = task.Parameters.First();
-            sb.AppendLine($"{ind}    var parameters = new ParamList({CSharpLiteral(kv.Key)}, {CompileExpr(kv.Value, batch)});");
+            sb.AppendLine($"{ind}    var parameters = new ParamList({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)});");
         } else {
             sb.AppendLine($"{ind}    var parameters = new ParamList(new (string Key, string Value)[] {{");
             foreach (var kv in task.Parameters)
-                sb.AppendLine($"{ind}        ({CSharpLiteral(kv.Key)}, {CompileExpr(kv.Value, batch)}),");
+                sb.AppendLine($"{ind}        ({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)}),");
             sb.AppendLine($"{ind}    }});");
         }
         if (TaskTakesOutputs(task.Name)) {
@@ -4383,6 +4823,51 @@ static partial class Tasks {
         }
     }
 
+    static string CompileLocalTaskParameter(string taskName, string parameterName, string value, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
+        var compiled = CompileExpr(value, batch, itemAccessOverrides);
+        return LocalTaskPathParameterKind(taskName, parameterName) switch {
+            PathParameterKind.Single => $"PathUtil.NormalizeSeparators({compiled})",
+            PathParameterKind.List => $"PathUtil.NormalizeSeparatorList({compiled})",
+            _ => compiled,
+        };
+    }
+
+    enum PathParameterKind { None, Single, List }
+
+    static PathParameterKind LocalTaskPathParameterKind(string taskName, string parameterName) {
+        if (taskName.Equals("WriteLinesToFile", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("File", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.Single;
+        if (taskName.Equals("ReadLinesFromFile", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("File", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.Single;
+        if (taskName.Equals("Exec", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("WorkingDirectory", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.Single;
+
+        if (taskName.Equals("MakeDir", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("Directories", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.List;
+        if (taskName.Equals("RemoveDir", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("Directories", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.List;
+        if (taskName.Equals("Delete", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("Files", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.List;
+        if (taskName.Equals("Touch", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("Files", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.List;
+        if (taskName.Equals("Copy", StringComparison.OrdinalIgnoreCase) &&
+            (parameterName.Equals("SourceFiles", StringComparison.OrdinalIgnoreCase) ||
+             parameterName.Equals("DestinationFiles", StringComparison.OrdinalIgnoreCase)))
+            return PathParameterKind.List;
+        if (taskName.Equals("ConvertToAbsolutePath", StringComparison.OrdinalIgnoreCase) &&
+            parameterName.Equals("Paths", StringComparison.OrdinalIgnoreCase))
+            return PathParameterKind.List;
+
+        return PathParameterKind.None;
+    }
+
     sealed record GeneratedTaskArg(string ParameterName, string XmlName, string MethodArgName, string TypeName, string RawValue, string ValueExpr, TaskMetadataLoader.PropertyMeta Property, bool RequiresCallerValue);
 
     static readonly List<string> _generatedTaskHelpers = new();
@@ -4391,12 +4876,13 @@ static partial class Tasks {
     static void ResetGeneratedTaskHelpers() {
         _generatedTaskHelpers.Clear();
         _generatedTaskHelperCounter = 0;
+        _batchPlanCounter = 0;
     }
 
     // Emit a call to a generated Tasks.<Task>_<n>(...) helper. The helper owns the repetitive
     // TaskRunner.Create/Set*/Execute plumbing, while the target body stays responsible for
     // copying task outputs back into generated P/I state.
-    static void EmitTypedTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, TaskMetadataLoader.TaskMeta meta, string? batch) {
+    static void EmitTypedTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, TaskMetadataLoader.TaskMeta meta, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
         var shortName = meta.FullTypeName.Contains('.')
             ? meta.FullTypeName.Substring(meta.FullTypeName.LastIndexOf('.') + 1)
             : meta.FullTypeName;
@@ -4417,7 +4903,7 @@ static partial class Tasks {
             }
             var methodArgName = $"p{args.Count}";
             var rawValue = kv.Value ?? "";
-            var valueExpr = CompileExpr(rawValue, batch);
+            var valueExpr = CompileExpr(rawValue, batch, itemAccessOverrides);
             var typeName = "string";
             var direct = TryParseDirectItemRef(rawValue);
             if ((pm.PropertyTypeShort == "ITaskItem" || pm.PropertyTypeShort == "ITaskItem[]") && direct != null) {
@@ -4448,7 +4934,7 @@ static partial class Tasks {
                 sb.AppendLine($"{ind}    // skipping unknown output parameter '{outParamName}' on {meta.FullTypeName}");
                 continue;
             }
-            EmitOutputResponseGet(sb, ind + "    ", "task", outParamName, pm, o);
+                EmitOutputResponseGet(sb, ind + "    ", "task", outParamName, pm, o);
         }
     }
 
@@ -4529,6 +5015,8 @@ static partial class Tasks {
                 var direct = TryParseDirectItemRef(paramValue);
                 if (direct != null) {
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecs({ItemAccess(direct)}));");
+                } else if (TryParseItemRefList(paramValue) is { } itemRefs) {
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ConcatSpecs({string.Join(", ", itemRefs.Select(itemRef => $"ItemSerde.ToSpecs({ItemAccess(itemRef)})"))}));");
                 } else if (TryParseItemProjection(paramValue) is { } projection) {
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({projection.ItemsExpr}, sourceItem => {projection.Selector}));");
                 } else if (TryParseSimpleMetadataProjection(paramValue) is { } simpleProjection) {
@@ -4582,6 +5070,8 @@ static partial class Tasks {
             case "ITaskItem[]":
                 if (arg.TypeName == "List<Item>")
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecs({value}));");
+                else if (!arg.RequiresCallerValue && TryParseItemRefList(arg.RawValue) is { } itemRefs)
+                    sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ConcatSpecs({string.Join(", ", itemRefs.Select(itemRef => $"ItemSerde.ToSpecs({ItemAccess(itemRef)})"))}));");
                 else if (!arg.RequiresCallerValue && TryParseItemProjection(arg.RawValue) is { } projection)
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecsWithIdentity({projection.ItemsExpr}, sourceItem => {projection.Selector}));");
                 else if (!arg.RequiresCallerValue && TryParseSimpleMetadataProjection(arg.RawValue) is { } simpleProjection)
@@ -4603,9 +5093,12 @@ static partial class Tasks {
         var key = CSharpLiteral(pm.Name);
         if (o is ProjectTaskOutputItemInstance oitm) {
             var target = ItemAccess(oitm.ItemType);
-            if (pm.PropertyTypeShort == "ITaskItem[]")
+            if (pm.PropertyTypeShort == "ITaskItem[]") {
                 sb.AppendLine($"{ind}{target}.AddRange(ItemSerde.FromSpecs(TaskRunner.GetItems({respVar}, {key})));");
-            else if (pm.PropertyTypeShort == "ITaskItem")
+                if (string.Equals(TryCanonicalItemKey(oitm.ItemType), "_monoandroidreferencepath", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(TryCanonicalItemKey(oitm.ItemType), "_monoandroidreferencedependencypaths", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine($"{ind}ItemSerde.AddAndroidAarSidecarsFrom({target});");
+            } else if (pm.PropertyTypeShort == "ITaskItem")
                 sb.AppendLine($"{ind}{target}.AddRange(ItemSerde.FromSpecs(TaskRunner.GetItems({respVar}, {key})));");
             else if (pm.PropertyTypeShort == "string[]")
                 sb.AppendLine($"{ind}foreach (var outputValue in TaskRunner.GetStrings({respVar}, {key})) {target}.Add(new Item(outputValue == null ? \"\" : outputValue.Replace(\";\", \"%3B\")));");
@@ -4690,9 +5183,9 @@ static partial class Tasks {
         return "!" + cond;
     }
 
-    static string CompileExpr(string? expr, string? batchItemType = null) {
+    static string CompileExpr(string? expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null) {
         if (string.IsNullOrEmpty(expr)) return "\"\"";
-        var compiled = ExprCompiler.TryCompile(expr, batchItemType);
+        var compiled = ExprCompiler.TryCompile(expr, batchItemType, itemAccessOverrides);
         if (compiled == null) throw new InvalidOperationException($"uncompilable expression: {expr}");
         return compiled;
     }
@@ -4811,6 +5304,75 @@ static partial class Tasks {
         return batch;
     }
 
+    sealed record TaskBatchPlan(string MetadataName, string PrimaryItemType, IReadOnlyList<string> SourceItemTypes, IReadOnlyList<string> ReferencedItemTypes);
+
+    static TaskBatchPlan? CreateTaskBatchPlan(IEnumerable<string?> exprs) {
+        var values = exprs.Where(e => !string.IsNullOrEmpty(e)).ToArray();
+        var metadataNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var qualifiedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var referencedTypes = ScanItemListRefs(values);
+
+        foreach (var value in values) {
+            foreach (var metadataRef in EnumerateMetadataRefs(value)) {
+                if (metadataRef.ItemType != null)
+                    qualifiedTypes.Add(metadataRef.ItemType);
+                metadataNames.Add(metadataRef.MetadataName);
+            }
+        }
+
+        if (metadataNames.Count == 0)
+            return null;
+        if (metadataNames.Count > 1)
+            throw new InvalidOperationException($"multi-dimensional task batching is not supported in v1: {string.Join(", ", metadataNames)}");
+
+        var metadataName = metadataNames.First().ToLowerInvariant();
+        var sources = qualifiedTypes.Count > 0
+            ? qualifiedTypes.ToList()
+            : referencedTypes.ToList();
+        if (sources.Count == 0)
+            return null;
+
+        var referenced = referencedTypes
+            .Concat(sources)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new TaskBatchPlan(metadataName, sources[0].ToLowerInvariant(),
+            sources.Select(s => s.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            referenced.Select(s => s.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    static IEnumerable<(string? ItemType, string MetadataName)> EnumerateMetadataRefs(string? s) {
+        if (string.IsNullOrEmpty(s)) yield break;
+        int i = 0;
+        while (i < s.Length - 1) {
+            if (s[i] == '@' && s[i + 1] == '(') {
+                int depth = 1; int j = i + 2;
+                while (j < s.Length && depth > 0) {
+                    if (s[j] == '(') depth++;
+                    else if (s[j] == ')') depth--;
+                    if (depth > 0) j++;
+                }
+                if (j >= s.Length) yield break;
+                i = j + 1;
+                continue;
+            }
+            if (s[i] == '%' && s[i + 1] == '(') {
+                int j = s.IndexOf(')', i + 2);
+                if (j < 0) yield break;
+                var inner = s.Substring(i + 2, j - i - 2).Trim();
+                int dot = inner.IndexOf('.');
+                if (dot > 0)
+                    yield return (inner.Substring(0, dot).Trim().ToLowerInvariant(), inner.Substring(dot + 1).Trim().ToLowerInvariant());
+                else if (inner.Length > 0)
+                    yield return (null, inner.ToLowerInvariant());
+                i = j + 1;
+            } else {
+                i++;
+            }
+        }
+    }
+
     static string? TryParseDirectItemRef(string expr) {
         var trimmed = expr.Trim();
         if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
@@ -4818,6 +5380,18 @@ static partial class Tasks {
         if (inner.Length == 0) return null;
         foreach (var c in inner) if (!char.IsLetterOrDigit(c) && c != '_') return null;
         return inner;
+    }
+
+    static string[]? TryParseItemRefList(string expr) {
+        var parts = expr.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length <= 1) return null;
+        var refs = new string[parts.Length];
+        for (int i = 0; i < parts.Length; i++) {
+            var itemRef = TryParseDirectItemRef(parts[i]);
+            if (itemRef == null) return null;
+            refs[i] = itemRef;
+        }
+        return refs;
     }
 
     static (string ItemType, string ItemsExpr, string Selector)? TryParseItemProjection(string expr) {
@@ -4873,8 +5447,14 @@ static partial class Tasks {
                 if (args == null) return null;
                 pos++;
                 switch (fn) {
+                    case "HasMetadata" when args.Count == 1:
+                        itemsExpr = $"{itemsExpr}.Where(transformItem => !string.IsNullOrEmpty(transformItem.GetMetadata({args[0]})))";
+                        break;
                     case "WithMetadataValue" when args.Count == 2:
                         itemsExpr = $"{itemsExpr}.Where(transformItem => transformItem.HasMetadata({args[0]}, {args[1]}))";
+                        break;
+                    case "WithoutMetadata" when args.Count == 1:
+                        itemsExpr = $"{itemsExpr}.Where(transformItem => string.IsNullOrEmpty(transformItem.GetMetadata({args[0]})))";
                         break;
                     case "WithoutMetadataValue" when args.Count == 2:
                         itemsExpr = $"{itemsExpr}.Where(transformItem => !transformItem.HasMetadata({args[0]}, {args[1]}))";
@@ -5165,9 +5745,11 @@ static class CondCompiler {
             SkipWs();
             int j = _i;
             while (j < _src.Length && (char.IsLetterOrDigit(_src[j]) || _src[j] == '.' || _src[j] == '_')) j++;
-            if (j > _i && j < _src.Length && _src[j] == '(') {
+            int afterName = j;
+            while (afterName < _src.Length && char.IsWhiteSpace(_src[afterName])) afterName++;
+            if (j > _i && afterName < _src.Length && _src[afterName] == '(') {
                 var name = _src.Substring(_i, j - _i);
-                _i = j + 1;
+                _i = afterName + 1;
                 var args = new List<string>();
                 SkipWs();
                 if (!MatchOp(")")) {
@@ -5388,7 +5970,12 @@ static class CondCompiler {
                 result = true;
                 return true;
             }
-            if (string.Equals(value, "\"false\"", StringComparison.Ordinal)) {
+            if (string.Equals(value, "\"True\"", StringComparison.Ordinal)) {
+                result = true;
+                return true;
+            }
+            if (string.Equals(value, "\"false\"", StringComparison.Ordinal) ||
+                string.Equals(value, "\"False\"", StringComparison.Ordinal)) {
                 result = false;
                 return true;
             }
@@ -5487,7 +6074,7 @@ static class CondCompiler {
 
 // Compile MSBuild expression strings into C# string expressions.
 static class ExprCompiler {
-    public static string? TryCompile(string expr, string? batchItemType = null) {
+    public static string? TryCompile(string expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null) {
         if (string.IsNullOrEmpty(expr)) return "\"\"";
         // Normalize multi-line MSBuild expression whitespace.
         // XML element bodies like  <Inputs>$(A);\n    $(B);\n    @(C)</Inputs>
@@ -5516,7 +6103,7 @@ static class ExprCompiler {
                 // Dynamic property name from metadata: `$(%(X.Y))` — the inner `%(X.Y)`
                 // resolves to a string at runtime which is then used as the property name.
                 if (inner.StartsWith("%(") && inner.EndsWith(")")) {
-                    var metaCompiled = TryCompile(inner, batchItemType);
+                    var metaCompiled = TryCompile(inner, batchItemType, itemAccessOverrides);
                     if (metaCompiled == null) return null;
                     if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
                     parts.Add($"P.Get({metaCompiled})");
@@ -5548,7 +6135,7 @@ static class ExprCompiler {
                 int j = FindMatching(expr, i + 1);
                 if (j < 0) return null;
                 var inner = expr.Substring(i + 2, j - i - 2);
-                var compiledItemRef = CompileItemRef(inner);
+                var compiledItemRef = CompileItemRef(inner, itemAccessOverrides);
                 if (compiledItemRef == null) return null;
                 if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
                 parts.Add(compiledItemRef);
@@ -5602,7 +6189,7 @@ static class ExprCompiler {
         return Emitter.TryCanonicalProp(lower, out var canon) ? $"P.{canon}" : $"P.GetExtra(\"{lower}\")";
     }
 
-    static string? CompileItemRef(string inner) {
+    static string? CompileItemRef(string inner, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
         inner = inner.Trim();
 
         // Special case: @(%(X.Identity)) — dynamic item ref using a metadata value
@@ -5614,7 +6201,7 @@ static class ExprCompiler {
             var sourceItemType = metaRef.Substring(0, dot);
             var metaName = metaRef.Substring(dot + 1);
             if (!string.Equals(metaName, "Identity", StringComparison.OrdinalIgnoreCase)) return null;
-            return $"string.Join(\";\", {Emitter.ItemAccess(sourceItemType)}.SelectMany(sourceItem => I.Get(sourceItem.Identity)).Select(transformItem => transformItem.Identity))";
+            return $"string.Join(\";\", {ItemAccess(sourceItemType, itemAccessOverrides)}.SelectMany(sourceItem => I.Get(sourceItem.Identity)).Select(transformItem => transformItem.Identity))";
         }
 
         // Parse: ItemName ( -> op )*  followed by an optional , 'separator'.
@@ -5622,15 +6209,20 @@ static class ExprCompiler {
         // function-call Foo(args) (filter/aggregate). Filters preserve the collection;
         // aggregates terminate the chain by returning a scalar string.
         int arrow = inner.IndexOf("->");
-        string itemName = (arrow >= 0 ? inner.Substring(0, arrow) : SplitOffSeparator(inner, out _)).Trim();
+        var explicitSeparator = default(string);
+        string itemName = (arrow >= 0 ? inner.Substring(0, arrow) : SplitOffSeparator(inner, out explicitSeparator)).Trim();
         if (itemName.Length == 0) return null;
         foreach (var c in itemName) if (!char.IsLetterOrDigit(c) && c != '_') return null;
 
         var batchCtx = itemName.ToLowerInvariant();
-        string itemsExpr = Emitter.ItemAccess(itemName);       // IEnumerable<Item>
+        string itemsExpr = ItemAccess(itemName, itemAccessOverrides);       // IEnumerable<Item>
         string selector = "transformItem.Identity";
-        string separator = ";";
+        string separator = explicitSeparator ?? ";";
         string? scalarResult = null;                            // when an aggregate has been applied
+
+        if (string.Equals(itemName, "Reference", StringComparison.OrdinalIgnoreCase) &&
+            inner.Contains("[System.String]::Copy('%(RootDir)%(Directory)').TrimEnd", StringComparison.Ordinal))
+            return $"string.Join(\";\", {itemsExpr}.Select(transformItem => (transformItem.GetMetadata(\"rootdir\") + transformItem.GetMetadata(\"directory\")).TrimEnd('\\\\')))";
 
         int pos = arrow >= 0 ? arrow + 2 : inner.Length;
         while (pos < inner.Length && scalarResult == null) {
@@ -5647,7 +6239,7 @@ static class ExprCompiler {
                 break; // separator must be last
             }
             if (inner[pos] == '\'') {
-                int close = inner.IndexOf('\'', pos + 1);
+                int close = FindQuotedProjectionEnd(inner, pos);
                 if (close < 0) return null;
                 var fmt = inner.Substring(pos + 1, close - pos - 1);
                 var compiledFmt = TryCompile(fmt, batchCtx);
@@ -5687,11 +6279,38 @@ static class ExprCompiler {
         return $"string.Join({LitToCSharp(separator)}, {itemsExpr}.Select(transformItem => {selector}))";
     }
 
+    static string ItemAccess(string itemName, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
+        if (itemAccessOverrides != null && itemAccessOverrides.TryGetValue(itemName.ToLowerInvariant(), out var value))
+            return value;
+        return Emitter.ItemAccess(itemName);
+    }
+
+    static int FindQuotedProjectionEnd(string text, int quotePos) {
+        int propertyFunctionDepth = 0;
+        for (int i = quotePos + 1; i < text.Length; i++) {
+            if (text[i] == '$' && i + 1 < text.Length && text[i + 1] == '(') {
+                propertyFunctionDepth++;
+                i++;
+                continue;
+            }
+            if (propertyFunctionDepth > 0) {
+                if (text[i] == '(') propertyFunctionDepth++;
+                else if (text[i] == ')') propertyFunctionDepth--;
+                continue;
+            }
+            if (text[i] == '\'') return i;
+        }
+        return -1;
+    }
+
     // Split off a trailing `, 'sep'` from an item ref's body (no arrow form).
     static string SplitOffSeparator(string s, out string? sep) {
         sep = null;
         int comma = FindTopLevelComma(s);
         if (comma < 0) return s;
+        var tail = s.Substring(comma + 1).Trim();
+        if (tail.Length >= 2 && tail[0] == '\'' && tail[^1] == '\'')
+            sep = tail.Substring(1, tail.Length - 2);
         return s.Substring(0, comma);
     }
 
@@ -5764,6 +6383,8 @@ static class ExprCompiler {
                 return (items, $"({selector}).ToLowerInvariant()", null);
             case "Replace" when args.Count == 2:
                 return (items, $"({selector}).Replace({args[0]}, {args[1]})", null);
+            case "Contains" when args.Count == 1:
+                return (null, null, $"({items}.Any(transformItem => ({selector}).Contains({args[0]}, StringComparison.OrdinalIgnoreCase)) ? \"true\" : \"false\")");
             case "Substring" when args.Count == 1:
                 return (items, $"({selector}).Substring(int.Parse({args[0]}))", null);
             case "Substring" when args.Count == 2:
@@ -6117,7 +6738,7 @@ static class PropertyFnCompiler {
             if (memberExpr == null) return null;
             return ChainCompiler.Apply(memberExpr, rest.Substring(idEnd));
         }
-        var method = rest.Substring(0, paren);
+        var method = rest.Substring(0, paren).TrimEnd();
         int depth = 0; int closeParen = -1;
         for (int i = paren; i < rest.Length; i++) {
             if (rest[i] == '(') depth++;
@@ -6184,6 +6805,8 @@ static class PropertyFnCompiler {
             return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType);
         if (arg.Length >= 2 && arg[0] == '`' && arg[^1] == '`')
             return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType);
+        if (arg.Length >= 2 && arg[0] == '"' && arg[^1] == '"')
+            return "\"" + arg.Substring(1, arg.Length - 2).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         return ExprCompiler.TryCompile(arg, batchItemType);
     }
 
@@ -6192,6 +6815,7 @@ static class PropertyFnCompiler {
             ("MSBuild", "ValueOrDefault", 2) => $"(string.IsNullOrEmpty({args[0]}) ? {args[1]} : {args[0]})",
             ("MSBuild", "Escape", 1)         => args[0],
             ("MSBuild", "Unescape", 1)       => args[0],
+            ("MSBuild", "EnsureTrailingSlash", 1) => $"PathUtil.EnsureTrailingSlash({args[0]})",
             ("MSBuild", "NormalizePath", 1)  => $"Path.GetFullPath({args[0]})",
             ("MSBuild", "NormalizePath", 2)  => $"Path.GetFullPath(Path.Combine({args[0]}, {args[1]}))",
             ("MSBuild", "NormalizePath", 3)  => $"Path.GetFullPath(Path.Combine({args[0]}, {args[1]}, {args[2]}))",
@@ -6234,6 +6858,7 @@ static class PropertyFnCompiler {
             ("System.String", "IsNullOrEmpty", 1)            => $"(string.IsNullOrEmpty({args[0]}) ? \"true\" : \"false\")",
             ("System.String", "Concat", _)                   => $"string.Concat({string.Join(", ", args)})",
             ("System.String", "Copy", 1)                     => args[0],
+            ("System.String", "CompareOrdinal", 2)           => $"string.CompareOrdinal({args[0]}, {args[1]}).ToString()",
             // `[System.String]::new('value')` — string copy-constructor. Treated as identity
             // because MSBuild's value model is already a string.
             ("System.String", "new", 1)                      => args[0],

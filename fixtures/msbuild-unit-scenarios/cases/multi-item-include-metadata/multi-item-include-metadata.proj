@@ -1,0 +1,17 @@
+<Project DefaultTargets="Build">
+  <ItemGroup>
+    <A Include="one.txt">
+      <TargetPath>out/one.txt</TargetPath>
+    </A>
+    <B Include="two.txt">
+      <TargetPath>out/two.txt</TargetPath>
+    </B>
+  </ItemGroup>
+
+  <Target Name="Build">
+    <ItemGroup>
+      <Combined Include="@(A);@(B)" />
+    </ItemGroup>
+    <Message Text="@(Combined->'%(TargetPath)')" />
+  </Target>
+</Project>

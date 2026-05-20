@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <A Include="A1" Number="1" />
+    <A Include="A2" Number="2" />
+    <A Include="A3" Number="1" />
+    <B Include="B1" Number="1" />
+    <B Include="B2" Number="2" />
+    <B Include="B3" Number="2" />
+    <C Include="C1" />
+    <C Include="C2" />
+  </ItemGroup>
+
+  <Target Name="Batching">
+    <Delete Files="$(MSBuildProjectDirectory)/multi.txt" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)/multi.txt"
+      Lines="%(Number)|A=@(A, ',')|B=@(B, ',')|C=@(C, ',')" />
+  </Target>
+</Project>

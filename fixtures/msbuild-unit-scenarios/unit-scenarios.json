@@ -1,0 +1,161 @@
+{
+  "name": "dotnet-msbuild-unit-scenarios",
+  "upstreamRepository": "https://github.com/dotnet/msbuild",
+  "upstreamCommit": "911bea0b57d3613eb9c29f49ff9858d03884c397",
+  "policy": "Minimized fixtures derived from regular dotnet/msbuild unit-test scenarios. These are structural codegen/audit tests, not full end-to-end builds.",
+  "scenarios": [
+    {
+      "id": "target-depends-property-flow",
+      "projectFile": "target-depends-property-flow/target-depends-property-flow.proj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/TargetBuilder_Tests.cs",
+      "upstreamTest": "target dependency and property mutation ordering scenarios",
+      "semanticArea": "target-ordering",
+      "tier": "structural",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "multi-item-include-metadata",
+      "projectFile": "multi-item-include-metadata/multi-item-include-metadata.proj",
+      "upstreamPath": "src/Build.UnitTests/Evaluation/ItemEvaluation_Tests.cs",
+      "upstreamTest": "item list expansion and metadata preservation scenarios",
+      "semanticArea": "items-metadata-transforms",
+      "tier": "structural",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "dynamic-depends-property-function",
+      "projectFile": "dynamic-depends-property-function/dynamic-depends-property-function.proj",
+      "upstreamPath": "src/Build.UnitTests/Evaluation/ExpanderFunction_Tests.cs",
+      "upstreamTest": "property-function expansion and dynamic target references",
+      "semanticArea": "dynamic-targets-property-functions",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
+    },
+    {
+      "id": "batching-diagnostics",
+      "projectFile": "batching-diagnostics/batching-diagnostics.proj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "target and task batching scenarios",
+      "semanticArea": "batching",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
+    },
+    {
+      "id": "calltarget-dispatcher",
+      "projectFile": "calltarget-dispatcher/calltarget-dispatcher.proj",
+      "upstreamPath": "src/Tasks.UnitTests/CallTarget_Tests.cs",
+      "upstreamTest": "CallTarget dynamic dispatch scenarios",
+      "semanticArea": "calltarget",
+      "tier": "structural",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "msbuild-task-unsupported",
+      "projectFile": "msbuild-task-unsupported/msbuild-task-unsupported.proj",
+      "upstreamPath": "src/Tasks.UnitTests/MSBuild_Tests.cs",
+      "upstreamTest": "MSBuild task project recursion scenarios",
+      "semanticArea": "project-reference-recursion",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
+    },
+    {
+      "id": "dynamic-import",
+      "projectFile": "dynamic-import/dynamic-import.proj",
+      "upstreamPath": "src/Tasks.UnitTests/DirectoryBuildTargetsImportTests.cs",
+      "upstreamTest": "dynamic import path scenarios",
+      "semanticArea": "imports",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
+    },
+    {
+      "id": "global-properties",
+      "projectFile": "global-properties/global-properties.proj",
+      "upstreamPath": "src/Build.OM.UnitTests/Definition/ProjectCollection_Tests.cs",
+      "upstreamTest": "global property evaluation scenarios",
+      "semanticArea": "global-properties",
+      "tier": "structural",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "path-separator-normalization",
+      "projectFile": "path-separator-normalization/path-separator-normalization.csproj",
+      "upstreamPath": "src/Tasks.UnitTests/FileIO/Copy_Tests.cs",
+      "upstreamTest": "file task path parameters normalize platform separators",
+      "semanticArea": "path-normalization",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-qualified",
+      "projectFile": "task-batching-qualified/task-batching-qualified.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "qualified metadata task batching grouped by metadata value",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-unqualified",
+      "projectFile": "task-batching-unqualified/task-batching-unqualified.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "unqualified metadata inferred from one item-list reference",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-condition",
+      "projectFile": "task-batching-condition/task-batching-condition.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "task batching condition filters batches",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-identity",
+      "projectFile": "task-batching-identity/task-batching-identity.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "Identity metadata batches duplicate identities together",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-multiple-lists",
+      "projectFile": "task-batching-multiple-lists/task-batching-multiple-lists.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "multiple item lists batch by shared metadata while other lists pass through",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-empty-source",
+      "projectFile": "task-batching-empty-source/task-batching-empty-source.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "empty batching source produces no task invocation",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "task-batching-outputs",
+      "projectFile": "task-batching-outputs/task-batching-outputs.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/BatchingEngine_Tests.cs",
+      "upstreamTest": "batched task outputs accumulate in batch order",
+      "semanticArea": "task-batching",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
+      "id": "target-batching-unsupported",
+      "projectFile": "target-batching-unsupported/target-batching-unsupported.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/TargetUpToDateChecker_Tests.cs",
+      "upstreamTest": "target Outputs metadata batching",
+      "semanticArea": "target-batching",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
+    }
+  ]
+}

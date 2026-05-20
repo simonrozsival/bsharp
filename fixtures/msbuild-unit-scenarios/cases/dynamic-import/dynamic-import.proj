@@ -1,0 +1,9 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <ImportName>Imported</ImportName>
+  </PropertyGroup>
+
+  <Import Project="$(ImportName).targets" />
+
+  <Target Name="Build" DependsOnTargets="ImportedTarget" />
+</Project>

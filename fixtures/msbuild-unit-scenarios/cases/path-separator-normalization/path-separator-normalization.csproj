@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <Target Name="PathNormalization">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\nested" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)\nested\normalized.txt"
+      Lines="ok"
+      Overwrite="true" />
+    <Copy
+      SourceFiles="$(MSBuildProjectDirectory)\nested\normalized.txt"
+      DestinationFiles="$(MSBuildProjectDirectory)\nested\copied.txt" />
+    <Delete Files="$(MSBuildProjectDirectory)\nested\normalized.txt" />
+  </Target>
+</Project>

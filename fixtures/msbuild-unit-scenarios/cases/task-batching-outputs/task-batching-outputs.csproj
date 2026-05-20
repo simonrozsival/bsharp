@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Source Include="Item1">
+      <Number>1</Number>
+    </Source>
+    <Source Include="Item2">
+      <Number>2</Number>
+    </Source>
+    <Source Include="Item3">
+      <Number>1</Number>
+    </Source>
+  </ItemGroup>
+
+  <Target Name="Batching">
+    <CreateItem Include="%(Source.Number):@(Source, ',')">
+      <Output TaskParameter="Include" ItemName="Created" />
+    </CreateItem>
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/outputs.txt" Lines="@(Created)" Overwrite="true" />
+  </Target>
+</Project>

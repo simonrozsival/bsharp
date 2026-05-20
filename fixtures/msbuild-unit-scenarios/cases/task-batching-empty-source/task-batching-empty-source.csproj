@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+
+  <Target Name="Batching">
+    <Delete Files="$(MSBuildProjectDirectory)/empty.txt" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)/empty.txt"
+      Lines="%(Missing.Number)|@(Missing, ',')" />
+  </Target>
+</Project>

@@ -1,0 +1,13 @@
+<Project DefaultTargets="Build">
+  <ItemGroup>
+    <Foo Include="input.txt">
+      <OutputFile>out.txt</OutputFile>
+    </Foo>
+  </ItemGroup>
+
+  <Target Name="Build"
+          Inputs="@(Foo)"
+          Outputs="@(Foo->'%(OutputFile)')">
+    <Message Text="%(Foo.Identity)" />
+  </Target>
+</Project>
