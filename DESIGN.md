@@ -61,7 +61,7 @@ The following sections describe the original v0.3 design draft. Below are the de
 ### Caching and config (deltas from §5)
 
 - **Closed-world `-p:X=Y` is supported.** Sorted `(Key=Value)` pairs are folded into the shape hash. Cache miss → codegen runs with `ProjectCollection.GlobalProperties` → `project.GlobalProperties` are unconditionally re-applied in `InitialState.Populate` (overriding csproj defaults). Same project + same `-p:` set → cache hit.
-- **Cache miss triggers:** csproj + `Directory.Build.{props,targets}` + `Directory.Packages.props` + `global.json` (all walked to root) + `-p:X=Y` set. Mode (R2R/JIT) recorded in `shape.hash` second line.
+- **Cache miss triggers:** csproj + static project references/imports + `Directory.Build.{props,targets}` + `Directory.Packages.props` + `NuGet.config` + `global.json` (walked to root per project) + `packages.lock.json` + `obj/project.assets.json` timestamp/size + `-p:X=Y` set. Mode (R2R/JIT) recorded in `shape.hash` second line.
 - **Publish mode:** R2R+SelfContained by default, then framework-dependent JIT fallback. Native AOT is no longer the default for the generated host because lazy in-proc SDK task loading is central to the current approach.
 
 ### Codegen-time expression optimizations

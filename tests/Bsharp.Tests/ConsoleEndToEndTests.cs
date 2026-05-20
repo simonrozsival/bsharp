@@ -70,7 +70,17 @@ public sealed class ConsoleEndToEndTests
         var shapeChanged = RunBsharp(project, "build", "-v:quiet");
         shapeChanged.AssertSuccess("regenerate after a shape input changes");
         StringAssert.Contains(shapeChanged.StandardError, "regenerating build binary");
-        Assert.AreNotEqual(initialShapeHash, ReadShapeHash(project), "Changing Directory.Build.props should change the launcher shape hash.");
+        var directoryBuildShapeHash = ReadShapeHash(project);
+        Assert.AreNotEqual(initialShapeHash, directoryBuildShapeHash, "Changing Directory.Build.props should change the launcher shape hash.");
+
+        var assetsFile = Path.Combine(project.DirectoryPath, "obj", "project.assets.json");
+        Assert.IsTrue(File.Exists(assetsFile), "Expected restore to produce project.assets.json.");
+        File.AppendAllText(assetsFile, Environment.NewLine);
+
+        var assetsChanged = RunBsharp(project, "build", "-v:quiet");
+        assetsChanged.AssertSuccess("regenerate after project.assets.json changes");
+        StringAssert.Contains(assetsChanged.StandardError, "regenerating build binary");
+        Assert.AreNotEqual(directoryBuildShapeHash, ReadShapeHash(project), "Changing project.assets.json should change the launcher shape hash.");
     }
 
     private static CommandResult RunBsharp(TempProject project, params string[] arguments) =>

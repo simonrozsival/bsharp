@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 
 return Launcher.Run(args);
 
@@ -73,7 +74,7 @@ static class Launcher {
             // shape.hash is "<hex>\n<mode>\n"; only the first line is the content hash.
             var cached = File.ReadAllText(hashFile).Split('\n', 2)[0].Trim();
             if (string.Equals(cached, currentHash, StringComparison.Ordinal)) {
-                return ExecBuildBinary(binFile, forwardArgs);
+                return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, hashFile);
             }
         }
 
@@ -91,7 +92,7 @@ static class Launcher {
             rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
         }
         if (rebuildRc != 0) return rebuildRc;
-        return ExecBuildBinary(binFile, forwardArgs);
+        return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, hashFile);
     }
 
     static int RunAudit(string projectPath, List<KeyValuePair<string, string>> globalProps) {
@@ -486,16 +487,59 @@ static class Launcher {
             Feed(label + ":" + Path.GetFileName(path), File.ReadAllBytes(path));
         }
 
-        FeedFile("csproj", projectPath);
+        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var d = new DirectoryInfo(projectDir);
-        while (d != null) {
-            FeedFile("dir-build-props",    Path.Combine(d.FullName, "Directory.Build.props"));
-            FeedFile("dir-build-targets",  Path.Combine(d.FullName, "Directory.Build.targets"));
-            FeedFile("dir-packages-props", Path.Combine(d.FullName, "Directory.Packages.props"));
-            FeedFile("global-json",        Path.Combine(d.FullName, "global.json"));
-            d = d.Parent;
+        void FeedFileStamp(string label, string path) {
+            if (!File.Exists(path)) return;
+            var info = new FileInfo(path);
+            Feed(label + ":" + Path.GetFileName(path),
+                Encoding.UTF8.GetBytes($"{Path.GetFullPath(path)}\n{info.Length}\n{info.LastWriteTimeUtc.Ticks}"));
         }
+
+        void FeedAncestorShapeFiles(string dir) {
+            var d = new DirectoryInfo(dir);
+            while (d != null) {
+                FeedFile("dir-build-props",    Path.Combine(d.FullName, "Directory.Build.props"));
+                FeedFile("dir-build-targets",  Path.Combine(d.FullName, "Directory.Build.targets"));
+                FeedFile("dir-packages-props", Path.Combine(d.FullName, "Directory.Packages.props"));
+                FeedFile("nuget-config",       Path.Combine(d.FullName, "NuGet.config"));
+                FeedFile("global-json",        Path.Combine(d.FullName, "global.json"));
+                d = d.Parent;
+            }
+        }
+
+        void FeedProjectGraph(string path) {
+            path = Path.GetFullPath(path);
+            if (!visitedProjects.Add(path))
+                return;
+
+            FeedFile("project", path);
+            var dir = Path.GetDirectoryName(path)!;
+            FeedAncestorShapeFiles(dir);
+            FeedFile("packages-lock", Path.Combine(dir, "packages.lock.json"));
+            FeedFileStamp("project-assets", Path.Combine(dir, "obj", "project.assets.json"));
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project"))
+                FeedImportGraph(importPath);
+
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include"))
+                FeedProjectGraph(referencePath);
+        }
+
+        void FeedImportGraph(string path) {
+            path = Path.GetFullPath(path);
+            if (!visitedImports.Add(path))
+                return;
+
+            FeedFile("import", path);
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project"))
+                FeedImportGraph(importPath);
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include"))
+                FeedProjectGraph(referencePath);
+        }
+
+        FeedProjectGraph(projectPath);
 
         // Global properties from -p:X=Y. Sorted by key (case-insensitive) so order is stable.
         foreach (var kv in globalProps)
@@ -506,11 +550,52 @@ static class Launcher {
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    static IEnumerable<string> EnumerateStaticMsBuildPaths(string filePath, string elementName, string attributeName) {
+        var doc = XDocument.Load(filePath, LoadOptions.None);
+        var baseDir = Path.GetDirectoryName(filePath)!;
+        foreach (var element in doc.Descendants().Where(e => e.Name.LocalName.Equals(elementName, StringComparison.OrdinalIgnoreCase))) {
+            var value = element.Attribute(attributeName)?.Value;
+            var resolved = ResolveStaticMsBuildPath(baseDir, value);
+            if (resolved != null)
+                yield return resolved;
+        }
+    }
+
+    static string? ResolveStaticMsBuildPath(string baseDir, string? value) {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (value.Contains("$(", StringComparison.Ordinal) ||
+            value.Contains("%(", StringComparison.Ordinal) ||
+            value.IndexOfAny(['*', '?']) >= 0)
+            return null;
+
+        value = value.Replace('\\', Path.DirectorySeparatorChar);
+        var path = Path.IsPathRooted(value)
+            ? value
+            : Path.Combine(baseDir, value);
+        path = Path.GetFullPath(path);
+        return File.Exists(path) ? path : null;
+    }
+
     static int ExecBuildBinary(string binFile, List<string> forwardArgs) {
         var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
         foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
         var proc = Process.Start(psi)!;
         proc.WaitForExit();
         return proc.ExitCode;
+    }
+
+    static int ExecBuildBinaryAndRefreshShapeHash(string binFile, List<string> forwardArgs, string projectPath, List<KeyValuePair<string, string>> globalProps, string hashFile) {
+        var rc = ExecBuildBinary(binFile, forwardArgs);
+        if (rc == 0 && File.Exists(hashFile))
+            RefreshShapeHash(projectPath, globalProps, hashFile);
+        return rc;
+    }
+
+    static void RefreshShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, string hashFile) {
+        var lines = File.ReadAllText(hashFile).Split('\n');
+        var mode = lines.Length > 1 ? lines[1] : "";
+        var hash = ComputeShapeHash(projectPath, globalProps);
+        File.WriteAllText(hashFile, hash + "\n" + mode + "\n");
     }
 }

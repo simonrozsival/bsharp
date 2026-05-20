@@ -167,16 +167,20 @@ The launcher recomputes a shape hash on every invocation. A cache miss occurs wh
 any of these change:
 
 - target `.csproj`
+- statically discoverable `ProjectReference` project files and their shape inputs
+- statically discoverable imported `.props`/`.targets` files
 - ancestor `Directory.Build.props`
 - ancestor `Directory.Build.targets`
 - ancestor `Directory.Packages.props`
+- ancestor `NuGet.config`
 - ancestor `global.json`
+- `packages.lock.json`
+- `obj/project.assets.json` timestamp/size
 - `-p:X=Y` global properties passed to `bsharp`
 
 Known gaps:
 
-- `project.assets.json` / transitive package drift is not yet hashed.
-- `ProjectReference` recursion is not yet modeled.
+- dynamic imports and property-expanded `ProjectReference` paths are not statically hashed.
 - NuGet packages added by the final project are assumed not to introduce new targets.
 
 ## Generated target shape
