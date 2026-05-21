@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ReferenceProject>Lib\DynamicLib.csproj</ReferenceProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Lib\StaticLib.csproj" />
+    <ProjectReference Include="$(ReferenceProject)" />
+    <ProjectReference Include="Lib\*.csproj" />
+    <ProjectReference Include="Lib\NoReferenceOutput.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="Lib\CustomTarget.csproj" Targets="CustomTarget" />
+  </ItemGroup>
+</Project>

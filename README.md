@@ -18,7 +18,7 @@ simple `net11.0` console app in `fixtures/console-net11/`.
 Build the tools and run the default fixture:
 
 ```bash
-./regenerate.sh
+./build.sh
 ```
 
 Or build and use the tools directly:
@@ -67,6 +67,12 @@ project/.bsharp/
       Program.cs
       BsharpTaskServer.csproj
   build -> src/bin/Release/net11.0/osx-arm64/publish/BsharpGenerated
+  variants/<global-property-hash>/
+    shape.hash
+    build
+  inner/<TargetFramework>/
+    shape.hash
+    build
 ```
 
 The published per-project runtime shape is:
@@ -101,12 +107,21 @@ time is dominated by launching `bsharp` and then launching the project-local
 | `bsharp build` | Ensure `.bsharp/build` is current, then run `build` |
 | `bsharp run` | Ensure `.bsharp/build` is current, then run `run` |
 | `bsharp build --no-cache` | Force regeneration and republish |
+| `bsharp build --background-codegen` | Experimental: start cache regeneration in the background on a miss and use `dotnet build` for the current invocation |
 | `bsharp audit` | Evaluate the project and print a JSON subset/shape report without generating a build host |
 | `bsharp build path/to/project.csproj` | Build an explicit project |
 | `bsharp build -p:Configuration=Release` | Add a closed-world global property override to the cache key |
 | `bsharp build -v quiet` | Set generated-host verbosity (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) |
 
 Unknown flags are forwarded to the generated per-project binary.
+
+The background codegen experiment can also be enabled with
+`BSHARP_BACKGROUND_CODEGEN=1`. On a cache miss, the launcher creates a
+per-cache `background-rebuild.lock`, starts a detached worker that generates and
+publishes `.bsharp/build`, and immediately falls back to `dotnet build` or
+`dotnet run`. If another worker is already running, the launcher does not start
+a duplicate. Once the worker writes the matching `shape.hash`, later invocations
+use the generated host normally.
 
 `bsharp audit` reports the evaluated shape that codegen would see: target/task counts,
 outer-build detection, `CallTarget` and `<MSBuild>` task sites, dynamic imports,
@@ -122,10 +137,11 @@ dotnet test tests/Bsharp.Tests/Bsharp.Tests.csproj --nologo
 ```
 
 The default suite includes fast structural codegen/audit unit tests derived from
-regular `dotnet/msbuild` unit-test scenarios, plus the console fixture cold
-launcher build, warm cache-hit build, direct generated-host build/run, forced
-regeneration, incremental source-edit rebuild, shape invalidation, audit shape
-checks, and unsupported-shape audit checks.
+regular `dotnet/msbuild` unit-test scenarios, plus console and static
+ProjectReference fixture coverage for cold launcher builds, warm cache-hit
+builds, direct generated-host build/run, forced regeneration, incremental
+source-edit rebuilds, shape invalidation, audit shape checks, and
+unsupported-shape audit checks.
 
 The minimized regular-unit scenarios live under
 `fixtures/msbuild-unit-scenarios/` with upstream `dotnet/msbuild` provenance in
@@ -175,8 +191,26 @@ any of these change:
 - ancestor `NuGet.config`
 - ancestor `global.json`
 - `packages.lock.json`
-- `obj/project.assets.json` timestamp/size
+- `obj/project.assets.json` content; if missing and restore is allowed, the launcher first tries the cached generated host's `restore` command and only falls back to `dotnet restore`, so deleting `obj/` alone does not force host regeneration when dependency assets are unchanged
 - `-p:X=Y` global properties passed to `bsharp`
+
+Global-property cache variants are isolated. A build without `-p` uses
+`.bsharp/build`; a build with non-`TargetFramework` global properties uses
+`.bsharp/variants/<hash>/build`; explicit or outer-build `TargetFramework`
+variants live under the corresponding cache root's `inner/<tfm>/` directory.
+
+The first supported `ProjectReference` slice covers static console-to-library
+graphs after restore, including the promoted `project-with-dependencies` and
+normalized `non-sdk-project-with-dependencies` MSBuild corpus cases. For this v1
+shape, the launcher detects static `ProjectReference` items, runs `dotnet
+restore` up front, and invokes the generated host with `--no-restore` so SDK
+restore graph recursion stays out of the compiled subset. The generated host
+assigns static project references, tries to build referenced projects through
+their own bsharp hosts, falls back to `dotnet build --no-restore` when the
+referenced generated host cannot yet handle that project shape, queries target
+paths, and feeds/copies those outputs into the consuming project's
+reference/copy-local items. SDK restore graph recursion targets are still
+intentionally unsupported inside the generated host.
 
 Known gaps:
 
@@ -277,7 +311,7 @@ $BSHARP build --no-cache -v:quiet run
 ./.bsharp/build --no-restore -v:quiet run
 ```
 
-Both commands print `Hello, World!`.
+Both commands print `Hello, B#!`.
 
 The prototype still contains fixture-oriented shortcuts around restore/assets-file
 dependent SDK tasks and is not a complete MSBuild implementation.
@@ -287,7 +321,7 @@ dependent SDK tasks and is not a complete MSBuild implementation.
 ```text
 DESIGN.md
 README.md
-regenerate.sh
+build.sh
 fixtures/
   console-net11/
 tools/

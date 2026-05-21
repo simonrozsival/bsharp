@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Development convenience script: rebuild the bsharp tools (codegen + launcher),
+# Development convenience script: build the bsharp tools (codegen + launcher),
 # then run `bsharp build` on the target project.
 #
 # Usage:
-#   ./regenerate.sh                                              # uses fixtures/console-net11/console-net11.csproj
-#   ./regenerate.sh path/to/MyProject.csproj
+#   ./build.sh                                              # uses fixtures/console-net11/console-net11.csproj
+#   ./build.sh path/to/MyProject.csproj
 #
 # For end-user usage, just install bsharp and run `bsharp build` directly.
 

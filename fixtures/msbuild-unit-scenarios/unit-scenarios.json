@@ -59,6 +59,15 @@
       "expectedBsharp": "known-unsupported-diagnostic"
     },
     {
+      "id": "msbuild-task-cross-project",
+      "projectFile": "msbuild-task-cross-project/App.proj",
+      "upstreamPath": "src/Tasks.UnitTests/MSBuild_Tests.cs",
+      "upstreamTest": "MSBuild task returns TargetOutputs from a referenced project target",
+      "semanticArea": "project-reference-recursion",
+      "tier": "runtime",
+      "expectedBsharp": "supported"
+    },
+    {
       "id": "dynamic-import",
       "projectFile": "dynamic-import/dynamic-import.proj",
       "upstreamPath": "src/Tasks.UnitTests/DirectoryBuildTargetsImportTests.cs",
@@ -84,6 +93,15 @@
       "semanticArea": "path-normalization",
       "tier": "runtime",
       "expectedBsharp": "supported"
+    },
+    {
+      "id": "project-reference-shapes",
+      "projectFile": "project-reference-shapes/App.csproj",
+      "upstreamPath": "src/Build.UnitTests/BackEnd/ProjectReference_Tests.cs",
+      "upstreamTest": "ProjectReference shape classification and unsupported metadata diagnostics",
+      "semanticArea": "project-reference",
+      "tier": "structural",
+      "expectedBsharp": "known-unsupported-diagnostic"
     },
     {
       "id": "task-batching-qualified",

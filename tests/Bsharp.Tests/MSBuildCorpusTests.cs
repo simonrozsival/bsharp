@@ -11,6 +11,7 @@ public sealed class MSBuildCorpusTests
     private const string OptInEnvVar = "BSHARP_RUN_MSBUILD_CORPUS_TESTS";
     private const string CaseFilterEnvVar = "BSHARP_MSBUILD_CORPUS_CASE";
     private const string CorpusFolder = "msbuild-e2e-corpus";
+    private static readonly TimeSpan CorpusCommandTimeout = TimeSpan.FromMinutes(20);
 
     public TestContext TestContext { get; set; } = null!;
 
@@ -108,10 +109,27 @@ public sealed class MSBuildCorpusTests
                 manifestCase.EntryProject,
                 manifestCase.Id + "-bsharp");
             CorpusNormalizer.Apply(bsharpProject.DirectoryPath, manifestCase.Normalizations);
+            var bsharpEntryDirectory = Path.Combine(
+                bsharpProject.DirectoryPath,
+                Path.GetDirectoryName(manifestCase.EntryProject) ?? "");
+            var bsharpEntryProject = Path.GetFileName(manifestCase.EntryProject);
+
+            if (manifestCase.BsharpNoRestore)
+            {
+                var bsharpRestore = TimedRun("dotnet", ["restore", manifestCase.EntryProject, "--nologo", "-v:minimal"],
+                    bsharpProject.DirectoryPath, BsharpTestEnvironment.DotnetEnvironment);
+                Assert.IsTrue(bsharpRestore.Success,
+                    $"Expected bsharp corpus pre-restore to succeed for '{manifestCase.Id}'.\nstderr:\n{bsharpRestore.Result.StandardError}\nstdout:\n{bsharpRestore.Result.StandardOutput}");
+            }
+
+            var bsharpColdArgs = new List<string> { "build", "--no-cache", "-v:quiet" };
+            if (manifestCase.BsharpNoRestore)
+                bsharpColdArgs.Add("--no-restore");
+            bsharpColdArgs.Add(bsharpEntryProject);
 
             var bsharpCold = TimedRun(BsharpTestEnvironment.BsharpPath,
-                ["build", "--no-cache", "-v:quiet", manifestCase.EntryProject],
-                bsharpProject.DirectoryPath, BsharpTestEnvironment.BsharpEnvironment);
+                bsharpColdArgs,
+                bsharpEntryDirectory, BsharpTestEnvironment.BsharpEnvironment);
             report.Bsharp.Cold = ToPhase(bsharpCold);
 
             switch (manifestCase.ExpectedBsharp)
@@ -120,9 +138,14 @@ public sealed class MSBuildCorpusTests
                     Assert.IsTrue(bsharpCold.Success,
                         $"Expected supported case '{manifestCase.Id}' to build under bsharp.\nstderr:\n{bsharpCold.Result.StandardError}\nstdout:\n{bsharpCold.Result.StandardOutput}");
 
+                    var bsharpWarmArgs = new List<string> { "build", "-v:quiet" };
+                    if (manifestCase.BsharpNoRestore)
+                        bsharpWarmArgs.Add("--no-restore");
+                    bsharpWarmArgs.Add(bsharpEntryProject);
+
                     var bsharpWarm = TimedRun(BsharpTestEnvironment.BsharpPath,
-                        ["build", "-v:quiet", manifestCase.EntryProject],
-                        bsharpProject.DirectoryPath, BsharpTestEnvironment.BsharpEnvironment);
+                        bsharpWarmArgs,
+                        bsharpEntryDirectory, BsharpTestEnvironment.BsharpEnvironment);
                     report.Bsharp.Warm = ToPhase(bsharpWarm);
                     Assert.IsTrue(bsharpWarm.Success, "Expected warm bsharp build to succeed for supported case.");
                     Assert.IsFalse(bsharpWarm.Result.StandardError.Contains("regenerating", StringComparison.OrdinalIgnoreCase),
@@ -132,8 +155,8 @@ public sealed class MSBuildCorpusTests
                     if (!string.IsNullOrEmpty(manifestCase.Mutation))
                         CorpusMutator.Apply(bsharpProject.DirectoryPath, manifestCase, out marker, out _);
 
-                    var bsharpInc = TimedRun(Path.Combine(bsharpProject.DirectoryPath, ".bsharp", "build"),
-                        ["--no-restore", "-v:quiet", "run"], bsharpProject.DirectoryPath,
+                    var bsharpInc = TimedRun(Path.Combine(bsharpEntryDirectory, ".bsharp", "build"),
+                        ["--no-restore", "-v:quiet", "run"], bsharpEntryDirectory,
                         BsharpTestEnvironment.DotnetEnvironment);
                     report.Bsharp.Incremental = ToPhase(bsharpInc);
                     Assert.IsTrue(bsharpInc.Success, "Expected incremental bsharp run to succeed for supported case.");
@@ -197,7 +220,7 @@ public sealed class MSBuildCorpusTests
         IReadOnlyDictionary<string, string> environment)
     {
         var sw = Stopwatch.StartNew();
-        var result = CommandRunner.Run(fileName, arguments, workingDirectory, environment, BsharpTestEnvironment.CommandTimeout);
+        var result = CommandRunner.Run(fileName, arguments, workingDirectory, environment, CorpusCommandTimeout);
         sw.Stop();
         return new TimedResult(result, sw.Elapsed);
     }
@@ -247,7 +270,8 @@ internal sealed record CorpusCase(
     string ExpectedBsharp,
     string? UnsupportedReason,
     IReadOnlyList<string> Normalizations,
-    string? Mutation)
+    string? Mutation,
+    bool BsharpNoRestore)
 {
     public static CorpusCase FromJson(JsonElement element)
     {
@@ -265,7 +289,8 @@ internal sealed record CorpusCase(
             element.GetProperty("expectedBsharp").GetString()!,
             element.TryGetProperty("unsupportedReason", out var u) ? u.GetString() : null,
             normalizations,
-            element.TryGetProperty("mutation", out var m) ? m.GetString() : null);
+            element.TryGetProperty("mutation", out var m) ? m.GetString() : null,
+            element.TryGetProperty("bsharpNoRestore", out var noRestore) && noRestore.GetBoolean());
     }
 }
 

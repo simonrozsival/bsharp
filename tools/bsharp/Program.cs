@@ -11,9 +11,16 @@ using System.Xml.Linq;
 return Launcher.Run(args);
 
 static class Launcher {
+    const string BackgroundCodegenEnvironmentVariable = "BSHARP_BACKGROUND_CODEGEN";
+    const string BackgroundRebuildCommand = "--bsharp-background-rebuild";
+
     public static int Run(string[] args) {
+        if (args.Length > 0 && string.Equals(args[0], BackgroundRebuildCommand, StringComparison.Ordinal))
+            return RunBackgroundRebuild(args.Skip(1).ToArray());
+
         string command = "build";
         bool noCache = false;
+        bool backgroundCodegen = IsBackgroundCodegenEnabledByEnvironment();
         string? projectArg = null;
         var forwardArgs = new List<string>();
         var globalProps = new List<KeyValuePair<string, string>>();
@@ -27,6 +34,9 @@ static class Launcher {
                     break;
                 case "--no-cache":
                     noCache = true;
+                    break;
+                case "--background-codegen":
+                    backgroundCodegen = true;
                     break;
                 case "--project":
                     if (i + 1 < args.Length) projectArg = args[++i];
@@ -57,16 +67,41 @@ static class Launcher {
             return 2;
         }
 
+        string projectDir = Path.GetDirectoryName(projectPath)!;
+        string bsharpRoot = Path.Combine(projectDir, ".bsharp");
+        string projectCacheRoot = ResolveProjectCacheRoot(bsharpRoot, globalProps);
+        string bsharpDir = projectCacheRoot;
+        if (TryGetGlobalProp(globalProps, "TargetFramework", out var explicitTargetFramework) && !string.IsNullOrWhiteSpace(explicitTargetFramework))
+            bsharpDir = Path.Combine(projectCacheRoot, "inner", SanitizePathSegment(explicitTargetFramework));
+        string hashFile = Path.Combine(bsharpDir, "shape.hash");
+        string binFile = Path.Combine(bsharpDir, "build");
+
         if (command == "audit")
             return RunAudit(projectPath, globalProps);
 
-        string projectDir = Path.GetDirectoryName(projectPath)!;
-        string bsharpRoot = Path.Combine(projectDir, ".bsharp");
-        string bsharpDir = bsharpRoot;
-        if (TryGetGlobalProp(globalProps, "TargetFramework", out var explicitTargetFramework) && !string.IsNullOrWhiteSpace(explicitTargetFramework))
-            bsharpDir = Path.Combine(bsharpRoot, "inner", SanitizePathSegment(explicitTargetFramework));
-        string hashFile = Path.Combine(bsharpDir, "shape.hash");
-        string binFile = Path.Combine(bsharpDir, "build");
+        var restoredWithCachedHost = false;
+        if (ShouldPreRestoreProjectReferences(projectPath, forwardArgs)) {
+            var restoreRc = RestoreProject(projectPath, globalProps, "restoring ProjectReference graph");
+            if (restoreRc != 0)
+                return restoreRc;
+            AddNoRestore(forwardArgs);
+        } else if (ShouldRestoreMissingAssetsBeforeHash(projectPath, forwardArgs)) {
+            if (!noCache && File.Exists(hashFile) && File.Exists(binFile)) {
+                var cachedRestoreRc = RestoreMissingAssetsWithCachedHost(binFile, projectPath);
+                if (cachedRestoreRc == 0) {
+                    restoredWithCachedHost = true;
+                    AddNoRestore(forwardArgs);
+                }
+            }
+
+            if (!restoredWithCachedHost) {
+                var restoreRc = RestoreProject(projectPath, globalProps, "restoring missing project assets before cache check");
+                if (restoreRc != 0)
+                    return restoreRc;
+                AddNoRestore(forwardArgs);
+            }
+        }
+
         string currentHash = ComputeShapeHash(projectPath, globalProps);
 
         // Cache hit?
@@ -78,14 +113,29 @@ static class Launcher {
             }
         }
 
+        if (restoredWithCachedHost) {
+            var restoreRc = RestoreProject(projectPath, globalProps, "restoring current project assets after cache miss");
+            if (restoreRc != 0)
+                return restoreRc;
+            currentHash = ComputeShapeHash(projectPath, globalProps);
+        }
+
         // Cache miss — regenerate.
+        if (backgroundCodegen && !noCache) {
+            StartBackgroundRebuildIfNeeded(projectPath, projectCacheRoot, bsharpDir, currentHash, globalProps);
+            var fallbackRc = RunDotnetFallback(command, projectPath, forwardArgs, globalProps);
+            if (fallbackRc == 0 && File.Exists(hashFile))
+                RefreshShapeHash(projectPath, globalProps, hashFile);
+            return fallbackRc;
+        }
+
         int rebuildRc;
-        if (bsharpDir == bsharpRoot
+        if (bsharpDir == projectCacheRoot
             && TryEvaluateTargetFrameworkInfo(projectPath, globalProps, out var frameworkInfo)
             && string.IsNullOrEmpty(frameworkInfo.TargetFramework)
             && frameworkInfo.TargetFrameworks.Length > 0)
         {
-            rebuildRc = RebuildOuter(projectPath, bsharpRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
+            rebuildRc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
         }
         else
         {
@@ -93,6 +143,122 @@ static class Launcher {
         }
         if (rebuildRc != 0) return rebuildRc;
         return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, hashFile);
+    }
+
+    static bool IsBackgroundCodegenEnabledByEnvironment() {
+        var value = Environment.GetEnvironmentVariable(BackgroundCodegenEnvironmentVariable);
+        return value is "1"
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string ResolveProjectCacheRoot(string bsharpRoot, List<KeyValuePair<string, string>> globalProps) {
+        var cacheProps = globalProps
+            .Where(p => !string.Equals(p.Key, "TargetFramework", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (cacheProps.Length == 0)
+            return bsharpRoot;
+        return Path.Combine(bsharpRoot, "variants", HashGlobalPropertySet(cacheProps));
+    }
+
+    static string HashGlobalPropertySet(IReadOnlyList<KeyValuePair<string, string>> props) {
+        using var sha = SHA256.Create();
+        using var ms = new MemoryStream();
+        foreach (var kv in props.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)) {
+            var bytes = Encoding.UTF8.GetBytes($"{kv.Key}={kv.Value}\n");
+            ms.Write(bytes);
+        }
+        return Convert.ToHexString(sha.ComputeHash(ms.ToArray())).ToLowerInvariant()[..16];
+    }
+
+    static bool ShouldPreRestoreProjectReferences(string projectPath, List<string> forwardArgs) =>
+        !HasNoRestore(forwardArgs) && HasStaticProjectReferences(projectPath);
+
+    static bool ShouldRestoreMissingAssetsBeforeHash(string projectPath, List<string> forwardArgs) =>
+        !HasNoRestore(forwardArgs) && HasMissingProjectAssetsInStaticGraph(projectPath);
+
+    static bool HasNoRestore(List<string> args) =>
+        args.Any(arg => string.Equals(arg, "--no-restore", StringComparison.OrdinalIgnoreCase));
+
+    static void AddNoRestore(List<string> args) {
+        if (!HasNoRestore(args))
+            args.Add("--no-restore");
+    }
+
+    static bool HasMissingProjectAssetsInStaticGraph(string projectPath) {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        bool Visit(string path) {
+            path = Path.GetFullPath(path);
+            if (!visited.Add(path))
+                return false;
+
+            var dir = Path.GetDirectoryName(path)!;
+            if (!File.Exists(Path.Combine(dir, "obj", "project.assets.json")))
+                return true;
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (Visit(importPath))
+                    return true;
+            }
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include")) {
+                if (Visit(referencePath))
+                    return true;
+            }
+
+            return false;
+        }
+
+        return Visit(projectPath);
+    }
+
+    static bool HasStaticProjectReferences(string projectPath) {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        bool Visit(string path) {
+            path = Path.GetFullPath(path);
+            if (!visited.Add(path))
+                return false;
+
+            if (EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include").Any())
+                return true;
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (Visit(importPath))
+                    return true;
+            }
+
+            return false;
+        }
+
+        return Visit(projectPath);
+    }
+
+    static int RestoreMissingAssetsWithCachedHost(string binFile, string projectPath) {
+        Console.Error.WriteLine("bsharp: restoring missing project assets with cached bsharp host...");
+        var sw = Stopwatch.StartNew();
+        var rc = ExecBuildBinary(binFile, new List<string> { "restore", projectPath, "-v:quiet" });
+        sw.Stop();
+        if (rc != 0)
+            Console.Error.WriteLine($"bsharp: cached bsharp restore failed (exit {rc}); falling back to dotnet restore");
+        else
+            Console.Error.WriteLine($"bsharp: cached bsharp restore done in {sw.ElapsedMilliseconds}ms");
+        return rc;
+    }
+
+    static int RestoreProject(string projectPath, List<KeyValuePair<string, string>> globalProps, string reason) {
+        Console.Error.WriteLine($"bsharp: {reason} with dotnet restore...");
+        var args = new List<string> { "restore", projectPath, "--nologo", "-v:q" };
+        foreach (var p in globalProps)
+            args.Add($"-p:{p.Key}={p.Value}");
+        var sw = Stopwatch.StartNew();
+        var rc = RunProcess("dotnet", args);
+        sw.Stop();
+        if (rc != 0)
+            Console.Error.WriteLine($"bsharp: restore failed (exit {rc})");
+        else
+            Console.Error.WriteLine($"bsharp: restore done in {sw.ElapsedMilliseconds}ms");
+        return rc;
     }
 
     static int RunAudit(string projectPath, List<KeyValuePair<string, string>> globalProps) {
@@ -196,6 +362,225 @@ static class Launcher {
         File.WriteAllText(hashFile, currentHash + "\nOuterDispatcher\n");
         Console.Error.WriteLine($"bsharp: outer dispatcher ready at {outerBin}");
         return 0;
+    }
+
+    static void StartBackgroundRebuildIfNeeded(
+        string projectPath,
+        string projectCacheRoot,
+        string bsharpDir,
+        string currentHash,
+        List<KeyValuePair<string, string>> globalProps)
+    {
+        Directory.CreateDirectory(bsharpDir);
+        var lockFile = Path.Combine(bsharpDir, "background-rebuild.lock");
+        var logFile = Path.Combine(bsharpDir, "background-rebuild.log");
+
+        if (!TryReserveBackgroundRebuild(lockFile)) {
+            Console.Error.WriteLine("bsharp: background build binary generation is already running; using dotnet fallback for this invocation.");
+            return;
+        }
+
+        var self = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(self) || !File.Exists(self)) {
+            Console.Error.WriteLine("bsharp: cannot locate launcher executable for background codegen; using dotnet fallback for this invocation.");
+            TryDelete(lockFile);
+            return;
+        }
+
+        var workerArgs = new List<string> {
+            BackgroundRebuildCommand,
+            "--project", projectPath,
+            "--project-cache-root", projectCacheRoot,
+            "--bsharp-dir", bsharpDir,
+            "--shape-hash", currentHash,
+            "--lock-file", lockFile,
+        };
+        foreach (var p in globalProps) {
+            workerArgs.Add("-p");
+            workerArgs.Add($"{p.Key}={p.Value}");
+        }
+
+        try {
+            var proc = StartDetachedProcess(self, workerArgs, Path.GetDirectoryName(projectPath)!, logFile);
+            File.WriteAllText(lockFile, $"{proc.Id}\n{DateTimeOffset.UtcNow:O}\n{projectPath}\n{currentHash}\n");
+            Console.Error.WriteLine($"bsharp: started background build binary generation (pid {proc.Id}, log: {logFile}); using dotnet fallback for this invocation.");
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"bsharp: failed to start background codegen ({ex.Message}); using dotnet fallback for this invocation.");
+            TryDelete(lockFile);
+        }
+    }
+
+    static bool TryReserveBackgroundRebuild(string lockFile) {
+        Directory.CreateDirectory(Path.GetDirectoryName(lockFile)!);
+
+        for (var attempt = 0; attempt < 2; attempt++) {
+            if (File.Exists(lockFile)) {
+                if (IsBackgroundRebuildActive(lockFile))
+                    return false;
+                TryDelete(lockFile);
+            }
+
+            try {
+                using var stream = new FileStream(lockFile, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                var text = Encoding.UTF8.GetBytes($"starting\n{DateTimeOffset.UtcNow:O}\n");
+                stream.Write(text);
+                return true;
+            } catch (IOException) {
+                if (attempt == 0)
+                    continue;
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    static bool IsBackgroundRebuildActive(string lockFile) {
+        try {
+            var lines = File.ReadAllLines(lockFile);
+            if (lines.Length > 0 && int.TryParse(lines[0], out var pid)) {
+                try {
+                    var process = Process.GetProcessById(pid);
+                    return !process.HasExited;
+                } catch {
+                    return false;
+                }
+            }
+
+            // Treat a freshly reserved lock as active so competing launchers do not
+            // race while the reserving process starts the detached worker.
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(lockFile);
+            return age < TimeSpan.FromMinutes(5);
+        } catch {
+            return false;
+        }
+    }
+
+    static Process StartDetachedProcess(string fileName, IReadOnlyList<string> args, string workingDirectory, string logFile) {
+        Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
+
+        if (!OperatingSystem.IsWindows()) {
+            var command = "exec " + ShellQuote(fileName);
+            foreach (var arg in args)
+                command += " " + ShellQuote(arg);
+            command += " >> " + ShellQuote(logFile) + " 2>&1";
+
+            var psi = new ProcessStartInfo("/bin/sh") {
+                UseShellExecute = false,
+                WorkingDirectory = workingDirectory,
+            };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(command);
+            return Process.Start(psi)!;
+        }
+
+        var windowsPsi = new ProcessStartInfo(fileName) {
+            UseShellExecute = true,
+            WorkingDirectory = workingDirectory,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args)
+            windowsPsi.ArgumentList.Add(arg);
+        return Process.Start(windowsPsi)!;
+    }
+
+    static int RunDotnetFallback(string command, string projectPath, List<string> forwardArgs, List<KeyValuePair<string, string>> globalProps) {
+        Console.Error.WriteLine($"bsharp: running dotnet {command} while the build binary is prepared in the background...");
+        var args = new List<string>();
+        if (string.Equals(command, "run", StringComparison.OrdinalIgnoreCase)) {
+            args.Add("run");
+            args.Add("--project");
+            args.Add(projectPath);
+        } else {
+            args.Add("build");
+            args.Add(projectPath);
+        }
+
+        foreach (var arg in FilterDotnetFallbackArgs(forwardArgs, projectPath))
+            args.Add(arg);
+        foreach (var p in globalProps)
+            args.Add($"-p:{p.Key}={p.Value}");
+
+        return RunProcess("dotnet", args);
+    }
+
+    static IEnumerable<string> FilterDotnetFallbackArgs(List<string> forwardArgs, string projectPath) {
+        foreach (var arg in forwardArgs) {
+            if (string.Equals(arg, "build", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(arg, "run", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (arg.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(Path.GetFullPath(arg), projectPath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            yield return arg;
+        }
+    }
+
+    static int RunBackgroundRebuild(string[] args) {
+        string? projectPath = null;
+        string? projectCacheRoot = null;
+        string? bsharpDir = null;
+        string? currentHash = null;
+        string? lockFile = null;
+        var globalProps = new List<KeyValuePair<string, string>>();
+
+        for (var i = 0; i < args.Length; i++) {
+            switch (args[i]) {
+                case "--project" when i + 1 < args.Length:
+                    projectPath = args[++i];
+                    break;
+                case "--project-cache-root" when i + 1 < args.Length:
+                    projectCacheRoot = args[++i];
+                    break;
+                case "--bsharp-dir" when i + 1 < args.Length:
+                    bsharpDir = args[++i];
+                    break;
+                case "--shape-hash" when i + 1 < args.Length:
+                    currentHash = args[++i];
+                    break;
+                case "--lock-file" when i + 1 < args.Length:
+                    lockFile = args[++i];
+                    break;
+                case "--property" or "-p" when i + 1 < args.Length:
+                    TryAddProp(globalProps, args[++i]);
+                    break;
+                default:
+                    if (args[i].StartsWith("-p:", StringComparison.Ordinal) || args[i].StartsWith("/p:", StringComparison.Ordinal))
+                        TryAddProp(globalProps, args[i][3..]);
+                    break;
+            }
+        }
+
+        if (projectPath == null || projectCacheRoot == null || bsharpDir == null || currentHash == null || lockFile == null) {
+            Console.Error.WriteLine("bsharp: background rebuild worker is missing required arguments.");
+            return 2;
+        }
+
+        try {
+            int rc;
+            string hashFile;
+            if (bsharpDir == projectCacheRoot
+                && TryEvaluateTargetFrameworkInfo(projectPath, globalProps, out var frameworkInfo)
+                && string.IsNullOrEmpty(frameworkInfo.TargetFramework)
+                && frameworkInfo.TargetFrameworks.Length > 0)
+            {
+                rc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
+                hashFile = Path.Combine(projectCacheRoot, "shape.hash");
+            }
+            else
+            {
+                rc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
+                hashFile = Path.Combine(bsharpDir, "shape.hash");
+            }
+
+            if (rc == 0 && File.Exists(hashFile))
+                RefreshShapeHash(projectPath, globalProps, hashFile);
+            return rc;
+        } finally {
+            TryDelete(lockFile);
+        }
     }
 
     static int Rebuild(string projectPath, string bsharpDir, string currentHash, List<KeyValuePair<string, string>> globalProps) {
@@ -354,6 +739,15 @@ static class Launcher {
         if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
 
+    static void TryDelete(string path) {
+        try {
+            if (File.Exists(path))
+                File.Delete(path);
+        } catch {
+            // A competing launcher/worker may already have consumed the lock.
+        }
+    }
+
     static void ReplaceFileLinkOrCopy(string destination, string source) {
         DeleteExistingFileOrDirectory(destination);
         try {
@@ -490,13 +884,6 @@ static class Launcher {
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void FeedFileStamp(string label, string path) {
-            if (!File.Exists(path)) return;
-            var info = new FileInfo(path);
-            Feed(label + ":" + Path.GetFileName(path),
-                Encoding.UTF8.GetBytes($"{Path.GetFullPath(path)}\n{info.Length}\n{info.LastWriteTimeUtc.Ticks}"));
-        }
-
         void FeedAncestorShapeFiles(string dir) {
             var d = new DirectoryInfo(dir);
             while (d != null) {
@@ -518,7 +905,7 @@ static class Launcher {
             var dir = Path.GetDirectoryName(path)!;
             FeedAncestorShapeFiles(dir);
             FeedFile("packages-lock", Path.Combine(dir, "packages.lock.json"));
-            FeedFileStamp("project-assets", Path.Combine(dir, "obj", "project.assets.json"));
+            FeedFile("project-assets", Path.Combine(dir, "obj", "project.assets.json"));
 
             foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project"))
                 FeedImportGraph(importPath);
@@ -579,6 +966,8 @@ static class Launcher {
 
     static int ExecBuildBinary(string binFile, List<string> forwardArgs) {
         var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
+        if (!string.IsNullOrEmpty(Environment.ProcessPath))
+            psi.Environment["BSHARP_LAUNCHER_PATH"] = Environment.ProcessPath;
         foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
         var proc = Process.Start(psi)!;
         proc.WaitForExit();

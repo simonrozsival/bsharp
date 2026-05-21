@@ -72,6 +72,7 @@ static class Codegen {
         var taskBatchingSites = new List<object>();
         var targetBatchingSites = new List<object>();
         var propertyFunctionSites = new List<object>();
+        var projectReferences = AnalyzeProjectReferenceSites(project, fullPath);
 
         foreach (var target in instance.Targets.Values.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)) {
             var dynamicDepends = ContainsDynamicTargetList(target.DependsOnTargets);
@@ -219,6 +220,10 @@ static class Codegen {
                 dynamicTargetDiagnostics = targetDiagnostics.Count,
                 targetBatchingSites = targetBatchingSites.Count,
                 taskBatchingSites = taskBatchingSites.Count,
+                projectReferences = projectReferences.Length,
+                projectAuthoredProjectReferences = projectReferences.Count(r => r.projectAuthored),
+                unsupportedProjectReferences = projectReferences.Count(r => r.unsupportedReasons.Length != 0),
+                unsupportedProjectAuthoredProjectReferences = projectReferences.Count(r => r.projectAuthored && r.unsupportedReasons.Length != 0),
                 propertyFunctionSites = propertyFunctionSites.Count,
                 inlineUsingTasks = taskRegistry.Entries.Count(e => e.IsInline),
                 unresolvedUsingTasks = taskRegistry.Entries.Count(e => e.Status != "resolved")
@@ -233,6 +238,7 @@ static class Codegen {
                 callTargets = callTargets.Take(200).ToArray(),
                 msbuildTasks = msbuildTasks.Take(200).ToArray(),
                 cscTasks = cscTasks.Take(200).ToArray(),
+                projectReferences = projectReferences.Take(200).ToArray(),
                 targetBatchingSites = targetBatchingSites.Take(200).ToArray(),
                 taskBatchingSites = taskBatchingSites.Take(200).ToArray(),
                 propertyFunctionSites = propertyFunctionSites.Take(200).ToArray(),
@@ -257,6 +263,87 @@ static class Codegen {
         Console.WriteLine(JsonSerializer.Serialize(audit, new JsonSerializerOptions { WriteIndented = true }));
         return 0;
     }
+
+    sealed record ProjectReferenceDiagnostic(
+        string include,
+        string condition,
+        string file,
+        int line,
+        bool projectAuthored,
+        bool dynamicInclude,
+        bool wildcardInclude,
+        IReadOnlyDictionary<string, string> metadata,
+        string status,
+        string[] unsupportedReasons);
+
+    static ProjectReferenceDiagnostic[] AnalyzeProjectReferenceSites(Project project, string projectPath) {
+        var fullProjectPath = Path.GetFullPath(projectPath);
+        var seenSources = new HashSet<ProjectRootElement>();
+        var sources = new List<ProjectRootElement> { project.Xml };
+        foreach (var import in project.Imports) {
+            if (import.ImportedProject != null)
+                sources.Add(import.ImportedProject);
+        }
+
+        var diagnostics = new List<ProjectReferenceDiagnostic>();
+        foreach (var source in sources) {
+            if (!seenSources.Add(source))
+                continue;
+            foreach (var item in source.Items.Where(i => string.Equals(i.ItemType, "ProjectReference", StringComparison.OrdinalIgnoreCase))) {
+                var metadata = item.Metadata.ToDictionary(m => m.Name, m => m.Value, StringComparer.OrdinalIgnoreCase);
+                var unsupportedReasons = ClassifyProjectReference(item.Include, metadata);
+                var dynamicInclude = ContainsPropertyOrItemReference(item.Include);
+                var wildcardInclude = ContainsWildcard(item.Include);
+                diagnostics.Add(new ProjectReferenceDiagnostic(
+                    include: item.Include,
+                    condition: item.Condition,
+                    file: item.Location.File,
+                    line: item.Location.Line,
+                    projectAuthored: string.Equals(Path.GetFullPath(item.Location.File), fullProjectPath, StringComparison.OrdinalIgnoreCase),
+                    dynamicInclude: dynamicInclude,
+                    wildcardInclude: wildcardInclude,
+                    metadata: metadata,
+                    status: unsupportedReasons.Length == 0 ? "static-supported-candidate" : "unsupported",
+                    unsupportedReasons: unsupportedReasons));
+            }
+        }
+        return diagnostics
+            .OrderBy(d => d.file, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(d => d.line)
+            .ThenBy(d => d.include, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    static string[] ClassifyProjectReference(string include, IReadOnlyDictionary<string, string> metadata) {
+        var reasons = new List<string>();
+        if (ContainsPropertyOrItemReference(include))
+            reasons.Add("dynamic-include");
+        if (ContainsWildcard(include))
+            reasons.Add("wildcard-include");
+
+        foreach (var kv in metadata) {
+            var name = kv.Key;
+            var value = kv.Value;
+            if (name.Equals("ReferenceOutputAssembly", StringComparison.OrdinalIgnoreCase) &&
+                value.Equals("false", StringComparison.OrdinalIgnoreCase)) {
+                reasons.Add("reference-output-assembly-false");
+                continue;
+            }
+            if (name.Equals("Targets", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("OutputItemType", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("SetTargetFramework", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("GlobalPropertiesToRemove", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("UndefineProperties", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("Properties", StringComparison.OrdinalIgnoreCase)) {
+                reasons.Add("unsupported-metadata:" + name);
+            }
+        }
+
+        return reasons.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    static bool ContainsWildcard(string? value) =>
+        !string.IsNullOrEmpty(value) && value.IndexOfAny(['*', '?']) >= 0;
 
     static int RunInner(string projectPath, string outDir, string entryTarget, Dictionary<string, string> globalProps) {
         var pc = new ProjectCollection(globalProps);
@@ -1896,6 +1983,14 @@ static class Emitter {
         sb.AppendLine("using Bsharp.Generated.TaskModel;");
         sb.AppendLine();
 
+        var hasCompilerExtensionInputs =
+            project.GetItems("Analyzer").Any() ||
+            project.GetItems("AdditionalFiles").Any() ||
+            project.GetItems("EditorConfigFiles").Any() ||
+            project.GetItems("ProjectReference").Any();
+        EmitFastNoOpBuildBeforePopulate(sb, hasCompilerExtensionInputs);
+        sb.AppendLine();
+
         // Main
         sb.AppendLine("""
 var sw = Stopwatch.StartNew();
@@ -1906,7 +2001,7 @@ bool noRestore = false;
 string? csprojArg = null;
 for (int i = 0; i < args.Length; i++) {
     var a = args[i];
-    if (a == "build" || a == "run") command = a;
+    if (a == "build" || a == "run" || a == "restore") command = a;
     else if (a == "--no-build") noBuild = true;
     else if (a == "--no-restore") noRestore = true;
     else if ((a == "-v" || a == "--verbosity") && i + 1 < args.Length) Log.Level = Log.Parse(args[++i]);
@@ -1927,6 +2022,15 @@ if (!preInitFastNoOp) {
         if (Environment.GetEnvironmentVariable("BSHARP_TRACE") == "1") Console.Error.WriteLine(ex.StackTrace);
         return 2;
     }
+}
+
+if (command == "restore") {
+    var restoreSw = Stopwatch.StartNew();
+    var restoreRc = RunRestore(csprojPath);
+    restoreSw.Stop();
+    if (Log.Level >= Log.Verbosity.Minimal)
+        WriteMetric("restore time", restoreSw.Elapsed.TotalMilliseconds);
+    return restoreRc;
 }
 
 if (!noBuild) {
@@ -2169,32 +2273,6 @@ static bool FastNoOpBuild(string csprojPath) {
     return true;
 }
 
-static bool FastNoOpBuildBeforePopulate(string csprojPath) {
-    if (GeneratedProjectInfo.HasCompilerExtensionInputs)
-        return false;
-    var projectDir = string.Equals(csprojPath, GeneratedProjectInfo.ProjectPath, StringComparison.OrdinalIgnoreCase)
-        ? GeneratedProjectInfo.ProjectDirectory
-        : Path.GetDirectoryName(csprojPath)!;
-    var targetPath = ResolveProjectPath(projectDir, P.TargetPath);
-    if (string.IsNullOrEmpty(targetPath) || !File.Exists(targetPath))
-        return false;
-    var runtimeConfig = Path.ChangeExtension(targetPath, ".runtimeconfig.json");
-    if (!File.Exists(runtimeConfig))
-        return false;
-
-    var outputTime = File.GetLastWriteTimeUtc(targetPath);
-    if (IsInputNewerThanOutput(csprojPath, outputTime))
-        return false;
-    if (FastPathFileHelpers.HasProjectSourceNewerThanOutput(projectDir, outputTime))
-        return false;
-    if (FastPathFileHelpers.HasShapeInputNewerThanOutput(projectDir, outputTime))
-        return false;
-    return true;
-}
-
-static bool IsInputNewerThanOutput(string input, DateTime outputTime) =>
-    File.Exists(input) && File.GetLastWriteTimeUtc(input) > outputTime;
-
 static IEnumerable<string> FastNoOpInputs(string projectDir, string csprojPath) {
     yield return csprojPath;
     foreach (var compile in I.Get("compile")) {
@@ -2205,8 +2283,30 @@ static IEnumerable<string> FastNoOpInputs(string projectDir, string csprojPath) 
     foreach (var input in CompilerExtensionInputs(projectDir))
         yield return input;
 
+    foreach (var input in ProjectReferenceFastNoOpInputs(projectDir))
+        yield return input;
+
     foreach (var input in FastNoOpShapeInputs(projectDir))
         yield return input;
+}
+
+static IEnumerable<string> ProjectReferenceFastNoOpInputs(string projectDir) {
+    foreach (var item in I.Get("projectreference")) {
+        var projectPath = ResolveProjectPath(projectDir, item.Identity);
+        if (string.IsNullOrEmpty(projectPath))
+            continue;
+        yield return projectPath;
+        var referencedDir = Path.GetDirectoryName(projectPath);
+        if (string.IsNullOrEmpty(referencedDir) || !Directory.Exists(referencedDir))
+            continue;
+        foreach (var source in Directory.EnumerateFiles(referencedDir, "*.cs", SearchOption.AllDirectories)) {
+            var relative = Path.GetRelativePath(referencedDir, source);
+            if (relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                continue;
+            yield return source;
+        }
+    }
 }
 
 static IEnumerable<string> CompilerExtensionInputs(string projectDir) {
@@ -2301,10 +2401,6 @@ static class FastPathFileHelpers {
 }
 """);
         sb.AppendLine();
-        var hasCompilerExtensionInputs =
-            project.GetItems("Analyzer").Any() ||
-            project.GetItems("AdditionalFiles").Any() ||
-            project.GetItems("EditorConfigFiles").Any();
         sb.AppendLine($"static class GeneratedProjectInfo {{ public const string ProjectPath = {CSharpLiteral(project.FullPath)}; public const string ProjectDirectory = {CSharpLiteral(Path.GetDirectoryName(project.FullPath) ?? "")}; public const bool HasCompilerExtensionInputs = {(hasCompilerExtensionInputs ? "true" : "false")}; }}");
         sb.AppendLine();
 
@@ -2317,6 +2413,38 @@ static class FastPathFileHelpers {
         ResetGeneratedTaskHelpers();
         EmitTargets(sb, instance, sequence, entryTarget);
         EmitGeneratedTaskHelpers(sb);
+    }
+
+    static void EmitFastNoOpBuildBeforePopulate(StringBuilder sb, bool hasCompilerExtensionInputs) {
+        if (hasCompilerExtensionInputs) {
+            sb.AppendLine("""
+static bool FastNoOpBuildBeforePopulate(string csprojPath) => false;
+""");
+            return;
+        }
+
+        sb.AppendLine("""
+static bool FastNoOpBuildBeforePopulate(string csprojPath) {
+    var projectDir = string.Equals(csprojPath, GeneratedProjectInfo.ProjectPath, StringComparison.OrdinalIgnoreCase)
+        ? GeneratedProjectInfo.ProjectDirectory
+        : Path.GetDirectoryName(csprojPath)!;
+    var targetPath = ResolveProjectPath(projectDir, P.TargetPath);
+    if (string.IsNullOrEmpty(targetPath) || !File.Exists(targetPath))
+        return false;
+    var runtimeConfig = Path.ChangeExtension(targetPath, ".runtimeconfig.json");
+    if (!File.Exists(runtimeConfig))
+        return false;
+
+    var outputTime = File.GetLastWriteTimeUtc(targetPath);
+    if (File.Exists(csprojPath) && File.GetLastWriteTimeUtc(csprojPath) > outputTime)
+        return false;
+    if (FastPathFileHelpers.HasProjectSourceNewerThanOutput(projectDir, outputTime))
+        return false;
+    if (FastPathFileHelpers.HasShapeInputNewerThanOutput(projectDir, outputTime))
+        return false;
+    return true;
+}
+""");
     }
 
     static void EmitItemAndRuntimeHelpers(StringBuilder sb) {
@@ -3584,6 +3712,29 @@ static partial class Tasks {
             items.Add(new Item(include));
         if (outputs != null && outputs.TryGetValue("Include", out var spec)) I.Get(spec.itemName).AddRange(items);
     }
+    public static void AssignProjectConfiguration(ParamList p, OutputList? outputs) {
+        var assigned = new List<Item>();
+        foreach (var source in I.ProjectReference) {
+            var item = new Item(ResolveProjectTaskPath(source.Identity));
+            source.CopyMetadataTo(item);
+            if (string.IsNullOrEmpty(item.GetMetadata("configuration")) && !string.IsNullOrEmpty(P.Configuration))
+                item.SetMetadata("configuration", P.Configuration);
+            if (string.IsNullOrEmpty(item.GetMetadata("platform")) && !string.IsNullOrEmpty(P.Platform))
+                item.SetMetadata("platform", P.Platform);
+            if (string.IsNullOrEmpty(item.GetMetadata("setconfiguration")) && !string.IsNullOrEmpty(P.Configuration))
+                item.SetMetadata("setconfiguration", "Configuration=" + P.Configuration);
+            if (string.IsNullOrEmpty(item.GetMetadata("setplatform")) && !string.IsNullOrEmpty(P.Platform))
+                item.SetMetadata("setplatform", "Platform=" + P.Platform);
+            assigned.Add(item);
+        }
+
+        if (outputs != null) {
+            if (outputs.TryGetValue("AssignedProjects", out var assignedSpec))
+                I.Get(assignedSpec.itemName).AddRange(CloneItems(assigned));
+            if (outputs.TryGetValue("UnassignedProjects", out var unassignedSpec))
+                I.Get(unassignedSpec.itemName).AddRange(Array.Empty<Item>());
+        }
+    }
     public static void FindUnderPath(ParamList p, OutputList? outputs) { }
     public static void ReadLinesFromFile(ParamList p, OutputList? outputs) {
         var file = p.GetValueOrDefault("File") ?? "";
@@ -3673,18 +3824,40 @@ static partial class Tasks {
         if (projects.Length == 0) return;
         var targets = StringList.FromSemicolonList(p.GetValueOrDefault("Targets") ?? "");
         if (targets.Length == 0) return;
+        var properties = p.GetValueOrDefault("Properties") ?? "";
+        var removeProperties = p.GetValueOrDefault("RemoveProperties") ?? "";
 
         var currentProject = P.MSBuildProjectFullPath;
         bool selfOnly = projects.All(project =>
             string.Equals(Path.GetFullPath(project), currentProject, StringComparison.OrdinalIgnoreCase));
-        if (!selfOnly)
-            throw new InvalidOperationException("<MSBuild> cross-project recursion is not supported in v1");
-
         var targetOutputs = new List<Item>();
-        foreach (var target in targets) {
-            var trimmedTarget = target.Trim();
-            Targets.Run(trimmedTarget).GetAwaiter().GetResult();
-            targetOutputs.AddRange(Targets.GetReturns(trimmedTarget));
+        if (selfOnly) {
+            foreach (var target in targets) {
+                var trimmedTarget = target.Trim();
+                Targets.Run(trimmedTarget).GetAwaiter().GetResult();
+                targetOutputs.AddRange(Targets.GetReturns(trimmedTarget));
+            }
+        } else {
+            if (!string.IsNullOrWhiteSpace(removeProperties))
+                throw new InvalidOperationException("<MSBuild> RemoveProperties is not supported for cross-project recursion in v1");
+            foreach (var target in targets) {
+                var trimmedTarget = target.Trim();
+                if (!IsSupportedCrossProjectTarget(trimmedTarget))
+                    throw new InvalidOperationException($"<MSBuild> cross-project target '{trimmedTarget}' is not supported in v1");
+            }
+            foreach (var project in projects) {
+                var fullProject = ResolveProjectTaskPath(project);
+                foreach (var target in targets) {
+                    var trimmedTarget = target.Trim();
+                    if (string.Equals(trimmedTarget, "Build", StringComparison.OrdinalIgnoreCase)) {
+                        RunReferencedProjectBuild(fullProject, properties);
+                    } else if (IsGetTargetPathTarget(trimmedTarget)) {
+                        var targetPath = GetProjectTargetPath(fullProject, properties);
+                        if (!string.IsNullOrEmpty(targetPath))
+                            targetOutputs.Add(new Item(targetPath, new Dictionary<string, string> { ["MSBuildSourceProjectFile"] = fullProject }));
+                    }
+                }
+            }
         }
         if (outputs != null && outputs.TryGetValue("TargetOutputs", out var spec)) {
             if (spec.metadataName == "property")
@@ -3692,6 +3865,184 @@ static partial class Tasks {
             else
                 I.Get(spec.itemName).AddRange(targetOutputs);
         }
+    }
+
+    static bool IsSupportedCrossProjectTarget(string target) =>
+        string.Equals(target, "Build", StringComparison.OrdinalIgnoreCase) ||
+        IsGetTargetPathTarget(target);
+
+    static bool IsGetTargetPathTarget(string target) =>
+        target.Contains("GetTargetPath", StringComparison.OrdinalIgnoreCase);
+
+    static string ResolveProjectTaskPath(string project) {
+        var normalized = PathUtil.NormalizeSeparators(project);
+        return Path.IsPathRooted(normalized)
+            ? Path.GetFullPath(normalized)
+            : Path.GetFullPath(Path.Combine(P.MSBuildProjectDirectory, normalized));
+    }
+
+    static void RunReferencedProjectBuild(string projectPath, string properties) {
+        var launcher = Environment.GetEnvironmentVariable("BSHARP_LAUNCHER_PATH");
+        if (!string.IsNullOrWhiteSpace(launcher) && File.Exists(launcher)) {
+            var args = new List<string> { "build", projectPath, "--no-restore", "-v:quiet" };
+            AddPropertyArgs(args, properties);
+            var result = RunProcess(launcher, args);
+            if (result.ExitCode == 0)
+                return;
+            Console.Error.WriteLine("bsharp: referenced bsharp host failed; falling back to dotnet build --no-restore.");
+            if (!string.IsNullOrWhiteSpace(result.Stderr))
+                Console.Error.WriteLine(result.Stderr);
+        }
+
+        RunDotnetBuild(projectPath, properties);
+    }
+
+    static void RunDotnetBuild(string projectPath, string properties) {
+        var args = new List<string> { "build", projectPath, "--no-restore", "-v:quiet" };
+        AddPropertyArgs(args, properties);
+        RunDotnetOrThrow(args, "build referenced project");
+    }
+
+    static string GetProjectTargetPath(string projectPath, string properties) {
+        var args = new List<string> {
+            "msbuild",
+            projectPath,
+            "-nologo",
+            "-getProperty:TargetPath",
+            "-getProperty:TargetDir",
+            "-getProperty:TargetFileName"
+        };
+        AddDotnetProperties(args, properties);
+        var output = RunDotnetOrThrow(args, "query referenced project target path");
+        try {
+            using var doc = JsonDocument.Parse(output);
+            var props = doc.RootElement.GetProperty("Properties");
+            if (props.TryGetProperty("TargetPath", out var targetPath)) {
+                var value = targetPath.GetString() ?? "";
+                if (!string.IsNullOrEmpty(value))
+                    return value;
+            }
+            var dir = props.TryGetProperty("TargetDir", out var targetDir) ? targetDir.GetString() ?? "" : "";
+            var file = props.TryGetProperty("TargetFileName", out var targetFile) ? targetFile.GetString() ?? "" : "";
+            return string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(file) ? "" : Path.Combine(dir, file);
+        } catch (Exception ex) {
+            throw new InvalidOperationException($"failed to parse referenced project target path: {ex.Message}", ex);
+        }
+    }
+
+    public static void ResolveProjectReferencesV1() {
+        var projects = I._MSBuildProjectReferenceExistent.Count != 0
+            ? I._MSBuildProjectReferenceExistent
+            : I.ProjectReferenceWithConfiguration.Count != 0
+                ? I.ProjectReferenceWithConfiguration
+                : I.ProjectReference;
+        foreach (var project in projects) {
+            if (string.Equals(project.GetMetadata("buildreference"), "false", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(project.GetMetadata("referenceoutputassembly"), "false", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var projectPath = ResolveProjectTaskPath(project.Identity);
+            var properties = ProjectReferenceProperties(project);
+            RunReferencedProjectBuild(projectPath, properties);
+            var targetPath = GetProjectTargetPath(projectPath, properties);
+            if (string.IsNullOrEmpty(targetPath))
+                continue;
+
+            var item = new Item(targetPath);
+            item.SetMetadata("msbuildsourceprojectfile", projectPath);
+            item.SetMetadata("originalitemspec", project.Identity);
+            item.SetMetadata("referencesourcetarget", "ProjectReference");
+            item.SetMetadata("private", string.IsNullOrEmpty(project.GetMetadata("private")) ? "true" : project.GetMetadata("private"));
+            item.SetMetadata("copylocal", "true");
+            item.SetMetadata("targetpath", Path.GetFileName(targetPath));
+            I._ResolvedProjectReferencePaths.Add(CloneItem(item));
+            I.ReferencePath.Add(CloneItem(item));
+            I.ReferenceCopyLocalPaths.Add(CloneItem(item));
+            CopyReferencedOutputToTargetDirectory(targetPath);
+        }
+    }
+
+    static void CopyReferencedOutputToTargetDirectory(string sourcePath) {
+        if (!File.Exists(sourcePath))
+            return;
+        var outputDirectory = !string.IsNullOrEmpty(P.OutDir)
+            ? P.OutDir
+            : !string.IsNullOrEmpty(P.TargetDir)
+                ? P.TargetDir
+                : Path.GetDirectoryName(P.TargetPath) ?? "";
+        if (string.IsNullOrEmpty(outputDirectory))
+            return;
+        Directory.CreateDirectory(outputDirectory);
+        var destinationPath = Path.Combine(outputDirectory, Path.GetFileName(sourcePath));
+        if (!File.Exists(destinationPath) ||
+            File.GetLastWriteTimeUtc(sourcePath) > File.GetLastWriteTimeUtc(destinationPath) ||
+            new FileInfo(sourcePath).Length != new FileInfo(destinationPath).Length)
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+    }
+
+    static string ProjectReferenceProperties(Item project) {
+        var properties = new List<string>();
+        AddPropertyAssignments(properties, project.GetMetadata("setconfiguration"));
+        AddPropertyAssignments(properties, project.GetMetadata("setplatform"));
+        AddPropertyAssignments(properties, project.GetMetadata("settargetframework"));
+        return string.Join(";", properties);
+    }
+
+    static void AddPropertyAssignments(List<string> properties, string value) {
+        foreach (var part in new SplitList(value)) {
+            var text = part.Trim();
+            if (text.Length != 0 && text.Contains('='))
+                properties.Add(text);
+        }
+    }
+
+    static List<Item> CloneItems(IEnumerable<Item> items) {
+        var clones = new List<Item>();
+        foreach (var item in items)
+            clones.Add(CloneItem(item));
+        return clones;
+    }
+
+    static Item CloneItem(Item item) {
+        var clone = new Item(item.Identity);
+        item.CopyMetadataTo(clone);
+        return clone;
+    }
+
+    static void AddDotnetProperties(List<string> args, string properties) =>
+        AddPropertyArgs(args, properties);
+
+    static void AddPropertyArgs(List<string> args, string properties) {
+        foreach (var property in StringList.FromSemicolonList(properties)) {
+            if (property.Length == 0) continue;
+            args.Add("-p:" + property);
+        }
+    }
+
+    static string RunDotnetOrThrow(List<string> args, string operation) {
+        return RunProcessOrThrow("dotnet", args, operation);
+    }
+
+    static string RunProcessOrThrow(string fileName, List<string> args, string operation) {
+        var result = RunProcess(fileName, args);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"{operation} failed with exit code {result.ExitCode}: {result.Stderr}{result.Stdout}");
+        return result.Stdout;
+    }
+
+    static (int ExitCode, string Stdout, string Stderr) RunProcess(string fileName, List<string> args) {
+        var psi = new ProcessStartInfo(fileName) {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"failed to start {fileName}");
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, stdout, stderr);
     }
 
     public static void SetRidAgnosticValueForProjects(ParamList p) { }
@@ -3925,6 +4276,8 @@ static partial class Tasks {
             } catch (Exception ex) {
                 bodies.AppendLine($"            // codegen failed: {CSharpEscape(ex.Message)}");
                 bodies.AppendLine("            // (target replaced with no-op; see comment above)");
+                if (string.Equals(name, "ResolveProjectReferences", StringComparison.OrdinalIgnoreCase))
+                    bodies.AppendLine("            Tasks.ResolveProjectReferencesV1();");
             }
             bodies.AppendLine("        } finally {");
             bodies.AppendLine($"            TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
@@ -4686,17 +5039,17 @@ static partial class Tasks {
     static readonly HashSet<string> KnownTasks = new(StringComparer.Ordinal) {
         "Message","MakeDir","WriteLinesToFile","Touch","Delete","Copy","Error","Warning",
         "ConvertToAbsolutePath","RemoveDir","CreateProperty","CreateItem","FindUnderPath","ReadLinesFromFile",
-        "Exec","Hash","MSBuildInternalMessage","NetSdkWarning","MSBuild",
+        "Exec","Hash","MSBuildInternalMessage","NetSdkWarning","MSBuild","AssignProjectConfiguration",
         "SetRidAgnosticValueForProjects",
     };
     static bool TaskTakesOutputs(string name) => name switch {
         "MakeDir" or "Touch" or "Delete" or "Copy" or "ConvertToAbsolutePath"
             or "CreateProperty" or "CreateItem" or "FindUnderPath" or "ReadLinesFromFile"
-            or "Exec" or "Hash" or "MSBuild" => true,
+            or "Exec" or "Hash" or "MSBuild" or "AssignProjectConfiguration" => true,
         _ => false,
     };
     static bool ForceLocalTaskImplementation(string name) => name is
-        "MSBuildInternalMessage" or "NetSdkWarning" or "MSBuild"
+        "MSBuildInternalMessage" or "NetSdkWarning" or "MSBuild" or "AssignProjectConfiguration"
         or "SetRidAgnosticValueForProjects";
 
     static void EmitTask(StringBuilder sb, ProjectTaskInstance task) {
@@ -5036,7 +5389,6 @@ static partial class Tasks {
                 sb.AppendLine($"{ind}TaskRunner.SetStringIfNotNullOrEmpty({reqVar}, {key}, {CompileExpr(paramValue, batch)});");
                 return;
         }
-        _ = xmlName;
     }
 
     static void EmitParameterRequestSetFromArg(StringBuilder sb, string ind, string reqVar, GeneratedTaskArg arg) {

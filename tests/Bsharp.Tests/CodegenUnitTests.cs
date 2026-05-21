@@ -234,6 +234,43 @@ public sealed class CodegenUnitTests
     }
 
     [TestMethod]
+    public void MSBuildTaskCanReturnCrossProjectTargetOutputs()
+    {
+        using var project = CodegenUnitProject.FromScenario("msbuild-task-cross-project", "App.proj");
+        var generated = project.Generate("CrossProject");
+        generated.BuildHost();
+
+        generated.RunHost().AssertSuccess("run generated cross-project MSBuild task host");
+
+        AssertFileLines(
+            Path.Combine(project.DirectoryPath, "references.txt"),
+            Path.Combine(project.DirectoryPath, "bin", "Debug", "net11.0", "Lib.dll"));
+    }
+
+    [TestMethod]
+    public void AuditClassifiesProjectReferenceShapes()
+    {
+        using var project = CodegenUnitProject.FromScenario("project-reference-shapes", "App.csproj");
+        using var document = project.Audit();
+        var root = document.RootElement;
+
+        Assert.AreEqual(5, root.GetProperty("counts").GetProperty("projectAuthoredProjectReferences").GetInt32());
+        Assert.AreEqual(4, root.GetProperty("counts").GetProperty("unsupportedProjectAuthoredProjectReferences").GetInt32());
+
+        var references = root.GetProperty("diagnostics").GetProperty("projectReferences");
+        var staticReference = FindProjectReference(references, "Lib\\StaticLib.csproj");
+        Assert.AreEqual("static-supported-candidate", staticReference.GetProperty("status").GetString());
+        Assert.IsTrue(staticReference.GetProperty("projectAuthored").GetBoolean());
+        Assert.IsFalse(staticReference.GetProperty("dynamicInclude").GetBoolean());
+        Assert.IsFalse(staticReference.GetProperty("wildcardInclude").GetBoolean());
+
+        AssertProjectReferenceReason(references, "$(ReferenceProject)", "dynamic-include");
+        AssertProjectReferenceReason(references, "Lib\\*.csproj", "wildcard-include");
+        AssertProjectReferenceReason(references, "Lib\\NoReferenceOutput.csproj", "reference-output-assembly-false");
+        AssertProjectReferenceReason(references, "Lib\\CustomTarget.csproj", "unsupported-metadata:Targets");
+    }
+
+    [TestMethod]
     public void AuditReportsDynamicImports()
     {
         using var project = CodegenUnitProject.FromScenario("dynamic-import", "dynamic-import.proj");
@@ -302,6 +339,35 @@ public sealed class CodegenUnitTests
         }
 
         Assert.Fail($"Expected JSON array to contain {propertyName}='{expectedValue}'.");
+    }
+
+    private static JsonElement FindProjectReference(JsonElement array, string include)
+    {
+        foreach (var element in array.EnumerateArray())
+        {
+            if (element.GetProperty("include").GetString() == include)
+            {
+                return element;
+            }
+        }
+
+        Assert.Fail($"Expected ProjectReference include '{include}'.");
+        throw new InvalidOperationException("Unreachable after Assert.Fail.");
+    }
+
+    private static void AssertProjectReferenceReason(JsonElement array, string include, string expectedReason)
+    {
+        var reference = FindProjectReference(array, include);
+        Assert.AreEqual("unsupported", reference.GetProperty("status").GetString());
+        foreach (var reason in reference.GetProperty("unsupportedReasons").EnumerateArray())
+        {
+            if (reason.GetString() == expectedReason)
+            {
+                return;
+            }
+        }
+
+        Assert.Fail($"Expected ProjectReference '{include}' to include unsupported reason '{expectedReason}'.");
     }
 
     private static void AssertFileLines(string path, params string[] expected)
