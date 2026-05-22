@@ -33,10 +33,15 @@ internal sealed class CodegenUnitProject : IDisposable
         return RunCodegen(arguments);
     }
 
-    public GeneratedCode Generate(string entryTarget = "Build", params string[] extraArguments)
+    public GeneratedCode Generate(string? entryTarget = "Build", params string[] extraArguments)
     {
         var outputDirectory = Path.Combine(DirectoryPath, "generated");
-        var arguments = new List<string> { "--project", ProjectPath, "--out-dir", outputDirectory, "--entry", entryTarget };
+        var arguments = new List<string> { "--project", ProjectPath, "--out-dir", outputDirectory };
+        if (entryTarget is not null)
+        {
+            arguments.Add("--entry");
+            arguments.Add(entryTarget);
+        }
         arguments.AddRange(extraArguments);
 
         var result = RunCodegen(arguments);

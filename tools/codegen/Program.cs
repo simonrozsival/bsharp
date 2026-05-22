@@ -7,7 +7,7 @@ using System.Text;
 using System.Text.Json;
 
 if (args.Length < 2) {
-    Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [-p Name=Value ...]");
+    Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [--targets X;Y] [-p Name=Value ...]");
     Console.Error.WriteLine("       codegen --audit --project <csproj> [-p Name=Value ...]");
     return 1;
 }
@@ -20,13 +20,13 @@ if (args.Contains("--audit", StringComparer.OrdinalIgnoreCase) || (args.Length >
     return Codegen.Audit(auditProject, CollectRepeated(args, "-p"));
 }
 if (args.Length < 4) {
-    Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [-p Name=Value ...]");
+    Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [--targets X;Y] [-p Name=Value ...]");
     return 1;
 }
 return Codegen.Run(
     projectPath:    ArgValue(args, "--project")!,
     outDir:         ArgValue(args, "--out-dir") ?? ArgValue(args, "--out")!,
-    entryTarget:    ArgValue(args, "--entry") ?? "Build",
+    requestedTargets: Codegen.SplitTargetList(ArgValue(args, "--targets") ?? ArgValue(args, "--entry")),
     globalProps:    CollectRepeated(args, "-p"));
 
 static string? ArgValue(string[] args, string flag) {
@@ -46,9 +46,9 @@ static Dictionary<string, string> CollectRepeated(string[] args, string flag) {
 }
 
 static class Codegen {
-    public static int Run(string projectPath, string outDir, string entryTarget, Dictionary<string, string> globalProps) {
+    public static int Run(string projectPath, string outDir, IReadOnlyList<string>? requestedTargets, Dictionary<string, string> globalProps) {
         MSBuildLocator.RegisterDefaults();
-        return RunInner(projectPath, outDir, entryTarget, globalProps);
+        return RunInner(projectPath, outDir, requestedTargets, globalProps);
     }
 
     public static int Audit(string projectPath, Dictionary<string, string> globalProps) {
@@ -345,16 +345,43 @@ static class Codegen {
     static bool ContainsWildcard(string? value) =>
         !string.IsNullOrEmpty(value) && value.IndexOfAny(['*', '?']) >= 0;
 
-    static int RunInner(string projectPath, string outDir, string entryTarget, Dictionary<string, string> globalProps) {
+    public static List<string> SplitTargetList(string? value) {
+        if (string.IsNullOrWhiteSpace(value))
+            return new List<string>();
+        return value.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    static int RunInner(string projectPath, string outDir, IReadOnlyList<string>? requestedTargets, Dictionary<string, string> globalProps) {
         var pc = new ProjectCollection(globalProps);
         var project = pc.LoadProject(Path.GetFullPath(projectPath));
         var instance = project.CreateProjectInstance();
+        var initialTargets = instance.InitialTargets.ToList();
+        var defaultTargets = instance.DefaultTargets.Count > 0
+            ? instance.DefaultTargets.ToList()
+            : FirstTargetOrEmpty(instance).ToList();
+        var explicitTargets = requestedTargets is { Count: > 0 }
+            ? requestedTargets.ToList()
+            : new List<string>();
+        var buildTargets = explicitTargets.Count > 0 ? explicitTargets : defaultTargets;
+        var entryTargets = initialTargets.Concat(buildTargets)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var target in entryTargets) {
+            if (!instance.Targets.ContainsKey(target)) {
+                Console.Error.WriteLine($"codegen: target '{target}' does not exist in evaluated project.");
+                return 2;
+            }
+        }
 
         // If any target invokes CallTarget, we need to emit method bodies for EVERY target
         // in the project (CallTarget can name anything at runtime) and we need the
         // Targets.Run(string) dispatcher to exist. Detect this up front and pass it through.
         bool hasCallTarget = HasCallTarget(instance);
-        var sequence = ComputeTargetSequence(instance, entryTarget, includeAllTargets: hasCallTarget);
+        var sequence = ComputeTargetSequence(instance, entryTargets, includeAllTargets: hasCallTarget);
 
         var propNames = CollectPropertyNames(project, instance, sequence);
         var itemTypes = CollectItemTypeNames(project, instance, sequence);
@@ -375,7 +402,7 @@ static class Codegen {
 
         var sb = new StringBuilder();
         ValidateNoUnsupportedTargetBatching(instance, sequence, project.FullPath);
-        Emitter.Emit(sb, project, instance, sequence, entryTarget);
+        Emitter.Emit(sb, project, instance, sequence, initialTargets, defaultTargets, explicitTargets);
         var programPath = Path.Combine(outDir, "Program.cs");
         File.WriteAllText(programPath, sb.ToString());
 
@@ -394,7 +421,10 @@ static class Codegen {
         if (Directory.Exists(legacyTasksDir)) Directory.Delete(legacyTasksDir, recursive: true);
 
         Console.WriteLine($"Wrote {outDir}/");
-        Console.WriteLine($"  Entry target: {entryTarget}");
+        Console.WriteLine($"  Initial targets: {FormatTargetList(initialTargets)}");
+        Console.WriteLine($"  Default targets: {FormatTargetList(defaultTargets)}");
+        if (explicitTargets.Count > 0)
+            Console.WriteLine($"  Requested targets: {FormatTargetList(explicitTargets)}");
         Console.WriteLine($"  Targets emitted: {sequence.Count}{(hasCallTarget ? " (all, due to CallTarget)" : "")}");
         Console.WriteLine($"  Typed properties: {propNames.Count}");
         Console.WriteLine($"  Typed item types: {itemTypes.Count}");
@@ -404,6 +434,15 @@ static class Codegen {
             Console.WriteLine($"  Global properties: {string.Join(", ", globalProps.Select(kv => $"{kv.Key}={kv.Value}"))}");
         return 0;
     }
+
+    static IEnumerable<string> FirstTargetOrEmpty(ProjectInstance instance) {
+        var first = instance.Targets.Keys.FirstOrDefault();
+        if (!string.IsNullOrEmpty(first))
+            yield return first;
+    }
+
+    static string FormatTargetList(IReadOnlyList<string> targets) =>
+        targets.Count == 0 ? "<none>" : string.Join(";", targets);
 
     static bool ContainsDynamicTargetList(string? value) =>
         ContainsPropertyOrItemReference(value);
@@ -719,6 +758,7 @@ public static class TaskModelExt {
         sb.AppendLine("    <ImplicitUsings>enable</ImplicitUsings>");
         sb.AppendLine("    <InvariantGlobalization>true</InvariantGlobalization>");
         sb.AppendLine("    <AssemblyName>BsharpTaskServer</AssemblyName>");
+        sb.AppendLine("    <PublishReadyToRun>true</PublishReadyToRun>");
         sb.AppendLine("    <NoWarn>$(NoWarn);CS8012;CS8602;IL2026</NoWarn>");
         sb.AppendLine("  </PropertyGroup>");
         sb.AppendLine("  <ItemGroup>");
@@ -923,15 +963,23 @@ sealed class TaskDirectoryLoadContext : AssemblyLoadContext {
     readonly AssemblyDependencyResolver _resolver;
     readonly string _dir;
     readonly string? _sdkRoot;
+    readonly string? _dotnetRoot;
     public TaskDirectoryLoadContext(string primaryAssemblyPath) : base("bsharp-task:" + Path.GetDirectoryName(primaryAssemblyPath), isCollectible: false) {
         _resolver = new AssemblyDependencyResolver(primaryAssemblyPath);
         _dir = Path.GetDirectoryName(primaryAssemblyPath)!;
         _sdkRoot = FindSdkRoot(_dir);
+        _dotnetRoot = FindDotnetRoot(_sdkRoot);
     }
     protected override Assembly? Load(AssemblyName assemblyName) {
+        foreach (var asm in AssemblyLoadContext.Default.Assemblies)
+            if (string.Equals(assemblyName.Name, asm.GetName().Name, StringComparison.OrdinalIgnoreCase))
+                return asm;
+        if (IsFrameworkAssembly(assemblyName.Name)) {
+            try { return Assembly.Load(assemblyName); } catch { }
+            var sharedFrameworkAssembly = FindSharedFrameworkAssembly(_dotnetRoot, assemblyName);
+            if (sharedFrameworkAssembly != null) return LoadFromAssemblyPath(sharedFrameworkAssembly);
+        }
         if (IsSharedBuildAssembly(assemblyName.Name)) {
-            foreach (var asm in AssemblyLoadContext.Default.Assemblies)
-                if (AssemblyName.ReferenceMatchesDefinition(assemblyName, asm.GetName())) return asm;
             if (_sdkRoot != null) {
                 var sharedPath = Path.Combine(_sdkRoot, assemblyName.Name + ".dll");
                 if (File.Exists(sharedPath)) return AssemblyLoadContext.Default.LoadFromAssemblyPath(sharedPath);
@@ -944,7 +992,31 @@ sealed class TaskDirectoryLoadContext : AssemblyLoadContext {
         var resolved = _resolver.ResolveAssemblyToPath(assemblyName);
         return resolved != null ? LoadFromAssemblyPath(resolved) : null;
     }
+    static bool IsFrameworkAssembly(string? name) =>
+        name is "netstandard" or "mscorlib"
+        || (name?.StartsWith("System.", StringComparison.Ordinal) ?? false)
+        || (name?.StartsWith("Microsoft.CSharp", StringComparison.Ordinal) ?? false);
     static bool IsSharedBuildAssembly(string? name) => name is "Microsoft.Build.Framework" or "Microsoft.Build.Utilities.Core" or "Microsoft.Build";
+    static string? FindDotnetRoot(string? sdkRoot) {
+        if (sdkRoot == null) return null;
+        var sdkDir = Path.GetDirectoryName(sdkRoot);
+        return sdkDir == null ? null : Path.GetDirectoryName(sdkDir);
+    }
+    static string? FindSharedFrameworkAssembly(string? dotnetRoot, AssemblyName assemblyName) {
+        if (dotnetRoot == null || assemblyName.Name == null) return null;
+        var sharedRoot = Path.Combine(dotnetRoot, "shared", "Microsoft.NETCore.App");
+        if (!Directory.Exists(sharedRoot)) return null;
+        var requested = assemblyName.Version;
+        foreach (var dir in Directory.EnumerateDirectories(sharedRoot)
+                     .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
+                     .Where(entry => entry.Version != null)
+                     .OrderByDescending(entry => entry.Version)) {
+            if (requested != null && dir.Version!.Major != requested.Major) continue;
+            var candidate = Path.Combine(dir.Path, assemblyName.Name + ".dll");
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
     static string? FindSdkRoot(string start) {
         for (var d = start; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
             if (File.Exists(Path.Combine(d, "Microsoft.Build.Framework.dll"))) return d;
@@ -1100,11 +1172,11 @@ sealed class BsharpEngineServices : Microsoft.Build.Framework.EngineServices {
 }
 """;
 
-    // Topological sort over targets reachable from `entry` via DependsOnTargets,
+    // Topological sort over targets reachable from the entry targets via DependsOnTargets,
     // BeforeTargets, AfterTargets. Mirrors MSBuild's own target scheduling order.
     // When includeAllTargets is true (CallTarget present), starts with every target
     // in the project so the runtime dispatcher can name any of them.
-    static List<string> ComputeTargetSequence(ProjectInstance instance, string entry, bool includeAllTargets = false) {
+    static List<string> ComputeTargetSequence(ProjectInstance instance, IReadOnlyList<string> entries, bool includeAllTargets = false) {
         // Resolve $(X) refs inside DependsOnTargets/Before/AfterTargets using the
         // evaluated project. These are normally stable at the moment the build starts.
         string Expand(string? s) {
@@ -1140,10 +1212,11 @@ sealed class BsharpEngineServices : Microsoft.Build.Framework.EngineServices {
         if (includeAllTargets) {
             foreach (var name in instance.Targets.Keys) { reachable.Add(name); work.Enqueue(name); }
         } else {
-            if (instance.Targets.ContainsKey(entry)) {
-                reachable.Add(entry); work.Enqueue(entry);
+            foreach (var entry in entries) {
+                if (instance.Targets.ContainsKey(entry) && reachable.Add(entry))
+                    work.Enqueue(entry);
             }
-            if (!string.Equals(entry, "Restore", StringComparison.OrdinalIgnoreCase) &&
+            if (!entries.Any(entry => string.Equals(entry, "Restore", StringComparison.OrdinalIgnoreCase)) &&
                 instance.Targets.ContainsKey("Restore")) {
                 reachable.Add("Restore"); work.Enqueue("Restore");
             }
@@ -1185,7 +1258,8 @@ sealed class BsharpEngineServices : Microsoft.Build.Framework.EngineServices {
             visited.Add(n);
             result.Add(n);
         }
-        Visit(entry);
+        foreach (var entry in entries)
+            Visit(entry);
         // Any unconnected reachable targets — append in stable order.
         foreach (var n in reachable.OrderBy(x => x, StringComparer.Ordinal)) Visit(n);
         return result;
@@ -1941,7 +2015,7 @@ static class Emitter {
         "Copy", "Touch", "Delete", "MakeDir", "RemoveDir",
         "WriteLinesToFile", "ReadLinesFromFile", "FindUnderPath", "ConvertToAbsolutePath",
         // Logging intrinsics
-        "Message", "Warning", "Error",
+        "Message", "Warning", "Error", "AllowEmptyTelemetry", "ShowPreviewMessage",
         // Misc
         "Exec", "Hash",
         // CreateProperty/CreateItem/etc. handled below via KnownTasks branch
@@ -1966,7 +2040,14 @@ static class Emitter {
         return dot < 0 ? s : s.Substring(dot + 1);
     }
 
-    public static void Emit(StringBuilder sb, Microsoft.Build.Evaluation.Project project, ProjectInstance instance, List<string> sequence, string entryTarget) {
+    public static void Emit(
+        StringBuilder sb,
+        Microsoft.Build.Evaluation.Project project,
+        ProjectInstance instance,
+        List<string> sequence,
+        IReadOnlyList<string> initialTargets,
+        IReadOnlyList<string> defaultTargets,
+        IReadOnlyList<string> compiledTargets) {
         sb.AppendLine("// <auto-generated/>");
         sb.AppendLine("// Generated by bsharp codegen. Static fields + R2R/JIT in-proc SDK task loading.");
         sb.AppendLine("#nullable enable");
@@ -1998,12 +2079,20 @@ var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
 bool noRestore = false;
+bool fastNoOpRequested = false;
 string? csprojArg = null;
+var requestedTargets = new List<string>();
 for (int i = 0; i < args.Length; i++) {
     var a = args[i];
     if (a == "build" || a == "run" || a == "restore") command = a;
     else if (a == "--no-build") noBuild = true;
     else if (a == "--no-restore") noRestore = true;
+    else if (a == "--fast-noop") fastNoOpRequested = true;
+    else if ((a == "-t" || a == "--target" || a == "-target") && i + 1 < args.Length) AddTargets(requestedTargets, args[++i]);
+    else if (a.StartsWith("-t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
+    else if (a.StartsWith("/t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
+    else if (a.StartsWith("--target:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(9));
+    else if (a.StartsWith("-target:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(8));
     else if ((a == "-v" || a == "--verbosity") && i + 1 < args.Length) Log.Level = Log.Parse(args[++i]);
     else if (a.StartsWith("-v:", StringComparison.Ordinal)) Log.Level = Log.Parse(a.Substring(3));
     else if (a.StartsWith("--verbosity:", StringComparison.Ordinal)) Log.Level = Log.Parse(a.Substring(12));
@@ -2013,7 +2102,11 @@ string csprojPath = csprojArg != null
     ? Path.GetFullPath(csprojArg)
     : GeneratedProjectInfo.ProjectPath;
 
-var preInitFastNoOp = !noBuild && FastNoOpBuildBeforePopulate(csprojPath);
+var allowFastNoOp = fastNoOpRequested
+    && command != "restore"
+    && !noBuild
+    && requestedTargets.Count == 0;
+var preInitFastNoOp = allowFastNoOp && FastNoOpBuildBeforePopulate(csprojPath);
 if (!preInitFastNoOp) {
     try {
         InitialState.Populate(csprojPath);
@@ -2034,9 +2127,13 @@ if (command == "restore") {
 }
 
 if (!noBuild) {
-    var fastNoOp = preInitFastNoOp || FastNoOpBuild(csprojPath);
+    var fastNoOp = preInitFastNoOp || (allowFastNoOp && FastNoOpBuild(csprojPath));
     if (!fastNoOp) {
-        if (!noRestore && NeedsRestore(csprojPath)) {
+        // Match `dotnet build` semantics: always invoke the Restore target unless
+        // `--no-restore` was passed. NuGet's RestoreTask self-skips when nothing
+        // changed, and the launcher already pre-restored (adding `--no-restore`)
+        // for the cases where the host can't be invoked yet.
+        if (!noRestore) {
             var restoreSw = Stopwatch.StartNew();
             var restoreRc = RunRestore(csprojPath);
             restoreSw.Stop();
@@ -2044,7 +2141,7 @@ if (!noBuild) {
             if (restoreRc != 0)
                 return restoreRc;
         }
-        Targets.Build().GetAwaiter().GetResult();
+        Targets.Build(requestedTargets.Count > 0 ? requestedTargets : null).GetAwaiter().GetResult();
 
         // Post-build fallback: if GenerateBuildRuntimeConfigurationFiles failed (it needs
         // project.assets.json from a NuGet restore which we skip) and we have a built dll,
@@ -2194,22 +2291,14 @@ static void WriteMetric(string name, double value) {
     Console.WriteLine("ms");
 }
 
-static bool NeedsRestore(string csprojPath) {
-    var assets = ResolveProjectPath(Path.GetDirectoryName(csprojPath)!, P.ProjectAssetsFile);
-    if (string.IsNullOrEmpty(assets))
-        assets = Path.Combine(Path.GetDirectoryName(csprojPath)!, "obj", "project.assets.json");
-    if (!File.Exists(assets)) return true;
-    var assetsTime = File.GetLastWriteTimeUtc(assets);
-    if (File.GetLastWriteTimeUtc(csprojPath) > assetsTime) return true;
-    var projectDir = Path.GetDirectoryName(csprojPath)!;
-    foreach (var fileName in new[] { "Directory.Packages.props", "Directory.Build.props", "Directory.Build.targets", "NuGet.config", "global.json" }) {
-        for (var dir = projectDir; !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir)) {
-            var path = Path.Combine(dir, fileName);
-            if (File.Exists(path) && File.GetLastWriteTimeUtc(path) > assetsTime)
-                return true;
-        }
+static void AddTargets(List<string> targets, string value) {
+    foreach (var target in value.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)) {
+        var trimmed = target.Trim();
+        if (trimmed.Length == 0)
+            continue;
+        if (!targets.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+            targets.Add(trimmed);
     }
-    return false;
 }
 
 static int RunRestore(string csprojPath) {
@@ -2411,7 +2500,7 @@ static class FastPathFileHelpers {
         EmitTasks(sb);
         EmitInitialState(sb, project);
         ResetGeneratedTaskHelpers();
-        EmitTargets(sb, instance, sequence, entryTarget);
+        EmitTargets(sb, instance, sequence, initialTargets, defaultTargets, compiledTargets);
         EmitGeneratedTaskHelpers(sb);
     }
 
@@ -3023,20 +3112,30 @@ static class TargetFrameworkHelpers {
 }
 
 static class TargetIncrementality {
-    public static bool IsUpToDate(string inputsExpanded, string outputsExpanded) {
+    public static bool IsUpToDate(string targetName, string inputsExpanded, string outputsExpanded) {
         var inputs = ToFileList(inputsExpanded);
         var outputs = ToFileList(outputsExpanded);
-        if (outputs.Count == 0) return false;
-        if (inputs.Count == 0) return false;
+        if (outputs.Count == 0) return Trace(targetName, false, "no outputs", "", default, "", default);
+        if (inputs.Count == 0) return Trace(targetName, false, "no inputs", "", default, "", default);
         DateTime newestInput = DateTime.MinValue;
-        foreach (var i in inputs) { var t = File.GetLastWriteTimeUtc(i); if (t > newestInput) newestInput = t; }
+        var newestInputPath = "";
+        foreach (var i in inputs) { var t = File.GetLastWriteTimeUtc(i); if (t > newestInput) { newestInput = t; newestInputPath = i; } }
         DateTime oldestOutput = DateTime.MaxValue;
-        foreach (var o in outputs) { var t = File.GetLastWriteTimeUtc(o); if (t == default) return false; if (t < oldestOutput) oldestOutput = t; }
-        return oldestOutput >= newestInput;
+        var oldestOutputPath = "";
+        foreach (var o in outputs) { var t = File.GetLastWriteTimeUtc(o); if (t == default) return Trace(targetName, false, "missing output", newestInputPath, newestInput, o, t); if (t < oldestOutput) { oldestOutput = t; oldestOutputPath = o; } }
+        var upToDate = oldestOutput >= newestInput;
+        return Trace(targetName, upToDate, upToDate ? "up-to-date" : "newer input", newestInputPath, newestInput, oldestOutputPath, oldestOutput);
     }
     static List<string> ToFileList(string s) =>
         s.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+    static bool Trace(string targetName, bool result, string reason, string inputPath, DateTime inputTime, string outputPath, DateTime outputTime) {
+        var filter = Environment.GetEnvironmentVariable("BSHARP_INCREMENTALITY_TRACE");
+        if (!string.IsNullOrEmpty(filter) && (filter == "1" || targetName.Contains(filter, StringComparison.OrdinalIgnoreCase))) {
+            Console.Error.WriteLine($"bsharp incrementality: {targetName}: {(result ? "up-to-date" : "dirty")} ({reason}); newest input={inputTime:o} {inputPath}; oldest output={outputTime:o} {outputPath}");
+        }
+        return result;
+    }
 }
 
 static class TargetRuntime {
@@ -3086,6 +3185,12 @@ static class TargetRuntime {
 
     public static void MarkDone(string targetName, ref int state, ref TaskCompletionSource? completion) {
         Volatile.Write(ref state, 2);
+        Volatile.Read(ref completion)?.TrySetResult();
+        Pop(targetName);
+    }
+
+    public static void MarkSkipped(string targetName, ref int state, ref TaskCompletionSource? completion) {
+        Volatile.Write(ref state, 0);
         Volatile.Read(ref completion)?.TrySetResult();
         Pop(targetName);
     }
@@ -3162,7 +3267,7 @@ static class Log {
         var elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
         System.Threading.Interlocked.Add(ref _taskTicks, elapsedTicks);
         if (Level < Verbosity.Normal) return;
-        Console.WriteLine($"{Prefix()} {name} {DurationSuffix(elapsedTicks)}");
+        Console.WriteLine($"{Prefix()} Task: {name} {DurationSuffix(elapsedTicks)}");
     }
 
     // Target lifecycle is verbose/detailed output. Normal output stays task-focused.
@@ -3819,6 +3924,10 @@ static partial class Tasks {
 
     public static void NetSdkWarning(ParamList p) { }
 
+    public static void AllowEmptyTelemetry(ParamList p) { }
+
+    public static void ShowPreviewMessage(ParamList p) { }
+
     public static void MSBuild(ParamList p, OutputList? outputs) {
         var projects = StringList.FromSemicolonList(p.GetValueOrDefault("Projects") ?? "");
         if (projects.Length == 0) return;
@@ -4145,7 +4254,13 @@ static partial class Tasks {
         sb.AppendLine();
     }
 
-    static void EmitTargets(StringBuilder sb, ProjectInstance instance, List<string> sequence, string entryTarget) {
+    static void EmitTargets(
+        StringBuilder sb,
+        ProjectInstance instance,
+        List<string> sequence,
+        IReadOnlyList<string> initialTargets,
+        IReadOnlyList<string> defaultTargets,
+        IReadOnlyList<string> compiledTargets) {
         // 1. Build name → method-index map (1-based, matches old codegen).
         var indexOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < sequence.Count; i++) indexOf[sequence[i]] = i + 1;
@@ -4245,17 +4360,7 @@ static partial class Tasks {
                 continue;
             }
 
-            bodies.AppendLine($"    static int {method}State;");
-            bodies.AppendLine($"    static TaskCompletionSource? {method}Completion;");
-            bodies.AppendLine($"    public static async ValueTask {method}() {{");
-            bodies.AppendLine($"        if (!TargetRuntime.TryEnter({CSharpLiteral(name)}, ref {method}State, ref {method}Completion, out var waitTask)) {{");
-            bodies.AppendLine("            if (waitTask is not null)");
-            bodies.AppendLine($"                await TargetRuntime.WaitForCompletionAsync({CSharpLiteral(name)}, waitTask);");
-            bodies.AppendLine("            return;");
-            bodies.AppendLine("        }");
-            bodies.AppendLine("        try {");
-
-            // Write the body to a scratch buffer; if EmitTargetMethodBody throws mid-emission
+            // Write the methods to a scratch buffer; if EmitTargetMethods throws mid-emission
             // (e.g., uncompilable Condition or body expression), discard the partial output and
             // emit a silent no-op with an explanatory comment. The previous behavior of
             // Errors.Add(...) here caused FALSE-POSITIVE errors: every invocation of the target
@@ -4266,7 +4371,7 @@ static partial class Tasks {
             // missing-output if we silently drop their body — accept that trade-off.
             var body = new StringBuilder();
             try {
-                EmitTargetMethodBody(
+                EmitTargetMethods(
                     body, name, target, beforeCompanions, afterCompanions,
                     ParseDepString, Method,
                     method,
@@ -4274,15 +4379,14 @@ static partial class Tasks {
                     instance: instance);
                 bodies.Append(body);
             } catch (Exception ex) {
+                bodies.AppendLine($"    public static ValueTask {method}() {{");
                 bodies.AppendLine($"            // codegen failed: {CSharpEscape(ex.Message)}");
                 bodies.AppendLine("            // (target replaced with no-op; see comment above)");
                 if (string.Equals(name, "ResolveProjectReferences", StringComparison.OrdinalIgnoreCase))
-                    bodies.AppendLine("            Tasks.ResolveProjectReferencesV1();");
+                    bodies.AppendLine("        Tasks.ResolveProjectReferencesV1();");
+                bodies.AppendLine("        return ValueTask.CompletedTask;");
+                bodies.AppendLine("    }");
             }
-            bodies.AppendLine("        } finally {");
-            bodies.AppendLine($"            TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
-            bodies.AppendLine("        }");
-            bodies.AppendLine("    }");
             bodies.AppendLine();
         }
 
@@ -4292,7 +4396,13 @@ static partial class Tasks {
         sb.AppendLine("    static void AddError(string target, string error) { lock (Errors) Errors.Add((target, error)); }");
         sb.AppendLine();
         // Public entry point — direct call so Main doesn't root the dispatcher switch.
-        sb.AppendLine($"    public static ValueTask Build() => {Method(entryTarget)}();");
+        var compiledDefaultTargets = compiledTargets.Count > 0 ? initialTargets.Concat(compiledTargets) : initialTargets.Concat(defaultTargets);
+        sb.AppendLine("    public static async ValueTask Build(IReadOnlyList<string>? requestedTargets = null) {");
+        sb.AppendLine($"        var targets = requestedTargets is {{ Count: > 0 }} ? {TargetArrayLiteral(initialTargets)}.Concat(requestedTargets).ToArray() : {TargetArrayLiteral(compiledDefaultTargets)};");
+        sb.AppendLine("        foreach (var target in targets)");
+        sb.AppendLine("            if (!await RunBuildTarget(target))");
+        sb.AppendLine("                AddError(target, \"target does not exist in generated build graph\");");
+        sb.AppendLine("    }");
         if (indexOf.TryGetValue("Restore", out _))
             sb.AppendLine($"    public static ValueTask Restore() => {Method("Restore")}();");
         else
@@ -4307,6 +4417,15 @@ static partial class Tasks {
         }
         sb.AppendLine("            _ => new List<Item>(),");
         sb.AppendLine("        };");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    static async ValueTask<bool> RunBuildTarget(string name) {");
+        sb.AppendLine("        switch (name.ToLowerInvariant()) {");
+        foreach (var name in sequence) {
+            sb.AppendLine($"            case \"{name.ToLowerInvariant()}\": await {Method(name)}(); return true;");
+        }
+        sb.AppendLine("            default: return false;");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -4352,6 +4471,11 @@ static partial class Tasks {
             return $"new List<Item>({ItemAccess(itemType)})";
         return $"ItemSerde.FromSpecs(ItemSerde.SpecsFromScalar({CompileExpr(returns)}))";
     }
+
+    static string TargetArrayLiteral(IEnumerable<string> targets) =>
+        targets.Any()
+            ? "new[] { " + string.Join(", ", targets.Select(CSharpLiteral)) + " }"
+            : "Array.Empty<string>()";
 
     static bool TryParsePureItemList(string text, out string itemType) {
         itemType = "";
@@ -4408,7 +4532,7 @@ static partial class Tasks {
         return result;
     }
 
-    static void EmitTargetMethodBody(
+    static void EmitTargetMethods(
         StringBuilder sb,
         string name,
         ProjectTargetInstance target,
@@ -4420,43 +4544,61 @@ static partial class Tasks {
         Action onDynamicEmitted,
         ProjectInstance instance)
     {
-        // Wrap the entire method body in try/catch so:
-        //  - codegen-time-error throws emitted in place of uncompilable expressions are caught
-        //  - uncaught exceptions from dep calls are attributed to this target
-        //  - condition/incrementality evaluation failures don't crash the build
-        // Body errors still get caught here (no separate inner try/catch needed).
-        sb.AppendLine("        try {");
+        var coreMethod = method + "_Core";
+        var hasCondition = !string.IsNullOrEmpty(target.Condition);
+        var hasIncr = !string.IsNullOrEmpty(target.Inputs) && !string.IsNullOrEmpty(target.Outputs);
+        var hasAfters = afterCompanions.TryGetValue(name, out var afters);
 
-        // Condition gate: skip entire target (deps + body + before/after companions).
-        // Small deviation from MSBuild (which still runs Before/After), accepted for
-        // a clean execute-once invariant.
-        //
-        // Two-stage compilation: try CondCompiler directly first. If it fails (e.g. the
-        // condition uses property functions or instance methods we don't compile yet),
-        // ask MSBuild's own evaluator to ExpandString the condition — that resolves
-        // $(X), @(X), $([MSBuild]::F(...)), $(X.Method(...)) all to literal values —
-        // then re-compile the much simpler expanded form. If even THAT fails we let
-        // the outer catch in EmitTargets stub the target as a no-op.
-        if (!string.IsNullOrEmpty(target.Condition))
-            sb.AppendLine($"            if ({NegateBoolExpr(CompileCondWithFallback(target.Condition, instance))}) {{ Log.TargetSkipped({CSharpLiteral(name)}, \"condition was false\"); return; }}");
-
-        // DependsOnTargets are ordered by MSBuild semantics. We still de-duplicate a
-        // literal run because target methods are execute-once, but we must not flatten the
-        // run into Task.WhenAll: later targets often consume item/property mutations from
-        // earlier targets (e.g. CoreCompile needs references populated by ResolveReferences).
         var literalRun = new List<string>();
-        var literalRunSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void FlushLiteralRun() {
             if (literalRun.Count == 0) return;
             foreach (var dependency in literalRun)
                 sb.AppendLine($"            await {Method(dependency)}();");
             literalRun.Clear();
-            literalRunSeen.Clear();
         }
+
+        sb.AppendLine($"    static int {method}State;");
+        sb.AppendLine($"    static TaskCompletionSource? {method}Completion;");
+        sb.AppendLine($"    public static async ValueTask {method}() {{");
+        sb.AppendLine($"        if (!TargetRuntime.TryEnter({CSharpLiteral(name)}, ref {method}State, ref {method}Completion, out var waitTask)) {{");
+        sb.AppendLine("            if (waitTask is not null)");
+        sb.AppendLine($"                await TargetRuntime.WaitForCompletionAsync({CSharpLiteral(name)}, waitTask);");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        var targetExecuted = false;");
+        sb.AppendLine("        try {");
+        sb.AppendLine("            try {");
+
+        // MSBuild evaluates a target Condition before DependsOnTargets. When false,
+        // DependsOnTargets and the body are skipped, but BeforeTargets/AfterTargets
+        // companions are still scheduled. A condition-skipped target is not considered
+        // done, so a later request can execute it if the condition has become true.
+        if (hasCondition) {
+            sb.AppendLine($"                if (!({CompileCondWithFallback(target.Condition, instance)})) {{");
+            if (beforeCompanions.TryGetValue(name, out var skippedBefores)) {
+                foreach (var before in skippedBefores)
+                    sb.AppendLine($"                    await {Method(before)}();");
+            }
+            sb.AppendLine($"                    var skippedStart = Log.TargetStarted({CSharpLiteral(name)});");
+            sb.AppendLine($"                    Log.TargetSkipped({CSharpLiteral(name)}, \"condition was false\");");
+            sb.AppendLine($"                    Log.TargetFinished({CSharpLiteral(name)}, skippedStart);");
+            if (hasAfters) {
+                foreach (var a in afters!)
+                    sb.AppendLine($"                    await {Method(a)}();");
+            }
+            sb.AppendLine("                    return;");
+            sb.AppendLine("                }");
+        }
+
+        // DependsOnTargets are ordered by MSBuild semantics. Do not de-duplicate:
+        // a condition-skipped target is not considered run, so "A;Mutate;A" can
+        // legitimately execute the second A after Mutate changes A's Condition.
+        // Also do not flatten into Task.WhenAll: later targets often consume
+        // item/property mutations from earlier targets (e.g. CoreCompile needs
+        // references populated by ResolveReferences).
         foreach (var (kind, val) in ParseDeps(target.DependsOnTargets)) {
-        if (kind == "literal") {
-                if (literalRunSeen.Add(val))
-                    literalRun.Add(val);
+            if (kind == "literal") {
+                literalRun.Add(val);
             } else {
                 FlushLiteralRun();
                 sb.AppendLine($"            foreach (var dependencyName in ({CompileExpr(val)}).Split(';', StringSplitOptions.RemoveEmptyEntries))");
@@ -4473,32 +4615,18 @@ static partial class Tasks {
 
         // Before-companions (literal X with X.BeforeTargets containing this target) run
         // after DependsOnTargets, but can run as their own static prerequisite batch.
+        // Their own Conditions still gate them (handled inside their emitted methods).
         if (beforeCompanions.TryGetValue(name, out var befores))
             foreach (var before in befores)
-                if (literalRunSeen.Add(before))
-                    literalRun.Add(before);
+                literalRun.Add(before);
         FlushLiteralRun();
 
         // Dependencies are now satisfied. Log the target start immediately before this
         // target's own body/up-to-date check so parent targets don't appear to run while
         // their prerequisites are still executing.
+        sb.AppendLine("            targetExecuted = true;");
         sb.AppendLine($"            var targetStart = Log.TargetStarted({CSharpLiteral(name)});");
-
-        bool hasIncr = !string.IsNullOrEmpty(target.Inputs) && !string.IsNullOrEmpty(target.Outputs);
-        bool hasAfters = afterCompanions.TryGetValue(name, out var afters);
-
-        // Body guarded by Inputs/Outputs incrementality if both are set. After-companions
-        // run regardless of up-to-date skip (matches MSBuild).
-        if (hasIncr) {
-            sb.AppendLine($"            if (!TargetIncrementality.IsUpToDate({CompileExpr(target.Inputs)}, {CompileExpr(target.Outputs)})) {{");
-        }
-        foreach (var child in target.Children) EmitChild(sb, child);
-        if (hasIncr) {
-            sb.AppendLine("            } else {");
-            sb.AppendLine($"                Log.TargetUpToDate({CSharpLiteral(name)});");
-            sb.AppendLine("            }");
-        }
-
+        sb.AppendLine($"            await {coreMethod}();");
         if (hasAfters) {
             sb.AppendLine($"            Log.TargetFinished({CSharpLiteral(name)}, targetStart);");
             sb.AppendLine($"            TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
@@ -4509,6 +4637,26 @@ static partial class Tasks {
         sb.AppendLine("        } catch (Exception ex) {");
         sb.AppendLine($"            AddError({CSharpLiteral(name)}, ex.Message);");
         sb.AppendLine("        }");
+        sb.AppendLine("        } finally {");
+        sb.AppendLine("            if (targetExecuted)");
+        sb.AppendLine($"                TargetRuntime.MarkDone({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
+        sb.AppendLine("            else");
+        sb.AppendLine($"                TargetRuntime.MarkSkipped({CSharpLiteral(name)}, ref {method}State, ref {method}Completion);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine($"    static async ValueTask {coreMethod}() {{");
+        if (hasIncr) {
+            sb.AppendLine($"        if (!TargetIncrementality.IsUpToDate({CSharpLiteral(name)}, {CompileExpr(target.Inputs)}, {CompileExpr(target.Outputs)})) {{");
+        }
+        foreach (var child in target.Children) EmitChild(sb, child);
+        if (hasIncr) {
+            sb.AppendLine("        } else {");
+            sb.AppendLine($"            Log.TargetUpToDate({CSharpLiteral(name)});");
+            sb.AppendLine("        }");
+        }
+        sb.AppendLine("    }");
     }
 
     static IEnumerable<string> ImplicitGeneratedDependencies(string targetName) {
@@ -5038,6 +5186,7 @@ static partial class Tasks {
 
     static readonly HashSet<string> KnownTasks = new(StringComparer.Ordinal) {
         "Message","MakeDir","WriteLinesToFile","Touch","Delete","Copy","Error","Warning",
+        "AllowEmptyTelemetry","ShowPreviewMessage",
         "ConvertToAbsolutePath","RemoveDir","CreateProperty","CreateItem","FindUnderPath","ReadLinesFromFile",
         "Exec","Hash","MSBuildInternalMessage","NetSdkWarning","MSBuild","AssignProjectConfiguration",
         "SetRidAgnosticValueForProjects",
@@ -5050,7 +5199,7 @@ static partial class Tasks {
     };
     static bool ForceLocalTaskImplementation(string name) => name is
         "MSBuildInternalMessage" or "NetSdkWarning" or "MSBuild" or "AssignProjectConfiguration"
-        or "SetRidAgnosticValueForProjects";
+        or "SetRidAgnosticValueForProjects" or "AllowEmptyTelemetry" or "ShowPreviewMessage";
 
     static void EmitTask(StringBuilder sb, ProjectTaskInstance task) {
         var ind = "        ";
@@ -5088,12 +5237,19 @@ static partial class Tasks {
         var openCond = !string.IsNullOrEmpty(task.Condition) ? $"if ({CompileCond(task.Condition, batch)}) " : "";
         sb.AppendLine($"{ind}{openCond}{{");
         if (realTaskMeta is TaskMetadataLoader.TaskMeta realMeta) {
-            EmitTypedTaskInvocation(sb, ind, task, realMeta, batch, itemAccessOverrides);
+            if (CanSkipRealTaskWhenItemListIsEmpty(task, "PackageReferenceItems", "PackageReference", out var skipItemType)) {
+                sb.AppendLine($"{ind}    if ({ItemAccess(skipItemType)}.Count != 0) {{");
+                EmitTypedTaskInvocation(sb, ind + "    ", task, realMeta, batch, itemAccessOverrides);
+                sb.AppendLine($"{ind}    }}");
+            } else {
+                EmitTypedTaskInvocation(sb, ind, task, realMeta, batch, itemAccessOverrides);
+            }
             sb.AppendLine($"{ind}}}");
             if (batch != null) sb.AppendLine($"        }}");
             return;
         }
-        sb.AppendLine($"{ind}    using var taskLog = Log.Task({CSharpLiteral(task.Name)});");
+        if (!SuppressLocalTaskLog(task.Name))
+            sb.AppendLine($"{ind}    using var taskLog = Log.Task({CSharpLiteral(task.Name)});");
 
         // CallTarget: dynamic target invocation via the Targets.Run(string) dispatcher.
         // The Targets parameter is a `;`-separated list which may include $(Prop) refs that
@@ -5133,7 +5289,18 @@ static partial class Tasks {
         if (batch != null) sb.AppendLine($"        }}");
     }
 
+    static bool CanSkipRealTaskWhenItemListIsEmpty(ProjectTaskInstance task, string parameterName, string itemType, out string skipItemType) {
+        skipItemType = itemType;
+        if (!task.Name.Equals("CheckForImplicitPackageReferenceOverrides", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return task.Parameters.TryGetValue(parameterName, out var value)
+            && string.Equals(TryParseDirectItemRef(value), itemType, StringComparison.OrdinalIgnoreCase);
+    }
+
     static int _batchPlanCounter;
+
+    static bool SuppressLocalTaskLog(string name) =>
+        name is "AllowEmptyTelemetry" or "ShowPreviewMessage";
 
     static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
         if (task.Parameters.Count == 0) {
@@ -5520,19 +5687,6 @@ static partial class Tasks {
                 throw new InvalidOperationException($"uncompilable condition (even after ExpandString → \"{expanded}\"): {cond}");
             return compiled;
         }
-    }
-
-    // Returns the logical negation of a bool expression. Avoids `!!` for the common case
-    // where the input already starts with `!` (CondCompiler emits `!string.IsNullOrEmpty(...)`
-    // for `'$(X)' != ''`, and we wrap target Conditions in `if (!cond) return;`). CondCompiler's
-    // output is always self-contained — top-level `!` applies to the whole expression — so
-    // peeling it off is sound.
-    static string NegateBoolExpr(string cond) {
-        cond = cond.TrimStart();
-        if (cond.StartsWith("!") && !cond.StartsWith("!=")) {
-            return cond.Substring(1).TrimStart();
-        }
-        return "!" + cond;
     }
 
     static string CompileExpr(string? expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null) {

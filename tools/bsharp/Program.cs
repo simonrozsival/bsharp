@@ -13,6 +13,7 @@ return Launcher.Run(args);
 static class Launcher {
     const string BackgroundCodegenEnvironmentVariable = "BSHARP_BACKGROUND_CODEGEN";
     const string BackgroundRebuildCommand = "--bsharp-background-rebuild";
+    const string ShapeHashVersion = "bsharp-shape-v3-package-task-empty-guard";
 
     public static int Run(string[] args) {
         if (args.Length > 0 && string.Equals(args[0], BackgroundRebuildCommand, StringComparison.Ordinal))
@@ -24,6 +25,7 @@ static class Launcher {
         string? projectArg = null;
         var forwardArgs = new List<string>();
         var globalProps = new List<KeyValuePair<string, string>>();
+        var requestedTargets = new List<string>();
         for (int i = 0; i < args.Length; i++) {
             var a = args[i];
             switch (a) {
@@ -44,11 +46,21 @@ static class Launcher {
                 case "--property" or "-p":
                     if (i + 1 < args.Length) TryAddProp(globalProps, args[++i]);
                     break;
+                case "-t" or "--target" or "-target":
+                    forwardArgs.Add(a);
+                    if (i + 1 < args.Length) {
+                        var targets = args[++i];
+                        AddTargets(requestedTargets, targets);
+                        forwardArgs.Add(targets);
+                    }
+                    break;
                 default:
                     if (a.StartsWith("-p:", StringComparison.Ordinal) || a.StartsWith("/p:", StringComparison.Ordinal)) {
                         TryAddProp(globalProps, a.Substring(3));
                     } else if (a.StartsWith("--property:", StringComparison.Ordinal)) {
                         TryAddProp(globalProps, a.Substring("--property:".Length));
+                    } else if (TryAddTargetsFromArg(requestedTargets, a)) {
+                        forwardArgs.Add(a);
                     } else if (a.EndsWith(".csproj", StringComparison.Ordinal) && projectArg == null) {
                         projectArg = a;
                         forwardArgs.Add(a);
@@ -58,6 +70,8 @@ static class Launcher {
                     break;
             }
         }
+        ApplyBsharpDefaultGlobalProperties(globalProps);
+
         // Sort for hash stability.
         globalProps.Sort((x, y) => string.Compare(x.Key, y.Key, StringComparison.OrdinalIgnoreCase));
 
@@ -102,14 +116,14 @@ static class Launcher {
             }
         }
 
-        string currentHash = ComputeShapeHash(projectPath, globalProps);
+        string currentHash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
 
         // Cache hit?
         if (!noCache && File.Exists(hashFile) && File.Exists(binFile)) {
             // shape.hash is "<hex>\n<mode>\n"; only the first line is the content hash.
             var cached = File.ReadAllText(hashFile).Split('\n', 2)[0].Trim();
             if (string.Equals(cached, currentHash, StringComparison.Ordinal)) {
-                return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, hashFile);
+                return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, requestedTargets, hashFile);
             }
         }
 
@@ -117,15 +131,15 @@ static class Launcher {
             var restoreRc = RestoreProject(projectPath, globalProps, "restoring current project assets after cache miss");
             if (restoreRc != 0)
                 return restoreRc;
-            currentHash = ComputeShapeHash(projectPath, globalProps);
+            currentHash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
         }
 
         // Cache miss — regenerate.
         if (backgroundCodegen && !noCache) {
-            StartBackgroundRebuildIfNeeded(projectPath, projectCacheRoot, bsharpDir, currentHash, globalProps);
+            StartBackgroundRebuildIfNeeded(projectPath, projectCacheRoot, bsharpDir, currentHash, globalProps, requestedTargets);
             var fallbackRc = RunDotnetFallback(command, projectPath, forwardArgs, globalProps);
             if (fallbackRc == 0 && File.Exists(hashFile))
-                RefreshShapeHash(projectPath, globalProps, hashFile);
+                RefreshShapeHash(projectPath, globalProps, requestedTargets, hashFile);
             return fallbackRc;
         }
 
@@ -135,14 +149,14 @@ static class Launcher {
             && string.IsNullOrEmpty(frameworkInfo.TargetFramework)
             && frameworkInfo.TargetFrameworks.Length > 0)
         {
-            rebuildRc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
+            rebuildRc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, requestedTargets, frameworkInfo.TargetFrameworks);
         }
         else
         {
-            rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
+            rebuildRc = Rebuild(projectPath, bsharpDir, currentHash, globalProps, requestedTargets);
         }
         if (rebuildRc != 0) return rebuildRc;
-        return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, hashFile);
+        return ExecBuildBinaryAndRefreshShapeHash(binFile, forwardArgs, projectPath, globalProps, requestedTargets, hashFile);
     }
 
     static bool IsBackgroundCodegenEnabledByEnvironment() {
@@ -279,10 +293,47 @@ static class Launcher {
             : RunProcess(codegenTool.Path, args);
     }
 
+    static void ApplyBsharpDefaultGlobalProperties(List<KeyValuePair<string, string>> props) {
+        AddDefaultGlobalProp(props, "SuppressNETCoreSdkPreviewMessage", "true");
+        AddDefaultGlobalProp(props, "EnableSourceControlManagerQueries", "false");
+        AddDefaultGlobalProp(props, "EnableSourceLink", "false");
+    }
+
+    static void AddDefaultGlobalProp(List<KeyValuePair<string, string>> props, string name, string value) {
+        if (!TryGetGlobalProp(props, name, out _))
+            props.Add(new KeyValuePair<string, string>(name, value));
+    }
+
     static void TryAddProp(List<KeyValuePair<string, string>> dest, string kv) {
         var eq = kv.IndexOf('=');
         if (eq <= 0) return; // ignore malformed
         dest.Add(new KeyValuePair<string, string>(kv.Substring(0, eq), kv.Substring(eq + 1)));
+    }
+
+    static bool TryAddTargetsFromArg(List<string> dest, string arg) {
+        if (arg.StartsWith("-t:", StringComparison.Ordinal) || arg.StartsWith("/t:", StringComparison.Ordinal)) {
+            AddTargets(dest, arg[3..]);
+            return true;
+        }
+        if (arg.StartsWith("--target:", StringComparison.Ordinal)) {
+            AddTargets(dest, arg["--target:".Length..]);
+            return true;
+        }
+        if (arg.StartsWith("-target:", StringComparison.Ordinal)) {
+            AddTargets(dest, arg["-target:".Length..]);
+            return true;
+        }
+        return false;
+    }
+
+    static void AddTargets(List<string> dest, string targets) {
+        foreach (var target in targets.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)) {
+            var trimmed = target.Trim();
+            if (trimmed.Length == 0)
+                continue;
+            if (!dest.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+                dest.Add(trimmed);
+        }
     }
 
     static bool TryGetGlobalProp(List<KeyValuePair<string, string>> props, string name, out string value) {
@@ -329,6 +380,7 @@ static class Launcher {
         string bsharpRoot,
         string currentHash,
         List<KeyValuePair<string, string>> globalProps,
+        IReadOnlyList<string> requestedTargets,
         string[] targetFrameworks)
     {
         Console.Error.WriteLine($"bsharp: regenerating outer dispatcher for {Path.GetFileName(projectPath)} ({string.Join(", ", targetFrameworks)})...");
@@ -342,14 +394,14 @@ static class Launcher {
             innerProps.Sort((x, y) => string.Compare(x.Key, y.Key, StringComparison.OrdinalIgnoreCase));
 
             var innerDir = Path.Combine(bsharpRoot, "inner", SanitizePathSegment(targetFramework));
-            var innerHash = ComputeShapeHash(projectPath, innerProps);
+            var innerHash = ComputeShapeHash(projectPath, innerProps, requestedTargets);
             var innerHashFile = Path.Combine(innerDir, "shape.hash");
             var innerBin = Path.Combine(innerDir, "build");
             if (!File.Exists(innerHashFile)
                 || !File.Exists(innerBin)
                 || !string.Equals(File.ReadAllText(innerHashFile).Split('\n', 2)[0].Trim(), innerHash, StringComparison.Ordinal))
             {
-                var rc = Rebuild(projectPath, innerDir, innerHash, innerProps);
+                var rc = Rebuild(projectPath, innerDir, innerHash, innerProps, requestedTargets);
                 if (rc != 0) return rc;
             }
             innerBuilds.Add(innerBin);
@@ -369,7 +421,8 @@ static class Launcher {
         string projectCacheRoot,
         string bsharpDir,
         string currentHash,
-        List<KeyValuePair<string, string>> globalProps)
+        List<KeyValuePair<string, string>> globalProps,
+        IReadOnlyList<string> requestedTargets)
     {
         Directory.CreateDirectory(bsharpDir);
         var lockFile = Path.Combine(bsharpDir, "background-rebuild.lock");
@@ -398,6 +451,10 @@ static class Launcher {
         foreach (var p in globalProps) {
             workerArgs.Add("-p");
             workerArgs.Add($"{p.Key}={p.Value}");
+        }
+        if (requestedTargets.Count > 0) {
+            workerArgs.Add("--target");
+            workerArgs.Add(string.Join(';', requestedTargets));
         }
 
         try {
@@ -507,7 +564,8 @@ static class Launcher {
     static IEnumerable<string> FilterDotnetFallbackArgs(List<string> forwardArgs, string projectPath) {
         foreach (var arg in forwardArgs) {
             if (string.Equals(arg, "build", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(arg, "run", StringComparison.OrdinalIgnoreCase))
+                string.Equals(arg, "run", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(arg, "--fast-noop", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (arg.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) &&
@@ -525,6 +583,7 @@ static class Launcher {
         string? currentHash = null;
         string? lockFile = null;
         var globalProps = new List<KeyValuePair<string, string>>();
+        var requestedTargets = new List<string>();
 
         for (var i = 0; i < args.Length; i++) {
             switch (args[i]) {
@@ -546,12 +605,18 @@ static class Launcher {
                 case "--property" or "-p" when i + 1 < args.Length:
                     TryAddProp(globalProps, args[++i]);
                     break;
+                case "-t" or "--target" or "-target" when i + 1 < args.Length:
+                    AddTargets(requestedTargets, args[++i]);
+                    break;
                 default:
                     if (args[i].StartsWith("-p:", StringComparison.Ordinal) || args[i].StartsWith("/p:", StringComparison.Ordinal))
                         TryAddProp(globalProps, args[i][3..]);
+                    else
+                        TryAddTargetsFromArg(requestedTargets, args[i]);
                     break;
             }
         }
+        ApplyBsharpDefaultGlobalProperties(globalProps);
 
         if (projectPath == null || projectCacheRoot == null || bsharpDir == null || currentHash == null || lockFile == null) {
             Console.Error.WriteLine("bsharp: background rebuild worker is missing required arguments.");
@@ -566,24 +631,24 @@ static class Launcher {
                 && string.IsNullOrEmpty(frameworkInfo.TargetFramework)
                 && frameworkInfo.TargetFrameworks.Length > 0)
             {
-                rc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, frameworkInfo.TargetFrameworks);
+                rc = RebuildOuter(projectPath, projectCacheRoot, currentHash, globalProps, requestedTargets, frameworkInfo.TargetFrameworks);
                 hashFile = Path.Combine(projectCacheRoot, "shape.hash");
             }
             else
             {
-                rc = Rebuild(projectPath, bsharpDir, currentHash, globalProps);
+                rc = Rebuild(projectPath, bsharpDir, currentHash, globalProps, requestedTargets);
                 hashFile = Path.Combine(bsharpDir, "shape.hash");
             }
 
             if (rc == 0 && File.Exists(hashFile))
-                RefreshShapeHash(projectPath, globalProps, hashFile);
+                RefreshShapeHash(projectPath, globalProps, requestedTargets, hashFile);
             return rc;
         } finally {
             TryDelete(lockFile);
         }
     }
 
-    static int Rebuild(string projectPath, string bsharpDir, string currentHash, List<KeyValuePair<string, string>> globalProps) {
+    static int Rebuild(string projectPath, string bsharpDir, string currentHash, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
         Console.Error.WriteLine($"bsharp: regenerating build binary for {Path.GetFileName(projectPath)}...");
 
         Directory.CreateDirectory(bsharpDir);
@@ -599,6 +664,10 @@ static class Launcher {
         Console.Error.WriteLine($"bsharp: codegen ({Path.GetFileName(codegenTool.Path)})...");
         var codegenSw = Stopwatch.StartNew();
         var codegenArgs = new List<string> { "--project", projectPath, "--out-dir", srcDir };
+        if (requestedTargets.Count > 0) {
+            codegenArgs.Add("--targets");
+            codegenArgs.Add(string.Join(';', requestedTargets));
+        }
         foreach (var p in globalProps) {
             codegenArgs.Add("-p");
             codegenArgs.Add($"{p.Key}={p.Value}");
@@ -866,7 +935,7 @@ static class Launcher {
         return candidates.Count == 1 ? candidates[0] : candidates.FirstOrDefault();
     }
 
-    static string ComputeShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps) {
+    static string ComputeShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
         var projectDir = Path.GetDirectoryName(projectPath)!;
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -880,6 +949,8 @@ static class Launcher {
             if (!File.Exists(path)) return;
             Feed(label + ":" + Path.GetFileName(path), File.ReadAllBytes(path));
         }
+
+        Feed("bsharp-shape-version", Encoding.UTF8.GetBytes(ShapeHashVersion));
 
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -931,6 +1002,8 @@ static class Launcher {
         // Global properties from -p:X=Y. Sorted by key (case-insensitive) so order is stable.
         foreach (var kv in globalProps)
             Feed("prop", Encoding.UTF8.GetBytes($"{kv.Key}={kv.Value}"));
+        foreach (var target in requestedTargets)
+            Feed("target", Encoding.UTF8.GetBytes(target));
 
         ms.Position = 0;
         var hash = sha.ComputeHash(ms);
@@ -974,17 +1047,17 @@ static class Launcher {
         return proc.ExitCode;
     }
 
-    static int ExecBuildBinaryAndRefreshShapeHash(string binFile, List<string> forwardArgs, string projectPath, List<KeyValuePair<string, string>> globalProps, string hashFile) {
+    static int ExecBuildBinaryAndRefreshShapeHash(string binFile, List<string> forwardArgs, string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets, string hashFile) {
         var rc = ExecBuildBinary(binFile, forwardArgs);
         if (rc == 0 && File.Exists(hashFile))
-            RefreshShapeHash(projectPath, globalProps, hashFile);
+            RefreshShapeHash(projectPath, globalProps, requestedTargets, hashFile);
         return rc;
     }
 
-    static void RefreshShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, string hashFile) {
+    static void RefreshShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets, string hashFile) {
         var lines = File.ReadAllText(hashFile).Split('\n');
         var mode = lines.Length > 1 ? lines[1] : "";
-        var hash = ComputeShapeHash(projectPath, globalProps);
+        var hash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
         File.WriteAllText(hashFile, hash + "\n" + mode + "\n");
     }
 }

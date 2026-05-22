@@ -92,9 +92,9 @@ Observed `fixtures/console-net11` warm no-op numbers:
 
 | Scenario | Time | What it measures |
 |---|---:|---|
-| Generated host cache-hit build | 0.4-0.8 ms | `.bsharp/build` internal build summary: fast no-op path, no SDK tasks |
+| Generated host cache-hit build | 0.4-0.8 ms | `.bsharp/build --fast-noop` internal build summary: fast no-op path, no SDK tasks |
 | `bsharp` launcher cache-hit wall time | ~115 ms | Shell `time $BSHARP`: launcher startup/hash check + `Process.Start(.bsharp/build)` |
-| Cumulative tasks on warm no-op | 0.00 ms | Fast path returns before restore/build target execution |
+| Cumulative tasks on warm no-op fast path | 0.00 ms | `--fast-noop` returns before restore/build target execution; omit it to inspect full target execution at any verbosity |
 
 The sub-millisecond number is the generated host's own work. The larger shell wall
 time is dominated by launching `bsharp` and then launching the project-local
@@ -104,14 +104,26 @@ time is dominated by launching `bsharp` and then launching the project-local
 
 | Command | Behavior |
 |---|---|
-| `bsharp build` | Ensure `.bsharp/build` is current, then run `build` |
+| `bsharp build` | Ensure `.bsharp/build` is current, then run `build` (which runs `Restore` first, matching `dotnet build`) |
+| `bsharp build --no-restore` | Like `bsharp build`, but skip the `Restore` target (matches `dotnet build --no-restore`) |
+| `bsharp build --fast-noop` | Opt in to the timestamp shortcut that returns before restore/build target execution when outputs are already current |
 | `bsharp run` | Ensure `.bsharp/build` is current, then run `run` |
 | `bsharp build --no-cache` | Force regeneration and republish |
 | `bsharp build --background-codegen` | Experimental: start cache regeneration in the background on a miss and use `dotnet build` for the current invocation |
 | `bsharp audit` | Evaluate the project and print a JSON subset/shape report without generating a build host |
 | `bsharp build path/to/project.csproj` | Build an explicit project |
+| `bsharp build "-t:Clean;Build"` | Run an explicit target list; `InitialTargets` still run first and the target list participates in the cache key |
 | `bsharp build -p:Configuration=Release` | Add a closed-world global property override to the cache key |
 | `bsharp build -v quiet` | Set generated-host verbosity (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) |
+
+For low-noise closed-world builds, the launcher supplies these global-property
+defaults unless the user explicitly overrides them with `-p`:
+
+| Default | Why |
+|---|---|
+| `SuppressNETCoreSdkPreviewMessage=true` | Skip preview-SDK banner work (`ShowPreviewMessage`) |
+| `EnableSourceControlManagerQueries=false` | Skip repository discovery and untracked-file queries (`LocateRepository`, `GetUntrackedFiles`) |
+| `EnableSourceLink=false` | Skip SourceLink file/url generation when source-control metadata is disabled |
 
 Unknown flags are forwarded to the generated per-project binary.
 
@@ -193,6 +205,8 @@ any of these change:
 - `packages.lock.json`
 - `obj/project.assets.json` content; if missing and restore is allowed, the launcher first tries the cached generated host's `restore` command and only falls back to `dotnet restore`, so deleting `obj/` alone does not force host regeneration when dependency assets are unchanged
 - `-p:X=Y` global properties passed to `bsharp`
+- the launcher's `ShapeHashVersion`, which is bumped when generated-host
+  semantics change and stale `.bsharp/build` binaries must be regenerated
 
 Global-property cache variants are isolated. A build without `-p` uses
 `.bsharp/build`; a build with non-`TargetFramework` global properties uses

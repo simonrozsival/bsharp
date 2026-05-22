@@ -3,7 +3,7 @@ namespace Bsharp.Tests;
 [TestClass]
 public sealed class ConsoleEndToEndTests
 {
-    private const string ConsoleFixtureOutput = "Hello, B#!";
+    private const string ConsoleFixtureOutput = "Hello 9";
 
     [ClassInitialize]
     public static void Initialize(TestContext _)
@@ -132,6 +132,34 @@ public sealed class ConsoleEndToEndTests
             defaultWarm.StandardError.Contains("regenerating", StringComparison.OrdinalIgnoreCase),
             $"Default cache-hit unexpectedly regenerated after Release variant:\n{defaultWarm.StandardError}");
         Assert.AreEqual(defaultHash, ReadShapeHash(project), "Default cache hash should be isolated from global-property variants.");
+    }
+
+    [TestMethod]
+    public void FastNoOpIsExplicitAndDoesNotPersistAcrossInvocations()
+    {
+        using var project = TempProject.CopyFixture("console-net11", "console-net11.csproj");
+
+        RunBsharp(project, "build", "--no-restore", "-v:quiet")
+            .AssertSuccess("create the generated host");
+        StringAssert.Contains(
+            ReadGeneratedProgramText(project),
+            "if (I.PackageReference.Count != 0)",
+            "Projects without PackageReference items should not pay task-server cost for CheckForImplicitPackageReferenceOverrides.");
+
+        var fullGraph = RunBsharp(project, "run", "--no-restore", "-v:n");
+        fullGraph.AssertSuccess("run without the fast no-op shortcut");
+        AssertCumulativeTasksGreaterThanZero(fullGraph, "full graph should execute SDK tasks when --fast-noop is omitted");
+        StringAssert.Contains(fullGraph.StandardOutput, ConsoleFixtureOutput);
+
+        var fastNoOp = RunBsharp(project, "run", "--no-restore", "--fast-noop", "-v:n");
+        fastNoOp.AssertSuccess("run with explicit --fast-noop");
+        AssertCumulativeTasksEqualToZero(fastNoOp, "--fast-noop should return before target execution on an up-to-date build");
+        StringAssert.Contains(fastNoOp.StandardOutput, ConsoleFixtureOutput);
+
+        var afterFastNoOp = RunBsharp(project, "run", "--no-restore", "-v:n");
+        afterFastNoOp.AssertSuccess("run again without --fast-noop");
+        AssertCumulativeTasksGreaterThanZero(afterFastNoOp, "--fast-noop must not persist across invocations");
+        StringAssert.Contains(afterFastNoOp.StandardOutput, ConsoleFixtureOutput);
     }
 
     [TestMethod]
@@ -318,4 +346,32 @@ public sealed class ConsoleEndToEndTests
 
     private static string ReadShapeHash(TempProject project) =>
         File.ReadAllText(Path.Combine(project.DirectoryPath, ".bsharp", "shape.hash"));
+
+    private static string ReadGeneratedProgramText(TempProject project)
+    {
+        var candidates = Directory.GetFiles(Path.Combine(project.DirectoryPath, ".bsharp"), "Program.cs", SearchOption.AllDirectories);
+        Assert.IsTrue(candidates.Length > 0, "Expected generated Program.cs under .bsharp.");
+        return File.ReadAllText(candidates.OrderBy(path => path, StringComparer.Ordinal).First());
+    }
+
+    private static void AssertCumulativeTasksEqualToZero(CommandResult result, string message) =>
+        Assert.AreEqual(0, ReadCumulativeTasksMilliseconds(result), message + "\n\nstdout:\n" + result.StandardOutput);
+
+    private static void AssertCumulativeTasksGreaterThanZero(CommandResult result, string message) =>
+        Assert.IsTrue(ReadCumulativeTasksMilliseconds(result) > 0, message + "\n\nstdout:\n" + result.StandardOutput);
+
+    private static double ReadCumulativeTasksMilliseconds(CommandResult result)
+    {
+        const string prefix = "cumulative tasks:";
+        var line = result.StandardOutput
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(l => l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        Assert.IsNotNull(line, "Expected generated host output to contain cumulative task timing.\n\nstdout:\n" + result.StandardOutput);
+
+        var valueText = line[prefix.Length..].Trim();
+        Assert.IsTrue(valueText.EndsWith("ms", StringComparison.OrdinalIgnoreCase), "Unexpected cumulative task timing format: " + line);
+        valueText = valueText[..^2].Trim();
+        Assert.IsTrue(double.TryParse(valueText, System.Globalization.CultureInfo.InvariantCulture, out var value), "Could not parse cumulative task timing: " + line);
+        return value;
+    }
 }

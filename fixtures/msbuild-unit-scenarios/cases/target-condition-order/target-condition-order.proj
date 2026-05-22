@@ -1,0 +1,31 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <RunMaybe>false</RunMaybe>
+    <OrderFile>$(MSBuildProjectDirectory)/order.txt</OrderFile>
+  </PropertyGroup>
+
+  <Target Name="Build" DependsOnTargets="Maybe;Flip;Maybe" />
+
+  <Target Name="Maybe" Condition="'$(RunMaybe)' == 'true'" DependsOnTargets="MaybeDependency">
+    <WriteLinesToFile File="$(OrderFile)" Lines="body" Overwrite="false" />
+  </Target>
+
+  <Target Name="MaybeDependency">
+    <WriteLinesToFile File="$(OrderFile)" Lines="dep" Overwrite="false" />
+  </Target>
+
+  <Target Name="BeforeMaybe" BeforeTargets="Maybe">
+    <WriteLinesToFile File="$(OrderFile)" Lines="before" Overwrite="false" />
+  </Target>
+
+  <Target Name="AfterMaybe" AfterTargets="Maybe">
+    <WriteLinesToFile File="$(OrderFile)" Lines="after" Overwrite="false" />
+  </Target>
+
+  <Target Name="Flip">
+    <PropertyGroup>
+      <RunMaybe>true</RunMaybe>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(OrderFile)" Lines="flip" Overwrite="false" />
+  </Target>
+</Project>

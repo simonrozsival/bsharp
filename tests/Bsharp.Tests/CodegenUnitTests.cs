@@ -26,6 +26,65 @@ public sealed class CodegenUnitTests
     }
 
     [TestMethod]
+    public void TargetConditionMatchesMSBuildOrdering()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-condition-order", "target-condition-order.proj");
+        var generated = project.Generate();
+
+        AssertInOrder(
+            generated.ProgramText,
+            "public static async ValueTask T_003_Maybe()",
+            "if (!(string.Equals(P.RunMaybe, \"true\", StringComparison.OrdinalIgnoreCase)))",
+            "await T_002_BeforeMaybe();",
+            "Log.TargetSkipped(\"Maybe\", \"condition was false\");",
+            "await T_006_AfterMaybe();",
+            "await T_001_MaybeDependency();",
+            "await T_002_BeforeMaybe();",
+            "await T_003_Maybe_Core();");
+
+        AssertInOrder(
+            generated.ProgramText,
+            "public static async ValueTask T_005_Build()",
+            "await T_003_Maybe();",
+            "await T_004_Flip();",
+            "await T_003_Maybe();");
+
+        StringAssert.Contains(generated.ProgramText, "TargetRuntime.MarkSkipped(\"Maybe\"");
+    }
+
+    [TestMethod]
+    public void InitialDefaultAndExplicitTargetsShapeGeneratedBuildPlan()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-entry-order", "target-entry-order.proj");
+
+        var defaultGenerated = project.Generate(entryTarget: null);
+        StringAssert.Contains(defaultGenerated.Result.StandardOutput, "Initial targets: InitA;InitB");
+        StringAssert.Contains(defaultGenerated.Result.StandardOutput, "Default targets: DefaultA;DefaultB");
+        StringAssert.Contains(defaultGenerated.ProgramText, "requestedTargets is { Count: > 0 }");
+        StringAssert.Contains(defaultGenerated.ProgramText, "new[] { \"InitA\", \"InitB\", \"DefaultA\", \"DefaultB\" }");
+        Assert.IsFalse(defaultGenerated.ProgramText.Contains("ExplicitA", StringComparison.Ordinal),
+            "Default generation should not include unrelated explicit-only targets.");
+
+        var explicitGenerated = project.Generate(entryTarget: null, "--targets", "ExplicitA;ExplicitB");
+        StringAssert.Contains(explicitGenerated.Result.StandardOutput, "Requested targets: ExplicitA;ExplicitB");
+        StringAssert.Contains(explicitGenerated.ProgramText, "new[] { \"InitA\", \"InitB\" }.Concat(requestedTargets).ToArray()");
+        StringAssert.Contains(explicitGenerated.ProgramText, "case \"explicita\":");
+        StringAssert.Contains(explicitGenerated.ProgramText, "case \"explicitb\":");
+    }
+
+    [TestMethod]
+    public void FastNoOpShortcutRequiresOptIn()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-entry-order", "target-entry-order.proj");
+        var generated = project.Generate(entryTarget: null);
+
+        StringAssert.Contains(generated.ProgramText, "bool fastNoOpRequested = false;");
+        StringAssert.Contains(generated.ProgramText, "else if (a == \"--fast-noop\") fastNoOpRequested = true;");
+        StringAssert.Contains(generated.ProgramText, "var allowFastNoOp = fastNoOpRequested");
+        StringAssert.Contains(generated.ProgramText, "var fastNoOp = preInitFastNoOp || (allowFastNoOp && FastNoOpBuild(csprojPath));");
+    }
+
+    [TestMethod]
     public void MultiItemIncludePreservesMetadataForTransforms()
     {
         using var project = CodegenUnitProject.FromScenario("multi-item-include-metadata", "multi-item-include-metadata.proj");

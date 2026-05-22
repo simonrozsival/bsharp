@@ -1,0 +1,8 @@
+<Project InitialTargets="InitA;InitB" DefaultTargets="DefaultA;DefaultB">
+  <Target Name="InitA" />
+  <Target Name="InitB" />
+  <Target Name="DefaultA" />
+  <Target Name="DefaultB" />
+  <Target Name="ExplicitA" />
+  <Target Name="ExplicitB" />
+</Project>
