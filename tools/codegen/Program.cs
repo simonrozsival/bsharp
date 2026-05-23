@@ -2164,7 +2164,9 @@ if (!noBuild) {
         // hand-write a minimal runtimeconfig.json so the binary is actually runnable.
         // For HelloConsole this is sufficient; projects with framework references beyond
         // Microsoft.NETCore.App need a richer config.
-        try {
+        if (!string.Equals(P.UseMaui, "true", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrEmpty(P.TargetPlatformIdentifier)) {
+            try {
             // Normalize path separators — some baked SDK properties use literal `\`.
             // P.TargetPath is the expected location; if Csc wrote to a sibling location
             // with `\` in the path, we look there too and use whichever exists.
@@ -2240,8 +2242,9 @@ if (!noBuild) {
                     }
                 }
             }
-        } catch (Exception ex) {
-            Console.Error.WriteLine($"bsharp: post-build runtimeconfig/copy step failed: {ex.Message}");
+            } catch (Exception ex) {
+                Console.Error.WriteLine($"bsharp: post-build runtimeconfig/copy step failed: {ex.Message}");
+            }
         }
     }
     sw.Stop();
@@ -4339,6 +4342,18 @@ static partial class Tasks {
         sb.AppendLine("        // SDK property defaults and initial items are baked as static field");
         sb.AppendLine("        // initializers in P and I (see those classes). No runtime population needed.");
         sb.AppendLine();
+        foreach (var kv in _props.OrderBy(p => p.Key, StringComparer.Ordinal)) {
+            var value = project.GetPropertyValue(kv.Key) ?? "";
+            if (!value.Contains("@(", StringComparison.Ordinal))
+                continue;
+            try {
+                sb.AppendLine($"        P.Set({CSharpLiteral(kv.Key)}, {CompileExpr(value)});");
+            } catch {
+                // Leave uncommon item-list property expressions baked as-is rather than
+                // failing codegen; target execution will surface unsupported semantics if used.
+            }
+        }
+        sb.AppendLine();
         if (!ShouldBakeMauiEvaluatedGlobs(project)) {
             sb.AppendLine("        // Default Compile glob (EnableDefaultCompileItems).");
             // Use typed field if available — the only place we'd have used P.Get(string).
@@ -4381,6 +4396,10 @@ static partial class Tasks {
         while (reader.Read()) {
             if (reader.NodeType != XmlNodeType.Element || !reader.LocalName.Equals("PropertyGroup", StringComparison.Ordinal))
                 continue;
+            if (!string.IsNullOrEmpty(reader.GetAttribute("Condition"))) {
+                reader.Skip();
+                continue;
+            }
 
             var propertyGroupDepth = reader.Depth;
             if (reader.IsEmptyElement)
@@ -4392,6 +4411,10 @@ static partial class Tasks {
 
                 if (reader.NodeType != XmlNodeType.Element || reader.Depth != propertyGroupDepth + 1)
                     continue;
+                if (!string.IsNullOrEmpty(reader.GetAttribute("Condition"))) {
+                    reader.Skip();
+                    continue;
+                }
 
                 var name = reader.LocalName;
                 var value = reader.IsEmptyElement ? "" : reader.ReadElementContentAsString();
