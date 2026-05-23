@@ -948,10 +948,15 @@ static class TaskServer {
         return spec;
     }
     static (string Path, byte[] Content, DateTime TimestampUtc)? CaptureTimestampGuard(TaskInvocation req, TaskDescriptor desc) {
-        var path = desc.ShortName switch { "WriteCodeFragment" => req.GetString("OutputFile"), "GenerateMSBuildEditorConfig" => req.GetString("File"), _ => "" };
+        var path = desc.ShortName switch {
+            "WriteCodeFragment" => req.GetString("OutputFile"),
+            "GenerateMSBuildEditorConfig" => FirstNonEmpty(req.GetString("FileName"), req.GetString("File")),
+            _ => ""
+        };
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
         return (path, File.ReadAllBytes(path), File.GetLastWriteTimeUtc(path));
     }
+    static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(value => !string.IsNullOrEmpty(value)) ?? "";
     static void RestoreTimestampIfContentUnchanged((string Path, byte[] Content, DateTime TimestampUtc)? guard) {
         if (guard is not { } g || !File.Exists(g.Path)) return;
         var current = File.ReadAllBytes(g.Path);
@@ -2081,18 +2086,25 @@ bool noBuild = false;
 bool noRestore = false;
 bool fastNoOpRequested = false;
 string? csprojArg = null;
+string? targetResultPath = null;
 var requestedTargets = new List<string>();
+var runtimeGlobalProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++) {
     var a = args[i];
     if (a == "build" || a == "run" || a == "restore") command = a;
     else if (a == "--no-build") noBuild = true;
     else if (a == "--no-restore") noRestore = true;
     else if (a == "--fast-noop") fastNoOpRequested = true;
+    else if (a == "--bsharp-target-result" && i + 1 < args.Length) targetResultPath = args[++i];
     else if ((a == "-t" || a == "--target" || a == "-target") && i + 1 < args.Length) AddTargets(requestedTargets, args[++i]);
     else if (a.StartsWith("-t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
     else if (a.StartsWith("/t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
     else if (a.StartsWith("--target:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(9));
     else if (a.StartsWith("-target:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(8));
+    else if ((a == "-p" || a == "/p" || a == "--property") && i + 1 < args.Length) AddGlobalProperty(runtimeGlobalProperties, args[++i]);
+    else if (a.StartsWith("-p:", StringComparison.Ordinal)) AddGlobalProperty(runtimeGlobalProperties, a.Substring(3));
+    else if (a.StartsWith("/p:", StringComparison.Ordinal)) AddGlobalProperty(runtimeGlobalProperties, a.Substring(3));
+    else if (a.StartsWith("--property:", StringComparison.Ordinal)) AddGlobalProperty(runtimeGlobalProperties, a.Substring(11));
     else if ((a == "-v" || a == "--verbosity") && i + 1 < args.Length) Log.Level = Log.Parse(args[++i]);
     else if (a.StartsWith("-v:", StringComparison.Ordinal)) Log.Level = Log.Parse(a.Substring(3));
     else if (a.StartsWith("--verbosity:", StringComparison.Ordinal)) Log.Level = Log.Parse(a.Substring(12));
@@ -2110,6 +2122,8 @@ var preInitFastNoOp = allowFastNoOp && FastNoOpBuildBeforePopulate(csprojPath);
 if (!preInitFastNoOp) {
     try {
         InitialState.Populate(csprojPath);
+        foreach (var kv in runtimeGlobalProperties)
+            P.Set(kv.Key, kv.Value);
     } catch (Exception ex) {
         Console.Error.WriteLine($"FAIL during init: {ex.GetType().Name}: {ex.Message}");
         if (Environment.GetEnvironmentVariable("BSHARP_TRACE") == "1") Console.Error.WriteLine(ex.StackTrace);
@@ -2142,6 +2156,8 @@ if (!noBuild) {
                 return restoreRc;
         }
         Targets.Build(requestedTargets.Count > 0 ? requestedTargets : null).GetAwaiter().GetResult();
+        if (targetResultPath is not null)
+            WriteTargetResultFile(targetResultPath, requestedTargets);
 
         // Post-build fallback: if GenerateBuildRuntimeConfigurationFiles failed (it needs
         // project.assets.json from a NuGet restore which we skip) and we have a built dll,
@@ -2300,6 +2316,35 @@ static void AddTargets(List<string> targets, string value) {
             targets.Add(trimmed);
     }
 }
+
+static void AddGlobalProperty(Dictionary<string, string> properties, string value) {
+    foreach (var assignment in value.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)) {
+        var trimmed = assignment.Trim();
+        var equals = trimmed.IndexOf('=');
+        if (equals <= 0)
+            continue;
+        properties[trimmed.Substring(0, equals)] = trimmed.Substring(equals + 1);
+    }
+}
+
+static void WriteTargetResultFile(string path, IReadOnlyList<string> targets) {
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+    using var writer = new StreamWriter(path, false, new System.Text.UTF8Encoding(false));
+    writer.WriteLine("#BSHARP_TARGET_RESULT 1");
+    foreach (var target in targets) {
+        writer.WriteLine("target " + B64(target));
+        foreach (var item in Targets.GetReturns(target)) {
+            writer.WriteLine("item " + B64(item.Identity));
+            if (item.MetadataOrNull is not null) {
+                foreach (var kv in item.MetadataOrNull)
+                    writer.WriteLine("metadata " + B64(kv.Key) + " " + B64(kv.Value));
+            }
+            writer.WriteLine("end");
+        }
+    }
+}
+
+static string B64(string value) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value ?? ""));
 
 static int RunRestore(string csprojPath) {
     var errorStart = Targets.Errors.Count;
@@ -2760,7 +2805,7 @@ static partial class TaskRunner {
     static (string Path, byte[] Content, DateTime TimestampUtc)? CaptureTimestampGuard(TaskInstance task) {
         var path = task.Desc.ShortName switch {
             "WriteCodeFragment" => task.Invocation.GetString("OutputFile"),
-            "GenerateMSBuildEditorConfig" => task.Invocation.GetString("File"),
+            "GenerateMSBuildEditorConfig" => FirstNonEmpty(task.Invocation.GetString("FileName"), task.Invocation.GetString("File")),
             _ => "",
         };
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -2775,6 +2820,8 @@ static partial class TaskRunner {
         if (current.AsSpan().SequenceEqual(g.Content))
             File.SetLastWriteTimeUtc(g.Path, g.TimestampUtc);
     }
+
+    static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(value => !string.IsNullOrEmpty(value)) ?? "";
 
     static class TaskDiagnostics {
         static readonly object Sync = new();
@@ -2955,6 +3002,17 @@ static class ItemSerde {
             specs.Add(spec);
         }
         return specs.ToArray();
+    }
+    public static List<Item> CloneItems(IEnumerable<Item> items) {
+        var clones = new List<Item>();
+        foreach (var item in items)
+            clones.Add(CloneItem(item));
+        return clones;
+    }
+    public static Item CloneItem(Item item) {
+        var clone = new Item(item.Identity);
+        item.CopyMetadataTo(clone);
+        return clone;
     }
     public static Bsharp.Generated.TaskModel.ItemSpec[] SpecsFromScalar(string semicolonList) {
         if (string.IsNullOrEmpty(semicolonList)) return Array.Empty<Bsharp.Generated.TaskModel.ItemSpec>();
@@ -3890,32 +3948,20 @@ static partial class Tasks {
             throw new InvalidOperationException($"<Exec> failed ({proc.ExitCode}): {command}");
     }
 
-    // Hash: XxHash64 over the items list (joined with NUL). Used for incrementality
-    // fingerprints — non-cryptographic is fine here, the hash only needs to be stable
-    // across invocations of the same generated binary.
+    // Matches Microsoft.Build.Tasks.Hash because its output participates in SDK
+    // incrementality files such as CoreCompileInputs.cache.
     public static void Hash(ParamList p, OutputList? outputs) {
         var ignoreCase = (p.GetValueOrDefault("IgnoreCase") ?? "").Equals("true", StringComparison.OrdinalIgnoreCase);
-        var hasher = new System.IO.Hashing.XxHash64();
-        Span<byte> nul = stackalloc byte[1];
+        using var hasher = System.Security.Cryptography.SHA256.Create();
+        var separator = System.Text.Encoding.UTF8.GetBytes(new[] { '\u2028' });
         foreach (var it in new SplitList(p.GetValueOrDefault("ItemsToHash"))) {
-            var s = ignoreCase ? it.ToLowerInvariant() : it;
-            var byteCount = System.Text.Encoding.UTF8.GetByteCount(s);
-            if (byteCount <= 512) {
-                Span<byte> bytes = stackalloc byte[byteCount];
-                System.Text.Encoding.UTF8.GetBytes(s, bytes);
-                hasher.Append(bytes);
-            } else {
-                var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(byteCount);
-                try {
-                    var written = System.Text.Encoding.UTF8.GetBytes(s, rented);
-                    hasher.Append(rented.AsSpan(0, written));
-                } finally {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(rented);
-                }
-            }
-            hasher.Append(nul);
+            var s = ignoreCase ? it.ToUpperInvariant() : it;
+            var bytes = System.Text.Encoding.UTF8.GetBytes(s);
+            hasher.TransformBlock(bytes, 0, bytes.Length, null, 0);
+            hasher.TransformBlock(separator, 0, separator.Length, null, 0);
         }
-        var hex = Convert.ToHexString(hasher.GetCurrentHash());
+        hasher.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        var hex = Convert.ToHexStringLower(hasher.Hash!);
         if (outputs != null && outputs.TryGetValue("HashResult", out var spec) && spec.metadataName == "property")
             P.Set(spec.itemName, hex);
     }
@@ -3929,23 +3975,120 @@ static partial class Tasks {
     public static void ShowPreviewMessage(ParamList p) { }
 
     public static void MSBuild(ParamList p, OutputList? outputs) {
-        var projects = StringList.FromSemicolonList(p.GetValueOrDefault("Projects") ?? "");
-        if (projects.Length == 0) return;
-        var targets = StringList.FromSemicolonList(p.GetValueOrDefault("Targets") ?? "");
+        var projects = StringList.FromSemicolonList(p.GetValueOrDefault("Projects") ?? "")
+            .Select(project => new Item(project))
+            .ToList();
+        MSBuildItems(projects, p.GetValueOrDefault("Targets") ?? "", p.GetValueOrDefault("Properties") ?? "", p.GetValueOrDefault("RemoveProperties") ?? "", outputs);
+    }
+
+    public static void MSBuildItems(List<Item> projects, string targetsValue, string properties, string removeProperties, OutputList? outputs) {
+        if (projects.Count == 0) return;
+        var targets = StringList.FromSemicolonList(targetsValue ?? "");
         if (targets.Length == 0) return;
-        var properties = p.GetValueOrDefault("Properties") ?? "";
-        var removeProperties = p.GetValueOrDefault("RemoveProperties") ?? "";
 
         var currentProject = P.MSBuildProjectFullPath;
         bool selfOnly = projects.All(project =>
-            string.Equals(Path.GetFullPath(project), currentProject, StringComparison.OrdinalIgnoreCase));
+            string.Equals(Path.GetFullPath(project.Identity), currentProject, StringComparison.OrdinalIgnoreCase));
         var targetOutputs = new List<Item>();
         if (selfOnly) {
-            foreach (var target in targets) {
-                var trimmedTarget = target.Trim();
-                Targets.Run(trimmedTarget).GetAwaiter().GetResult();
-                targetOutputs.AddRange(Targets.GetReturns(trimmedTarget));
+            foreach (var project in projects) {
+                var projectProperties = MergePropertyAssignments(properties, project.GetMetadata("additionalproperties"));
+                foreach (var target in targets) {
+                    var trimmedTarget = target.Trim();
+                    targetOutputs.AddRange(RunSelfProjectTargetWithBsharp(project.Identity, trimmedTarget, projectProperties));
+                }
             }
+
+            static List<Item> RunSelfProjectTargetWithBsharp(string projectPath, string target, string properties) {
+                var executable = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(executable))
+                    throw new InvalidOperationException("<MSBuild> self invocation could not locate the current B# executable");
+                var resultFile = Path.Combine(Path.GetTempPath(), "bsharp-target-result-" + Guid.NewGuid().ToString("N") + ".txt");
+                try {
+                    var psi = new ProcessStartInfo(executable) {
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        WorkingDirectory = string.IsNullOrEmpty(P.MSBuildProjectDirectory) ? Environment.CurrentDirectory : P.MSBuildProjectDirectory
+                    };
+                    psi.ArgumentList.Add(Path.GetFullPath(projectPath));
+                    psi.ArgumentList.Add("build");
+                    psi.ArgumentList.Add("--no-restore");
+                    psi.ArgumentList.Add("-v:quiet");
+                    psi.ArgumentList.Add("-t:" + target);
+                    psi.ArgumentList.Add("--bsharp-target-result");
+                    psi.ArgumentList.Add(resultFile);
+                    AddInheritedProperty(psi, "TargetFramework", P.TargetFramework, properties);
+                    AddInheritedProperty(psi, "Configuration", P.Configuration, properties);
+                    AddInheritedProperty(psi, "Platform", P.Platform, properties);
+                    foreach (var assignment in EnumeratePropertyAssignments(properties))
+                        psi.ArgumentList.Add("-p:" + assignment);
+                    using var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start dotnet msbuild");
+                    var stdout = process.StandardOutput.ReadToEnd();
+                    var stderr = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+                    if (process.ExitCode != 0)
+                        throw new InvalidOperationException($"<MSBuild> self target '{target}' via B# failed ({process.ExitCode}): {stderr}{stdout}");
+                    return ReadBsharpTargetResultItems(resultFile, target);
+                } finally {
+                    try { if (File.Exists(resultFile)) File.Delete(resultFile); } catch { }
+                }
+            }
+
+            static void AddInheritedProperty(ProcessStartInfo psi, string name, string value, string explicitProperties) {
+                if (string.IsNullOrEmpty(value) || HasPropertyAssignment(explicitProperties, name))
+                    return;
+                psi.ArgumentList.Add("-p:" + name + "=" + value);
+            }
+
+            static bool HasPropertyAssignment(string properties, string name) {
+                foreach (var assignment in EnumeratePropertyAssignments(properties)) {
+                    var eq = assignment.IndexOf('=');
+                    if (eq > 0 && string.Equals(assignment.Substring(0, eq), name, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
+
+            static IEnumerable<string> EnumeratePropertyAssignments(string properties) {
+                foreach (var part in new SplitList(properties)) {
+                    var text = part.Trim();
+                    if (text.Length != 0 && text.Contains('='))
+                        yield return text;
+                }
+            }
+
+            static List<Item> ReadBsharpTargetResultItems(string resultFile, string target) {
+                var items = new List<Item>();
+                if (!File.Exists(resultFile))
+                    return items;
+                var inTarget = false;
+                Item? current = null;
+                foreach (var line in File.ReadLines(resultFile)) {
+                    if (line.StartsWith("target ", StringComparison.Ordinal)) {
+                        inTarget = string.Equals(UnB64(line.Substring(7)), target, StringComparison.OrdinalIgnoreCase);
+                        current = null;
+                        continue;
+                    }
+                    if (!inTarget)
+                        continue;
+                    if (line.StartsWith("item ", StringComparison.Ordinal)) {
+                        current = new Item(PathUtil.NormalizeSeparators(UnB64(line.Substring(5))));
+                        items.Add(current);
+                        continue;
+                    }
+                    if (line.StartsWith("metadata ", StringComparison.Ordinal) && current is not null) {
+                        var rest = line.Substring(9);
+                        var split = rest.IndexOf(' ');
+                        if (split > 0)
+                            current.SetMetadata(UnB64(rest.Substring(0, split)), UnB64(rest.Substring(split + 1)));
+                        continue;
+                    }
+                }
+                return items;
+            }
+
+            static string UnB64(string value) => System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value));
         } else {
             if (!string.IsNullOrWhiteSpace(removeProperties))
                 throw new InvalidOperationException("<MSBuild> RemoveProperties is not supported for cross-project recursion in v1");
@@ -3955,13 +4098,14 @@ static partial class Tasks {
                     throw new InvalidOperationException($"<MSBuild> cross-project target '{trimmedTarget}' is not supported in v1");
             }
             foreach (var project in projects) {
-                var fullProject = ResolveProjectTaskPath(project);
+                var fullProject = ResolveProjectTaskPath(project.Identity);
+                var projectProperties = MergePropertyAssignments(properties, project.GetMetadata("additionalproperties"));
                 foreach (var target in targets) {
                     var trimmedTarget = target.Trim();
                     if (string.Equals(trimmedTarget, "Build", StringComparison.OrdinalIgnoreCase)) {
-                        RunReferencedProjectBuild(fullProject, properties);
+                        RunReferencedProjectBuild(fullProject, projectProperties);
                     } else if (IsGetTargetPathTarget(trimmedTarget)) {
-                        var targetPath = GetProjectTargetPath(fullProject, properties);
+                        var targetPath = GetProjectTargetPath(fullProject, projectProperties);
                         if (!string.IsNullOrEmpty(targetPath))
                             targetOutputs.Add(new Item(targetPath, new Dictionary<string, string> { ["MSBuildSourceProjectFile"] = fullProject }));
                     }
@@ -3974,6 +4118,12 @@ static partial class Tasks {
             else
                 I.Get(spec.itemName).AddRange(targetOutputs);
         }
+    }
+
+    static string MergePropertyAssignments(string first, string second) {
+        if (string.IsNullOrWhiteSpace(first)) return second ?? "";
+        if (string.IsNullOrWhiteSpace(second)) return first ?? "";
+        return first.TrimEnd(';') + ";" + second.TrimStart(';');
     }
 
     static bool IsSupportedCrossProjectTarget(string target) =>
@@ -4654,9 +4804,59 @@ static partial class Tasks {
         if (hasIncr) {
             sb.AppendLine("        } else {");
             sb.AppendLine($"            Log.TargetUpToDate({CSharpLiteral(name)});");
+            foreach (var child in target.Children)
+                EmitOutputInferenceForSkippedTargetChild(sb, child);
             sb.AppendLine("        }");
         }
         sb.AppendLine("    }");
+    }
+
+    static void EmitOutputInferenceForSkippedTargetChild(StringBuilder sb, ProjectTargetInstanceChild child) {
+        switch (child) {
+            case ProjectPropertyGroupTaskInstance pg:
+                EmitPropertyGroup(sb, pg);
+                break;
+            case ProjectItemGroupTaskInstance ig:
+                EmitItemGroup(sb, ig);
+                break;
+            case ProjectTaskInstance task:
+                EmitTaskOutputInference(sb, task);
+                break;
+        }
+    }
+
+    static void EmitTaskOutputInference(StringBuilder sb, ProjectTaskInstance task) {
+        var ind = "        ";
+        if (!string.IsNullOrEmpty(task.Condition)) {
+            sb.AppendLine($"{ind}if ({CompileCond(task.Condition)}) {{");
+            ind += "    ";
+        }
+        foreach (var output in task.Outputs) {
+            var taskParameter = output switch {
+                ProjectTaskOutputItemInstance itemOutput => itemOutput.TaskParameter,
+                ProjectTaskOutputPropertyInstance propertyOutput => propertyOutput.TaskParameter,
+                _ => ""
+            };
+            if (string.IsNullOrEmpty(taskParameter) || !task.Parameters.TryGetValue(taskParameter, out var parameterValue))
+                continue;
+
+            switch (output) {
+                case ProjectTaskOutputItemInstance itemOutput:
+                    sb.AppendLine($"{ind}{{");
+                    sb.AppendLine($"{ind}    foreach (var identity in new SemicolonSplit({CompileExpr(parameterValue)})) {{");
+                    sb.AppendLine($"{ind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
+                    sb.AppendLine($"{ind}            {ItemAccess(itemOutput.ItemType)}.Add(newItem);");
+                    sb.AppendLine($"{ind}        }}");
+                    sb.AppendLine($"{ind}    }}");
+                    sb.AppendLine($"{ind}}}");
+                    break;
+                case ProjectTaskOutputPropertyInstance propertyOutput:
+                    sb.AppendLine($"{ind}P.Set({CSharpLiteral(propertyOutput.PropertyName)}, {CompileExpr(parameterValue)});");
+                    break;
+            }
+        }
+        if (!string.IsNullOrEmpty(task.Condition))
+            sb.AppendLine("        }");
     }
 
     static IEnumerable<string> ImplicitGeneratedDependencies(string targetName) {
@@ -4958,6 +5158,28 @@ static partial class Tasks {
                 }
                 sb.AppendLine($"{iind}}}");
             } else if (!string.IsNullOrEmpty(item.Remove)) {
+                var direct = TryParseDirectItemRef(item.Remove);
+                var removeTargetKey = TryCanonicalItemKey(item.ItemType);
+                if (batch != null
+                    && string.Equals(batch, removeTargetKey, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(direct, batch, StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine($"{iind}{target}.RemoveAll(batchItem => {{");
+                    if (!string.IsNullOrEmpty(itemCondition))
+                        sb.AppendLine($"{iind}    if (!({CompileCond(itemCondition, batch)})) return false;");
+                    if (direct != null) {
+                        sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromItems({ItemAccess(direct)});");
+                    } else if (IsPureLiteralNoSemicolon(item.Remove) && !item.Remove.Contains('*') && !item.Remove.Contains('?')) {
+                        sb.AppendLine($"{iind}    return string.Equals(batchItem.Identity, {CSharpLiteral(item.Remove)}, StringComparison.OrdinalIgnoreCase);");
+                        sb.AppendLine($"{iind}}});");
+                        continue;
+                    } else {
+                        sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch)});");
+                    }
+                    sb.AppendLine($"{iind}    return itemsToRemove.Contains(batchItem.Identity);");
+                    sb.AppendLine($"{iind}}});");
+                    continue;
+                }
                 // Snapshot the batch list before iterating so the body can safely mutate the
                 // underlying list. Defensive — covers patterns we haven't special-cased above.
                 if (batch != null) {
@@ -4965,7 +5187,6 @@ static partial class Tasks {
                     iind += "    ";
                     openedBatch = true;
                 }
-                var direct = TryParseDirectItemRef(item.Remove);
                 sb.AppendLine($"{iind}{openCond}{{");
                 if (direct != null) {
                     sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromItems({ItemAccess(direct)});");
@@ -5303,6 +5524,37 @@ static partial class Tasks {
         name is "AllowEmptyTelemetry" or "ShowPreviewMessage";
 
     static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
+        if (task.Name.Equals("MSBuild", StringComparison.OrdinalIgnoreCase)
+            && task.Parameters.TryGetValue("Projects", out var projectsRaw)
+            && TryParseDirectItemRef(projectsRaw) is { } projectItemType)
+        {
+            var targets = task.Parameters.TryGetValue("Targets", out var targetsRaw) ? CompileExpr(targetsRaw, batch, itemAccessOverrides) : "\"\"";
+            var properties = task.Parameters.TryGetValue("Properties", out var propertiesRaw) ? CompileExpr(propertiesRaw, batch, itemAccessOverrides) : "\"\"";
+            var removeProperties = task.Parameters.TryGetValue("RemoveProperties", out var removePropertiesRaw) ? CompileExpr(removePropertiesRaw, batch, itemAccessOverrides) : "\"\"";
+            if (task.Outputs.Count == 1) {
+                var o = task.Outputs.First();
+                if (o is ProjectTaskOutputItemInstance oi)
+                    sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null);");
+                else if (o is ProjectTaskOutputPropertyInstance op)
+                    sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\");");
+                else
+                    sb.AppendLine($"{ind}    var outputs = new OutputList(Array.Empty<(string Key, string itemName, string? metadataName)>());");
+            } else if (task.Outputs.Count > 1) {
+                sb.AppendLine($"{ind}    var outputs = new OutputList(new (string Key, string itemName, string? metadataName)[] {{");
+                foreach (var o in task.Outputs) {
+                    if (o is ProjectTaskOutputItemInstance oi)
+                        sb.AppendLine($"{ind}        ({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null),");
+                    else if (o is ProjectTaskOutputPropertyInstance op)
+                        sb.AppendLine($"{ind}        ({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\"),");
+                }
+                sb.AppendLine($"{ind}    }});");
+            } else {
+                sb.AppendLine($"{ind}    OutputList? outputs = null;");
+            }
+            sb.AppendLine($"{ind}    Tasks.MSBuildItems(ItemSerde.CloneItems({ItemAccess(projectItemType)}), {targets}, {properties}, {removeProperties}, outputs);");
+            return;
+        }
+
         if (task.Parameters.Count == 0) {
             sb.AppendLine($"{ind}    var parameters = ParamList.Empty;");
         } else if (task.Parameters.Count == 1) {
