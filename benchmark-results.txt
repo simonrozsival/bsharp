@@ -1,0 +1,22 @@
+=== bsharp vs dotnet Benchmark ===
+Project: console-net11
+Runs: 5
+
+=== Clean Builds ===
+bash: line 14: 17798250433N: value too great for base (error token is "17798250433N")
+bash: line 14: 17798250443N: value too great for base (error token is "17798250443N")
+  Run 1: bsharp=ms dotnet=ms
+bash: line 14: 17798250913N: value too great for base (error token is "17798250913N")
+bash: line 14: 17798250923N: value too great for base (error token is "17798250923N")
+  Run 2: bsharp=ms dotnet=ms
+bash: line 14: 17798251393N: value too great for base (error token is "17798251393N")
+bash: line 14: 17798251403N: value too great for base (error token is "17798251403N")
+  Run 3: bsharp=ms dotnet=ms
+bash: line 14: 17798252213N: value too great for base (error token is "17798252213N")
+bash: line 14: 17798252243N: value too great for base (error token is "17798252243N")
+  Run 4: bsharp=ms dotnet=ms
+bash: line 14: 17798252783N: value too great for base (error token is "17798252783N")
+bash: line 14: 17798252803N: value too great for base (error token is "17798252803N")
+  Run 5: bsharp=ms dotnet=ms
+
+=== No-op Builds ===

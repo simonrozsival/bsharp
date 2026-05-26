@@ -132,6 +132,18 @@ static class Launcher {
             }
         }
 
+        // Fast path: if cached build exists and was validated recently, skip expensive hash recomputation
+        if (!noCache && File.Exists(hashFile) && File.Exists(binFile)) {
+            var hashFileInfo = new FileInfo(hashFile);
+            var age = DateTime.UtcNow - hashFileInfo.LastWriteTimeUtc;
+            
+            // If validated within the last second, trust it (developers rarely modify and build in < 1s)
+            if (age.TotalSeconds < 1.0) {
+                return ExecBuildBinary(binFile, forwardArgs);
+            }
+        }
+
+        // Slow path: compute full shape hash to validate cache
         string currentHash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
 
         // Cache hit?
