@@ -2182,6 +2182,7 @@ var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
 bool noRestore = false;
+bool noFastNoop = false;
 string? csprojArg = null;
 string? targetResultPath = null;
 var requestedTargets = new List<string>();
@@ -2192,6 +2193,7 @@ for (int i = 0; i < args.Length; i++) {
     else if (a == "--no-build") noBuild = true;
     else if (a == "--no-restore") noRestore = true;
     else if (a == "--fast-noop") { /* fast-noop is now automatic */ }
+    else if (a == "--no-fast-noop") noFastNoop = true;
     else if (a == "--bsharp-target-result" && i + 1 < args.Length) targetResultPath = args[++i];
     else if ((a == "-t" || a == "--target" || a == "-target") && i + 1 < args.Length) AddTargets(requestedTargets, args[++i]);
     else if (a.StartsWith("-t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
@@ -2213,6 +2215,7 @@ string csprojPath = csprojArg != null
 
 var allowFastNoOp = command != "restore"
     && !noBuild
+    && !noFastNoop
     && requestedTargets.Count == 0;
 var preInitFastNoOp = allowFastNoOp && FastNoOpBuildBeforePopulate(csprojPath);
 if (!preInitFastNoOp) {
