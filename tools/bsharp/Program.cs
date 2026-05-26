@@ -61,6 +61,9 @@ static class Launcher {
                         TryAddProp(globalProps, a.Substring("--property:".Length));
                     } else if (TryAddTargetsFromArg(requestedTargets, a)) {
                         forwardArgs.Add(a);
+                    } else if (a.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) && projectArg == null) {
+                        // Solution file - build all projects
+                        return BuildSolution(a, command, forwardArgs.ToArray(), globalProps, noCache, backgroundCodegen);
                     } else if (a.EndsWith(".csproj", StringComparison.Ordinal) && projectArg == null) {
                         projectArg = a;
                         forwardArgs.Add(a);
@@ -75,9 +78,16 @@ static class Launcher {
         // Sort for hash stability.
         globalProps.Sort((x, y) => string.Compare(x.Key, y.Key, StringComparison.OrdinalIgnoreCase));
 
+        // Check if current directory has a .sln file
+        string? solutionPath = ResolveSolution(null);
+        if (solutionPath != null && projectArg == null) {
+            Console.WriteLine($"bsharp: building solution {Path.GetFileName(solutionPath)}");
+            return BuildSolution(solutionPath, command, forwardArgs.ToArray(), globalProps, noCache, backgroundCodegen);
+        }
+
         string? projectPath = ResolveProject(projectArg);
         if (projectPath == null) {
-            Console.Error.WriteLine("bsharp: no .csproj found in current directory (and none specified via --project)");
+            Console.Error.WriteLine("bsharp: no .csproj or .sln found in current directory (and none specified)");
             return 2;
         }
 
@@ -932,6 +942,69 @@ static class Launcher {
         }
         var candidates = Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.csproj").ToList();
         return candidates.Count == 1 ? candidates[0] : candidates.FirstOrDefault();
+    }
+
+    static string? ResolveSolution(string? arg) {
+        if (arg != null) {
+            var abs = Path.GetFullPath(arg);
+            return File.Exists(abs) ? abs : null;
+        }
+        var candidates = Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.sln").ToList();
+        return candidates.Count == 1 ? candidates[0] : null; // Return null if multiple, to fall back to project mode
+    }
+
+    static int BuildSolution(string solutionPath, string command, string[] forwardArgs, List<KeyValuePair<string, string>> globalProps, bool noCache, bool backgroundCodegen) {
+        if (command != "build") {
+            Console.Error.WriteLine($"bsharp: solution-level '{command}' not yet implemented; use 'build' only");
+            return 2;
+        }
+
+        Solution solution;
+        try {
+            solution = SolutionParser.Parse(solutionPath);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"bsharp: failed to parse solution: {ex.Message}");
+            return 2;
+        }
+
+        if (solution.Projects.Length == 0) {
+            Console.Error.WriteLine($"bsharp: no C# projects found in solution");
+            return 2;
+        }
+
+        Console.WriteLine($"bsharp: building {solution.Projects.Length} project(s)");
+        int failedCount = 0;
+        foreach (var proj in solution.Projects) {
+            Console.WriteLine($"  Building {proj.Name}...");
+            var projectArgs = new List<string> { "build", proj.Path };
+            // Forward relevant args but skip solution file and "build" command
+            foreach (var arg in forwardArgs) {
+                if (!arg.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) && arg != "build")
+                    projectArgs.Add(arg);
+            }
+            foreach (var prop in globalProps)
+                projectArgs.Add($"-p:{prop.Key}={prop.Value}");
+            if (noCache)
+                projectArgs.Add("--no-cache");
+            if (backgroundCodegen)
+                projectArgs.Add("--background-codegen");
+
+            int rc = Run(projectArgs.ToArray());
+            if (rc != 0) {
+                Console.Error.WriteLine($"  ✗ {proj.Name} failed (exit code {rc})");
+                failedCount++;
+            } else {
+                Console.WriteLine($"  ✓ {proj.Name} succeeded");
+            }
+        }
+
+        if (failedCount > 0) {
+            Console.Error.WriteLine($"bsharp: {failedCount} project(s) failed");
+            return 1;
+        }
+
+        Console.WriteLine($"bsharp: all {solution.Projects.Length} project(s) built successfully");
+        return 0;
     }
 
     static string ComputeShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
