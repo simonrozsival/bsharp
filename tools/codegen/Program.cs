@@ -2691,7 +2691,33 @@ class Item {
     public Dictionary<string, string> M => _m ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string>? MetadataOrNull => _m;
     
+    // Cache expensive computed metadata
+    string? _cachedFullPath;
+    string? _cachedDirectory;
+    string? _cachedRelativeDir;
+    
     static readonly System.Buffers.ArrayPool<Item> _pool = System.Buffers.ArrayPool<Item>.Create(maxArrayLength: 256, maxArraysPerBucket: 4);
+    
+    // String interning for common metadata keys to reduce allocations
+    static readonly Dictionary<string, string> _internedKeys = new(StringComparer.OrdinalIgnoreCase) {
+        ["Identity"] = "Identity",
+        ["FullPath"] = "FullPath",
+        ["FileName"] = "FileName",
+        ["Extension"] = "Extension",
+        ["Directory"] = "Directory",
+        ["RelativeDir"] = "RelativeDir",
+        ["RootDir"] = "RootDir",
+        ["Configuration"] = "Configuration",
+        ["Platform"] = "Platform",
+        ["TargetFramework"] = "TargetFramework",
+        ["Link"] = "Link",
+        ["CopyToOutputDirectory"] = "CopyToOutputDirectory",
+        ["Pack"] = "Pack",
+        ["PackagePath"] = "PackagePath",
+        ["Visible"] = "Visible",
+    };
+    
+    static string InternKey(string key) => _internedKeys.TryGetValue(key, out var interned) ? interned : key;
     
     public Item(string id) {
         Identity = NormalizeIdentity(id);
@@ -2701,7 +2727,7 @@ class Item {
         if (metadata.Count != 0) {
             _m = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in metadata)
-                _m[kv.Key] = kv.Value;
+                _m[InternKey(kv.Key)] = kv.Value;
         }
     }
     
@@ -2709,11 +2735,11 @@ class Item {
     public static void ReturnArray(Item[] array, bool clearArray = false) => _pool.Return(array, clearArray);
     public string GetMetadata(string name) {
         if (string.Equals(name, "identity", StringComparison.OrdinalIgnoreCase)) return Identity;
-        if (string.Equals(name, "fullpath", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetFullPath(Identity);
+        if (string.Equals(name, "fullpath", StringComparison.OrdinalIgnoreCase)) return _cachedFullPath ??= (Identity.Length == 0 ? "" : Path.GetFullPath(Identity));
         if (string.Equals(name, "filename", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetFileNameWithoutExtension(Identity);
         if (string.Equals(name, "extension", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetExtension(Identity);
-        if (string.Equals(name, "directory", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetDirectoryName(Identity) ?? "";
-        if (string.Equals(name, "relativedir", StringComparison.OrdinalIgnoreCase)) return RelativeDir(Identity);
+        if (string.Equals(name, "directory", StringComparison.OrdinalIgnoreCase)) return _cachedDirectory ??= (Identity.Length == 0 ? "" : Path.GetDirectoryName(Identity) ?? "");
+        if (string.Equals(name, "relativedir", StringComparison.OrdinalIgnoreCase)) return _cachedRelativeDir ??= RelativeDir(Identity);
         if (string.Equals(name, "rootdir", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetPathRoot(Identity) ?? "";
         return _m != null && _m.TryGetValue(name, out var v) ? v : "";
     }
@@ -2722,7 +2748,7 @@ class Item {
     // pattern that conditions / item filters used to generate.
     public bool HasMetadata(string name, string value) =>
         string.Equals(GetMetadata(name), value, StringComparison.OrdinalIgnoreCase);
-    public void SetMetadata(string name, string value) => M[name] = value ?? "";
+    public void SetMetadata(string name, string value) => M[InternKey(name)] = value ?? "";
     public void CopyMetadataTo(Item destination) {
         if (_m == null) return;
         foreach (var kv in _m) destination.M[kv.Key] = kv.Value;

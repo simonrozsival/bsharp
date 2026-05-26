@@ -93,14 +93,17 @@ public sealed class CodegenUnitTests
     }
 
     [TestMethod]
-    public void FastNoOpShortcutRequiresOptIn()
+    public void FastNoOpIsAutomaticByDefault()
     {
         using var project = CodegenUnitProject.FromScenario("target-entry-order", "target-entry-order.proj");
         var generated = project.Generate(entryTarget: null);
 
-        StringAssert.Contains(generated.ProgramText, "bool fastNoOpRequested = false;");
-        StringAssert.Contains(generated.ProgramText, "else if (a == \"--fast-noop\") fastNoOpRequested = true;");
-        StringAssert.Contains(generated.ProgramText, "var allowFastNoOp = fastNoOpRequested");
+        StringAssert.Contains(generated.ProgramText, "bool noFastNoop = false;");
+        StringAssert.Contains(generated.ProgramText, "else if (a == \"--no-fast-noop\") noFastNoop = true;");
+        StringAssert.Contains(generated.ProgramText, "var allowFastNoOp = command != \"restore\"");
+        StringAssert.Contains(generated.ProgramText, "&& !noBuild");
+        StringAssert.Contains(generated.ProgramText, "&& !noFastNoop");
+        StringAssert.Contains(generated.ProgramText, "&& requestedTargets.Count == 0;");
         StringAssert.Contains(generated.ProgramText, "var fastNoOp = preInitFastNoOp || (allowFastNoOp && FastNoOpBuild(csprojPath));");
     }
 
