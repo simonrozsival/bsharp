@@ -2182,7 +2182,6 @@ var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
 bool noRestore = false;
-bool fastNoOpRequested = false;
 string? csprojArg = null;
 string? targetResultPath = null;
 var requestedTargets = new List<string>();
@@ -2192,7 +2191,7 @@ for (int i = 0; i < args.Length; i++) {
     if (a == "build" || a == "run" || a == "restore") command = a;
     else if (a == "--no-build") noBuild = true;
     else if (a == "--no-restore") noRestore = true;
-    else if (a == "--fast-noop") fastNoOpRequested = true;
+    else if (a == "--fast-noop") { /* fast-noop is now automatic */ }
     else if (a == "--bsharp-target-result" && i + 1 < args.Length) targetResultPath = args[++i];
     else if ((a == "-t" || a == "--target" || a == "-target") && i + 1 < args.Length) AddTargets(requestedTargets, args[++i]);
     else if (a.StartsWith("-t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
@@ -2212,8 +2211,7 @@ string csprojPath = csprojArg != null
     ? Path.GetFullPath(csprojArg)
     : GeneratedProjectInfo.ProjectPath;
 
-var allowFastNoOp = fastNoOpRequested
-    && command != "restore"
+var allowFastNoOp = command != "restore"
     && !noBuild
     && requestedTargets.Count == 0;
 var preInitFastNoOp = allowFastNoOp && FastNoOpBuildBeforePopulate(csprojPath);
@@ -2689,6 +2687,9 @@ class Item {
     Dictionary<string, string>? _m;
     public Dictionary<string, string> M => _m ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string>? MetadataOrNull => _m;
+    
+    static readonly System.Buffers.ArrayPool<Item> _pool = System.Buffers.ArrayPool<Item>.Create(maxArrayLength: 256, maxArraysPerBucket: 4);
+    
     public Item(string id) {
         Identity = NormalizeIdentity(id);
     }
@@ -2700,6 +2701,9 @@ class Item {
                 _m[kv.Key] = kv.Value;
         }
     }
+    
+    public static Item[] RentArray(int minimumLength) => _pool.Rent(minimumLength);
+    public static void ReturnArray(Item[] array, bool clearArray = false) => _pool.Return(array, clearArray);
     public string GetMetadata(string name) {
         if (string.Equals(name, "identity", StringComparison.OrdinalIgnoreCase)) return Identity;
         if (string.Equals(name, "fullpath", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetFullPath(Identity);
