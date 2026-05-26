@@ -4785,6 +4785,13 @@ static partial class Tasks {
             if (instance.Targets.ContainsKey(implicitDependency))
                 sb.AppendLine($"            await {Method(implicitDependency)}();");
         }
+        if (string.Equals(name, "_ResolveAssemblies", StringComparison.OrdinalIgnoreCase)) {
+            sb.AppendLine("            if (!string.IsNullOrEmpty(P._PrimaryRuntimeIdentifier)) {");
+            sb.AppendLine("                P.RuntimeIdentifier = P._PrimaryRuntimeIdentifier;");
+            sb.AppendLine("                P.RuntimeIdentifiers = \"\";");
+            sb.AppendLine("            }");
+            sb.AppendLine("            if (!string.IsNullOrEmpty(P._PrimaryCpuAbi)) P.AndroidSupportedAbis = P._PrimaryCpuAbi;");
+        }
 
         // Before-companions (literal X with X.BeforeTargets containing this target) run
         // after DependsOnTargets, but can run as their own static prerequisite batch.
@@ -4893,6 +4900,8 @@ static partial class Tasks {
             yield return "_ResolveSdks";
         if (string.Equals(targetName, "_ResolveXamarinAndroidTools", StringComparison.OrdinalIgnoreCase))
             yield return "_ResolveSdks";
+        if (string.Equals(targetName, "_ResolveAssemblies", StringComparison.OrdinalIgnoreCase))
+            yield return "_ResolveMonoAndroidSdks";
     }
 
     static void EmitChild(StringBuilder sb, ProjectTargetInstanceChild child) {
