@@ -29,7 +29,7 @@ static class Launcher {
         for (int i = 0; i < args.Length; i++) {
             var a = args[i];
             switch (a) {
-                case "build": case "run": case "audit":
+                case "build": case "run": case "audit": case "clean": case "test":
                     command = a;
                     if (a != "audit")
                         forwardArgs.Add(a);
@@ -90,6 +90,12 @@ static class Launcher {
             Console.Error.WriteLine("bsharp: no .csproj or .sln found in current directory (and none specified)");
             return 2;
         }
+
+        if (command == "clean")
+            return CleanProject(projectPath);
+
+        if (command == "test")
+            return TestProject(projectPath, forwardArgs.ToArray());
 
         string projectDir = Path.GetDirectoryName(projectPath)!;
         string bsharpRoot = Path.Combine(projectDir, ".bsharp");
@@ -954,6 +960,14 @@ static class Launcher {
     }
 
     static int BuildSolution(string solutionPath, string command, string[] forwardArgs, List<KeyValuePair<string, string>> globalProps, bool noCache, bool backgroundCodegen) {
+        if (command == "clean") {
+            return CleanSolution(solutionPath);
+        }
+        
+        if (command == "test") {
+            return TestSolution(solutionPath, forwardArgs);
+        }
+        
         if (command != "build") {
             Console.Error.WriteLine($"bsharp: solution-level '{command}' not yet implemented; use 'build' only");
             return 2;
@@ -1054,6 +1068,122 @@ static class Launcher {
 
         int rc = Run(projectArgs.ToArray());
         return (proj.Path, proj.Name, rc);
+    }
+
+    static int CleanProject(string projectPath) {
+        var projectDir = Path.GetDirectoryName(projectPath)!;
+        var projectName = Path.GetFileNameWithoutExtension(projectPath);
+        
+        Console.WriteLine($"bsharp: cleaning {projectName}...");
+        
+        int deletedCount = 0;
+        var dirsToDelete = new[] {
+            Path.Combine(projectDir, "bin"),
+            Path.Combine(projectDir, "obj"),
+            Path.Combine(projectDir, ".bsharp")
+        };
+
+        foreach (var dir in dirsToDelete) {
+            if (Directory.Exists(dir)) {
+                try {
+                    Directory.Delete(dir, recursive: true);
+                    Console.WriteLine($"  Deleted {Path.GetFileName(dir)}/");
+                    deletedCount++;
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"  Failed to delete {dir}: {ex.Message}");
+                }
+            }
+        }
+
+        if (deletedCount == 0) {
+            Console.WriteLine($"  Nothing to clean");
+        } else {
+            Console.WriteLine($"  Cleaned {deletedCount} director{(deletedCount == 1 ? "y" : "ies")}");
+        }
+
+        return 0;
+    }
+
+    static int CleanSolution(string solutionPath) {
+        Solution solution;
+        try {
+            solution = SolutionParser.Parse(solutionPath);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"bsharp: failed to parse solution: {ex.Message}");
+            return 2;
+        }
+
+        if (solution.Projects.Length == 0) {
+            Console.Error.WriteLine($"bsharp: no C# projects found in solution");
+            return 2;
+        }
+
+        Console.WriteLine($"bsharp: cleaning {solution.Projects.Length} project(s)");
+        
+        foreach (var proj in solution.Projects) {
+            CleanProject(proj.Path);
+        }
+
+        Console.WriteLine($"bsharp: cleaned all {solution.Projects.Length} project(s)");
+        return 0;
+    }
+
+    static int TestProject(string projectPath, string[] forwardArgs) {
+        Console.WriteLine($"bsharp: running tests for {Path.GetFileNameWithoutExtension(projectPath)}...");
+        
+        var args = new List<string> { "test", projectPath, "--nologo" };
+        // Forward test-specific args (filters, logger, etc.)
+        foreach (var arg in forwardArgs) {
+            if (!arg.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) && 
+                !arg.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && 
+                arg != "test")
+                args.Add(arg);
+        }
+
+        return RunProcess("dotnet", args);
+    }
+
+    static int TestSolution(string solutionPath, string[] forwardArgs) {
+        Solution solution;
+        try {
+            solution = SolutionParser.Parse(solutionPath);
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"bsharp: failed to parse solution: {ex.Message}");
+            return 2;
+        }
+
+        if (solution.Projects.Length == 0) {
+            Console.Error.WriteLine($"bsharp: no C# projects found in solution");
+            return 2;
+        }
+
+        // Filter to test projects (heuristic: name contains "Test" or "Tests")
+        var testProjects = solution.Projects
+            .Where(p => p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (testProjects.Length == 0) {
+            Console.WriteLine("bsharp: no test projects found (projects with 'Test' in name)");
+            return 0;
+        }
+
+        Console.WriteLine($"bsharp: running tests for {testProjects.Length} project(s)");
+        
+        int failedCount = 0;
+        foreach (var proj in testProjects) {
+            int rc = TestProject(proj.Path, forwardArgs);
+            if (rc != 0) {
+                failedCount++;
+            }
+        }
+
+        if (failedCount > 0) {
+            Console.Error.WriteLine($"bsharp: {failedCount} test project(s) failed");
+            return 1;
+        }
+
+        Console.WriteLine($"bsharp: all test projects passed");
+        return 0;
     }
 
     static string ComputeShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
