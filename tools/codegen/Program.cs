@@ -702,11 +702,6 @@ public static class TaskModelExt {
     }
 
     static string ProjectTemplate(UsingTaskRegistry.Registry registry, TaskMetadataLoader.MetadataIndex meta) {
-        static string XmlAttr(string value) =>
-            System.Security.SecurityElement.Escape(value) ?? value;
-
-        var sdkRoot = FindSdkRootWithFrameworkDll(registry);
-
         var sb = new StringBuilder();
         sb.AppendLine("""
 <Project Sdk="Microsoft.NET.Sdk">
@@ -717,6 +712,7 @@ public static class TaskModelExt {
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SelfContained>true</SelfContained>
+    <PublishAot>true</PublishAot>
     <PublishSingleFile>true</PublishSingleFile>
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>full</TrimMode>
@@ -736,27 +732,9 @@ public static class TaskModelExt {
     <!-- Hashing utility used by Tasks.Hash. Pin to the SDK shipping version. -->
     <PackageReference Include="System.IO.Hashing" Version="11.0.0-preview.4.26208.110" />
   </ItemGroup>
-""");
-        sb.AppendLine("  <ItemGroup>");
-        if (sdkRoot != null) {
-            foreach (var asm in new[] { "Microsoft.Build.Framework.dll", "Microsoft.Build.Utilities.Core.dll", "Microsoft.Build.dll", "System.CodeDom.dll" }) {
-                var path = Path.Combine(sdkRoot, asm);
-                if (File.Exists(path))
-                    sb.AppendLine($"    <Reference Include=\"{Path.GetFileNameWithoutExtension(asm)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private></Reference>");
-            }
-        }
-        foreach (var path in meta.ByTaskName.Values
-                     .Select(t => t.AssemblyPath)
-                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)) {
-            var include = Path.GetFileNameWithoutExtension(path);
-            sb.AppendLine($"    <Reference Include=\"{XmlAttr(include)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private></Reference>");
-        }
-        sb.AppendLine("  </ItemGroup>");
-        sb.AppendLine("""
 </Project>
 """);
-        // Task metadata is consumed by the generated task registry.
+        _ = registry;
         _ = meta;
         return sb.ToString();
     }
@@ -764,10 +742,13 @@ public static class TaskModelExt {
     static void EmitTaskServer(string serverDir, UsingTaskRegistry.Registry registry, TaskMetadataLoader.MetadataIndex meta, string sharedOutDir) {
         var sdkRoot = FindSdkRootWithFrameworkDll(registry);
         File.WriteAllText(Path.Combine(serverDir, "Program.cs"), TaskServerProgramCs(meta));
-        File.WriteAllText(Path.Combine(serverDir, "BsharpTaskServer.csproj"), TaskServerCsproj(sdkRoot, sharedOutDir, serverDir));
+        File.WriteAllText(Path.Combine(serverDir, "BsharpTaskServer.csproj"), TaskServerCsproj(sdkRoot, sharedOutDir, serverDir, meta));
     }
 
-    static string TaskServerCsproj(string? sdkRoot, string sharedOutDir, string serverDir) {
+    static string TaskServerCsproj(string? sdkRoot, string sharedOutDir, string serverDir, TaskMetadataLoader.MetadataIndex meta) {
+        static string XmlAttr(string value) =>
+            System.Security.SecurityElement.Escape(value) ?? value;
+
         var sb = new StringBuilder();
         sb.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
         sb.AppendLine("  <PropertyGroup>");
@@ -785,28 +766,52 @@ public static class TaskModelExt {
         sb.AppendLine("  </ItemGroup>");
         sb.AppendLine("  <ItemGroup>");
         if (sdkRoot != null) {
-            foreach (var asm in new[] { "Microsoft.Build.Framework.dll", "Microsoft.Build.Utilities.Core.dll", "Microsoft.Build.dll" }) {
+            foreach (var asm in new[] {
+                "Microsoft.Build.Framework.dll",
+                "Microsoft.Build.Utilities.Core.dll",
+                "Microsoft.Build.dll",
+                "Microsoft.NET.HostModel.dll",
+                "System.CodeDom.dll",
+            }) {
                 var path = Path.Combine(sdkRoot, asm);
                 if (File.Exists(path))
-                    sb.AppendLine($"    <Reference Include=\"{Path.GetFileNameWithoutExtension(asm)}\"><HintPath>{path}</HintPath><Private>true</Private></Reference>");
+                    sb.AppendLine($"    <Reference Include=\"{Path.GetFileNameWithoutExtension(asm)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private></Reference>");
             }
         }
+        foreach (var (path, alias) in TaskAssemblyAliases(meta).OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)) {
+            var include = Path.GetFileNameWithoutExtension(path);
+            sb.AppendLine($"    <Reference Include=\"{XmlAttr(include)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private><Aliases>{alias}</Aliases></Reference>");
+        }
         sb.AppendLine("  </ItemGroup>");
+        foreach (var bincore in meta.ByTaskName.Values
+                     .Select(t => Path.Combine(Path.GetDirectoryName(t.AssemblyPath) ?? "", "bincore"))
+                     .Where(Directory.Exists)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)) {
+            sb.AppendLine("  <ItemGroup>");
+            sb.AppendLine($"    <Content Include=\"{XmlAttr(Path.Combine(bincore, "**", "*"))}\" Link=\"bincore/%(RecursiveDir)%(Filename)%(Extension)\" CopyToOutputDirectory=\"PreserveNewest\" CopyToPublishDirectory=\"PreserveNewest\" />");
+            sb.AppendLine("  </ItemGroup>");
+        }
         sb.AppendLine("</Project>");
         return sb.ToString();
     }
 
     static string TaskServerProgramCs(TaskMetadataLoader.MetadataIndex meta) {
+        var taskAssemblyAliases = TaskAssemblyAliases(meta);
         var sb = new StringBuilder();
         sb.AppendLine("""
 // <auto-generated/>
 #nullable enable
+""");
+        foreach (var alias in taskAssemblyAliases.Values.Order(StringComparer.Ordinal))
+            sb.AppendLine($"extern alias {alias};");
+        sb.AppendLine("""
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.Loader;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Bsharp.Generated.TaskModel;
 
@@ -815,29 +820,35 @@ Console.SetError(TextWriter.Null);
 TaskRegistry.Register();
 TaskServer.Run(Console.OpenStandardInput(), Console.OpenStandardOutput());
 
-sealed record TaskDescriptor(string ShortName, string FullTypeName, string AssemblyPath, string[] OutputNames);
+sealed record TaskDescriptor(string ShortName, string FullTypeName, string AssemblyPath, Func<Type> ResolveTaskType, string[] OutputNames);
 
 static class TaskRegistry {
     public static readonly Dictionary<string, TaskDescriptor> Tasks = new(StringComparer.OrdinalIgnoreCase);
-    public static void Add(string shortName, string fullTypeName, string assemblyPath, string[] outputNames) =>
-        Tasks[shortName] = new TaskDescriptor(shortName, fullTypeName, assemblyPath, outputNames);
+    public static void Add(string shortName, string fullTypeName, string assemblyPath, Func<Type> resolveTaskType, string[] outputNames) =>
+        Tasks[shortName] = new TaskDescriptor(shortName, fullTypeName, assemblyPath, resolveTaskType, outputNames);
     public static void Register() {
 """);
-        foreach (var t in meta.ByTaskName.Values.OrderBy(t => t.FullTypeName, StringComparer.Ordinal)) {
+        var taskTypes = meta.ByTaskName.Values.OrderBy(t => t.FullTypeName, StringComparer.Ordinal).ToArray();
+        for (var i = 0; i < taskTypes.Length; i++) {
+            var t = taskTypes[i];
             var shortName = t.FullTypeName.Contains('.')
                 ? t.FullTypeName.Substring(t.FullTypeName.LastIndexOf('.') + 1)
                 : t.FullTypeName;
             var outputs = t.OutputProperties.Count == 0
                 ? "Array.Empty<string>()"
                 : $"new[] {{ {string.Join(", ", t.OutputProperties.Select(p => Emitter.CSharpLiteral(p.Name)))} }}";
-            sb.AppendLine($"        Add({Emitter.CSharpLiteral(shortName)}, {Emitter.CSharpLiteral(t.FullTypeName)}, {Emitter.CSharpLiteral(t.AssemblyPath)}, {outputs});");
+            sb.AppendLine($"        Add({Emitter.CSharpLiteral(shortName)}, {Emitter.CSharpLiteral(t.FullTypeName)}, {Emitter.CSharpLiteral(t.AssemblyPath)}, ResolveTaskType{i}, {outputs});");
+        }
+        sb.AppendLine("    }");
+        for (var i = 0; i < taskTypes.Length; i++) {
+            var t = taskTypes[i];
+            sb.AppendLine("    [MethodImpl(MethodImplOptions.NoInlining)]");
+            sb.AppendLine($"    static Type ResolveTaskType{i}() => typeof({CSharpTaskTypeReference(taskAssemblyAliases[t.AssemblyPath], t.FullTypeName)});");
         }
         sb.AppendLine("""
-    }
 }
 
 static class TaskServer {
-    static readonly Dictionary<string, TaskDirectoryLoadContext> ContextsByDir = new(StringComparer.OrdinalIgnoreCase);
     static readonly Dictionary<string, Type> TypesByShortName = new(StringComparer.OrdinalIgnoreCase);
     static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, PropertyInfo>> PropertiesByType = new();
     static readonly Microsoft.Build.Framework.TaskEnvironment TaskEnvironment =
@@ -864,9 +875,6 @@ static class TaskServer {
             SetBuildEngine(type, task);
             SetTaskEnvironment(type, task);
             foreach (var kv in req.Properties) SetValue(type, task, kv.Key, kv.Value);
-            ApplyDirectTaskDefaults(type, task, desc);
-            if (string.Equals(desc.ShortName, "Csc", StringComparison.OrdinalIgnoreCase) && task is Microsoft.CodeAnalysis.BuildTasks.Csc csc)
-                return ExecuteCscDirect(csc, req, desc);
             var guard = CaptureTimestampGuard(req, desc);
             BsharpBuildEngine.CapturedErrors.Clear();
             var execute = type.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance, binder: null, Type.EmptyTypes, modifiers: null) ?? throw new MissingMethodException(desc.FullTypeName, "Execute");
@@ -907,10 +915,7 @@ static class TaskServer {
     }
     static Type GetTaskType(TaskDescriptor desc) {
         if (TypesByShortName.TryGetValue(desc.ShortName, out var cached)) return cached;
-        var dir = Path.GetDirectoryName(desc.AssemblyPath)!;
-        if (!ContextsByDir.TryGetValue(dir, out var alc)) { alc = new TaskDirectoryLoadContext(desc.AssemblyPath); ContextsByDir[dir] = alc; }
-        var asm = alc.Assemblies.FirstOrDefault(a => string.Equals(a.Location, desc.AssemblyPath, StringComparison.OrdinalIgnoreCase)) ?? alc.LoadFromAssemblyPath(desc.AssemblyPath);
-        var type = asm.GetType(desc.FullTypeName, throwOnError: true)!;
+        var type = desc.ResolveTaskType();
         TypesByShortName[desc.ShortName] = type;
         return type;
     }
@@ -985,75 +990,24 @@ static class TaskServer {
         if (current.AsSpan().SequenceEqual(g.Content)) File.SetLastWriteTimeUtc(g.Path, g.TimestampUtc);
     }
 }
-
-sealed class TaskDirectoryLoadContext : AssemblyLoadContext {
-    readonly AssemblyDependencyResolver _resolver;
-    readonly string _dir;
-    readonly string? _sdkRoot;
-    readonly string? _dotnetRoot;
-    public TaskDirectoryLoadContext(string primaryAssemblyPath) : base("bsharp-task:" + Path.GetDirectoryName(primaryAssemblyPath), isCollectible: false) {
-        _resolver = new AssemblyDependencyResolver(primaryAssemblyPath);
-        _dir = Path.GetDirectoryName(primaryAssemblyPath)!;
-        _sdkRoot = FindSdkRoot(_dir);
-        _dotnetRoot = FindDotnetRoot(_sdkRoot);
-    }
-    protected override Assembly? Load(AssemblyName assemblyName) {
-        foreach (var asm in AssemblyLoadContext.Default.Assemblies)
-            if (string.Equals(assemblyName.Name, asm.GetName().Name, StringComparison.OrdinalIgnoreCase))
-                return asm;
-        if (IsFrameworkAssembly(assemblyName.Name)) {
-            try { return Assembly.Load(assemblyName); } catch { }
-            var sharedFrameworkAssembly = FindSharedFrameworkAssembly(_dotnetRoot, assemblyName);
-            if (sharedFrameworkAssembly != null) return LoadFromAssemblyPath(sharedFrameworkAssembly);
-        }
-        if (IsSharedBuildAssembly(assemblyName.Name)) {
-            if (_sdkRoot != null) {
-                var sharedPath = Path.Combine(_sdkRoot, assemblyName.Name + ".dll");
-                if (File.Exists(sharedPath)) return AssemblyLoadContext.Default.LoadFromAssemblyPath(sharedPath);
-            }
-            return Assembly.Load(assemblyName);
-        }
-        var sibling = Path.Combine(_dir, assemblyName.Name + ".dll");
-        if (File.Exists(sibling)) return LoadFromAssemblyPath(sibling);
-        if (_sdkRoot != null) { var sdkSibling = Path.Combine(_sdkRoot, assemblyName.Name + ".dll"); if (File.Exists(sdkSibling)) return LoadFromAssemblyPath(sdkSibling); }
-        var resolved = _resolver.ResolveAssemblyToPath(assemblyName);
-        return resolved != null ? LoadFromAssemblyPath(resolved) : null;
-    }
-    static bool IsFrameworkAssembly(string? name) =>
-        name is "netstandard" or "mscorlib"
-        || (name?.StartsWith("System.", StringComparison.Ordinal) ?? false)
-        || (name?.StartsWith("Microsoft.CSharp", StringComparison.Ordinal) ?? false);
-    static bool IsSharedBuildAssembly(string? name) => name is "Microsoft.Build.Framework" or "Microsoft.Build.Utilities.Core" or "Microsoft.Build";
-    static string? FindDotnetRoot(string? sdkRoot) {
-        if (sdkRoot == null) return null;
-        var sdkDir = Path.GetDirectoryName(sdkRoot);
-        return sdkDir == null ? null : Path.GetDirectoryName(sdkDir);
-    }
-    static string? FindSharedFrameworkAssembly(string? dotnetRoot, AssemblyName assemblyName) {
-        if (dotnetRoot == null || assemblyName.Name == null) return null;
-        var sharedRoot = Path.Combine(dotnetRoot, "shared", "Microsoft.NETCore.App");
-        if (!Directory.Exists(sharedRoot)) return null;
-        var requested = assemblyName.Version;
-        foreach (var dir in Directory.EnumerateDirectories(sharedRoot)
-                     .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
-                     .Where(entry => entry.Version != null)
-                     .OrderByDescending(entry => entry.Version)) {
-            if (requested != null && dir.Version!.Major != requested.Major) continue;
-            var candidate = Path.Combine(dir.Path, assemblyName.Name + ".dll");
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
-    static string? FindSdkRoot(string start) {
-        for (var d = start; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
-            if (File.Exists(Path.Combine(d, "Microsoft.Build.Framework.dll"))) return d;
-        return null;
-    }
-}
 """);
         sb.AppendLine(TaskAdapterSource());
         return sb.ToString();
     }
+
+    static Dictionary<string, string> TaskAssemblyAliases(TaskMetadataLoader.MetadataIndex meta) {
+        var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in meta.ByTaskName.Values
+                     .Select(t => t.AssemblyPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)) {
+            aliases[path] = "taskasm" + aliases.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return aliases;
+    }
+
+    static string CSharpTaskTypeReference(string alias, string fullTypeName) =>
+        alias + "::" + fullTypeName.Replace('+', '.');
 
     // Common BsharpBuildEngine + BsharpTaskItem code used by the persistent task server.
     public static string TaskAdapterSource() => """
@@ -1232,10 +1186,7 @@ static class DirectTaskExecutor {
 
     static Type GetTaskType(TaskRunner.TaskDescriptor desc) {
         if (TypesByShortName.TryGetValue(desc.ShortName, out var cached)) return cached;
-        var assemblyName = Path.GetFileNameWithoutExtension(desc.AssemblyPath);
-        var asm = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => string.Equals(a.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase))
-            ?? Assembly.Load(new AssemblyName(assemblyName));
-        var type = asm.GetType(desc.FullTypeName, throwOnError: true)!;
+        var type = desc.ResolveTaskType();
         TypesByShortName[desc.ShortName] = type;
         return type;
     }
@@ -1271,103 +1222,6 @@ static class DirectTaskExecutor {
             converted = arr;
         }
         if (converted != null) prop.SetValue(task, converted);
-    }
-
-    static void ApplyDirectTaskDefaults(Type type, object task, TaskRunner.TaskDescriptor desc) {
-        if (!string.Equals(desc.ShortName, "Csc", StringComparison.OrdinalIgnoreCase))
-            return;
-        var roslynDir = Path.Combine(Path.GetDirectoryName(desc.AssemblyPath) ?? "", "bincore");
-        if (task is Microsoft.CodeAnalysis.BuildTasks.Csc csc && Directory.Exists(roslynDir)) {
-            csc.ToolPath = roslynDir;
-            csc.ToolExe = "csc.dll";
-            csc.UseSharedCompilation = false;
-            return;
-        }
-        var toolPath = GetProperty(type, "ToolPath");
-        if (toolPath != null && toolPath.CanWrite && string.IsNullOrEmpty(toolPath.GetValue(task) as string) && Directory.Exists(roslynDir))
-            toolPath.SetValue(task, roslynDir);
-        var toolExe = GetProperty(type, "ToolExe");
-        if (toolExe != null && toolExe.CanWrite && File.Exists(Path.Combine(roslynDir, "csc.dll")))
-            toolExe.SetValue(task, "csc.dll");
-    }
-
-    static TaskResult ExecuteCscDirect(Microsoft.CodeAnalysis.BuildTasks.Csc csc, TaskInvocation req, TaskRunner.TaskDescriptor desc) {
-        try {
-            var roslynDir = Path.Combine(Path.GetDirectoryName(desc.AssemblyPath) ?? "", "bincore");
-            var cscDll = Path.Combine(roslynDir, "csc.dll");
-            if (!File.Exists(cscDll))
-                return new TaskResult { Success = false, Error = $"Could not find Roslyn compiler at '{cscDll}'" };
-
-            var response = InvokeTaskString(csc, "GenerateResponseFileContents");
-            var command = "";
-            var rsp = Path.Combine(Path.GetTempPath(), "bsharp-csc-" + Guid.NewGuid().ToString("N") + ".rsp");
-            File.WriteAllText(rsp, response);
-            try {
-                var psi = new ProcessStartInfo(ResolveDotnetHost()) {
-                    UseShellExecute = false,
-                    RedirectStandardError = true,
-                    RedirectStandardOutput = true,
-                    WorkingDirectory = Directory.GetCurrentDirectory(),
-                };
-                psi.ArgumentList.Add(cscDll);
-                foreach (var arg in SplitCommandLine(command)) psi.ArgumentList.Add(arg);
-                psi.ArgumentList.Add("@" + rsp);
-                var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start csc");
-                var stdout = process.StandardOutput.ReadToEnd();
-                var stderr = process.StandardError.ReadToEnd();
-                process.WaitForExit();
-                var result = new TaskResult { Success = process.ExitCode == 0 };
-                result.SetString("ExitCode", process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                if (req.Properties.TryGetValue("OutputAssembly", out var outputAssembly) && JsonSerializer.Deserialize(outputAssembly, TaskModelJson.Default.ItemSpec) is { } asm)
-                    result.SetItems("OutputAssembly", new[] { asm });
-                if (req.Properties.TryGetValue("OutputRefAssembly", out var outputRefAssembly) && JsonSerializer.Deserialize(outputRefAssembly, TaskModelJson.Default.ItemSpec) is { } refAsm)
-                    result.SetItems("OutputRefAssembly", new[] { refAsm });
-                var args = SplitCommandLine(command).Concat(new[] { "@" + rsp }).Select(arg => new Bsharp.Generated.TaskModel.ItemSpec { Identity = arg }).ToArray();
-                result.SetItems("CommandLineArgs", args);
-                if (!result.Success)
-                    result.Error = string.Join("\n", new[] { stdout, stderr }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                return result;
-            } finally {
-                try { File.Delete(rsp); } catch { }
-            }
-        } catch (Exception ex) {
-            return new TaskResult { Success = false, Error = ex.GetType().Name + ": " + ex.Message + "\n" + ex.StackTrace };
-        }
-    }
-
-    static string InvokeTaskString(object task, string name) {
-        var method = task.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new MissingMethodException(task.GetType().FullName, name);
-        return method.Invoke(task, Array.Empty<object?>()) as string ?? "";
-    }
-
-    static string ResolveDotnetHost() {
-        var host = P.Get("DotNetHostPath");
-        if (!string.IsNullOrEmpty(host) && File.Exists(host)) return host;
-        var dir = P.Get("DotNetHostDirectory");
-        var file = P.Get("DotNetHostFileName");
-        if (!string.IsNullOrEmpty(dir) && !string.IsNullOrEmpty(file)) {
-            var combined = Path.Combine(dir, file);
-            if (File.Exists(combined)) return combined;
-        }
-        return "dotnet";
-    }
-
-    static List<string> SplitCommandLine(string command) {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        var inQuotes = false;
-        for (var i = 0; i < command.Length; i++) {
-            var ch = command[i];
-            if (ch == '"') { inQuotes = !inQuotes; continue; }
-            if (!inQuotes && char.IsWhiteSpace(ch)) {
-                if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
-                continue;
-            }
-            current.Append(ch);
-        }
-        if (current.Length > 0) result.Add(current.ToString());
-        return result;
     }
 
     static PropertyInfo? GetProperty(Type type, string name) {
@@ -2299,14 +2153,13 @@ static class Emitter {
         IReadOnlyList<string> defaultTargets,
         IReadOnlyList<string> compiledTargets) {
         sb.AppendLine("// <auto-generated/>");
-        sb.AppendLine("// Generated by bsharp codegen. Static fields + NativeAOT in-proc SDK task loading.");
+        sb.AppendLine("// Generated by bsharp codegen. Static fields + NativeAOT host with a CoreCLR task sidekick.");
         sb.AppendLine("#nullable enable");
         sb.AppendLine("#pragma warning disable CS1998");
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.Diagnostics;");
         sb.AppendLine("using System.Diagnostics.CodeAnalysis;");
         sb.AppendLine("using System.Linq;");
-        sb.AppendLine("using System.Reflection;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using System.Text.Json;");
@@ -2325,7 +2178,6 @@ static class Emitter {
         // Main
         sb.AppendLine("""
 var sw = Stopwatch.StartNew();
-TaskReflectionRoots.Preserve();
 var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
@@ -2789,9 +2641,6 @@ static class FastPathFileHelpers {
 
         EmitItemAndRuntimeHelpers(sb);
         EmitTaskHostRegistry(sb);
-        EmitNativeAotTaskRoots(sb, _taskMeta);
-        sb.AppendLine(Codegen.TaskAdapterSource());
-        sb.AppendLine(Codegen.DirectTaskExecutorSource());
         EmitP(sb, project);
         EmitI(sb, project);
         EmitTasks(sb);
@@ -2838,7 +2687,7 @@ static bool FastNoOpBuildBeforePopulate(string csprojPath) {
 class Item {
     public string Identity;
     Dictionary<string, string>? _m;
-    public Dictionary<string, string> M => _m ??= new Dictionary<string, string>(StringComparer.Ordinal);
+    public Dictionary<string, string> M => _m ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string>? MetadataOrNull => _m;
     public Item(string id) {
         Identity = NormalizeIdentity(id);
@@ -2846,30 +2695,27 @@ class Item {
     public Item(string id, Dictionary<string, string> metadata) {
         Identity = NormalizeIdentity(id);
         if (metadata.Count != 0) {
-            _m = new Dictionary<string, string>(StringComparer.Ordinal);
+            _m = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in metadata)
-                _m[kv.Key.ToLowerInvariant()] = kv.Value;
+                _m[kv.Key] = kv.Value;
         }
     }
     public string GetMetadata(string name) {
-        name = name.ToLowerInvariant();
-        return name switch {
-            "identity"    => Identity,
-            "fullpath"    => Identity.Length == 0 ? "" : Path.GetFullPath(Identity),
-            "filename"    => Identity.Length == 0 ? "" : Path.GetFileNameWithoutExtension(Identity),
-            "extension"   => Identity.Length == 0 ? "" : Path.GetExtension(Identity),
-            "directory"   => Identity.Length == 0 ? "" : Path.GetDirectoryName(Identity) ?? "",
-            "relativedir" => RelativeDir(Identity),
-            "rootdir"     => Identity.Length == 0 ? "" : Path.GetPathRoot(Identity) ?? "",
-            _ => _m != null && _m.TryGetValue(name, out var v) ? v : "",
-        };
+        if (string.Equals(name, "identity", StringComparison.OrdinalIgnoreCase)) return Identity;
+        if (string.Equals(name, "fullpath", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetFullPath(Identity);
+        if (string.Equals(name, "filename", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetFileNameWithoutExtension(Identity);
+        if (string.Equals(name, "extension", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetExtension(Identity);
+        if (string.Equals(name, "directory", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetDirectoryName(Identity) ?? "";
+        if (string.Equals(name, "relativedir", StringComparison.OrdinalIgnoreCase)) return RelativeDir(Identity);
+        if (string.Equals(name, "rootdir", StringComparison.OrdinalIgnoreCase)) return Identity.Length == 0 ? "" : Path.GetPathRoot(Identity) ?? "";
+        return _m != null && _m.TryGetValue(name, out var v) ? v : "";
     }
     // True iff this item's metadata `name` (lowercase) equals `value` case-insensitively.
     // Cheaper than the equivalent string.Equals(GetMetadata("name"), value, OrdinalIgnoreCase)
     // pattern that conditions / item filters used to generate.
     public bool HasMetadata(string name, string value) =>
         string.Equals(GetMetadata(name), value, StringComparison.OrdinalIgnoreCase);
-    public void SetMetadata(string name, string value) => M[name.ToLowerInvariant()] = value ?? "";
+    public void SetMetadata(string name, string value) => M[name] = value ?? "";
     public void CopyMetadataTo(Item destination) {
         if (_m == null) return;
         foreach (var kv in _m) destination.M[kv.Key] = kv.Value;
@@ -2932,8 +2778,8 @@ class Item {
     }
 }
 
-// Real SDK tasks run out-of-proc in the persistent CoreCLR task server. The main
-// generated host can stay NativeAOT and avoid rooting dynamic task-loading machinery.
+// Real SDK tasks run out-of-proc in a CoreCLR sidekick. The NativeAOT host keeps
+// startup small while task assemblies load from their original SDK paths on demand.
 static partial class TaskRunner {
     public sealed record TaskDescriptor(string ShortName, string FullTypeName, string AssemblyPath, string[] OutputNames);
 
@@ -3025,7 +2871,7 @@ static partial class TaskRunner {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try {
             var timestampGuard = CaptureTimestampGuard(task);
-            task.Result = DirectTaskExecutor.Execute(task.Desc, task.Invocation);
+            task.Result = GetTaskServer().Invoke(task.Invocation);
             RestoreTimestampIfContentUnchanged(timestampGuard);
             var error = task.Result.Success ? null : task.Result.Error ?? $"task '{task.Desc.ShortName}' returned false";
             TaskDiagnostics.Write(task, started, error);
@@ -3432,7 +3278,11 @@ static class TargetIncrementality {
         foreach (var i in inputs) { var t = File.GetLastWriteTimeUtc(i); if (t > newestInput) { newestInput = t; newestInputPath = i; } }
         DateTime oldestOutput = DateTime.MaxValue;
         var oldestOutputPath = "";
-        foreach (var o in outputs) { var t = File.GetLastWriteTimeUtc(o); if (t == default) return Trace(targetName, false, "missing output", newestInputPath, newestInput, o, t); if (t < oldestOutput) { oldestOutput = t; oldestOutputPath = o; } }
+        foreach (var o in outputs) {
+            if (!File.Exists(o)) return Trace(targetName, false, "missing output", newestInputPath, newestInput, o, default);
+            var t = File.GetLastWriteTimeUtc(o);
+            if (t < oldestOutput) { oldestOutput = t; oldestOutputPath = o; }
+        }
         var upToDate = oldestOutput >= newestInput;
         return Trace(targetName, upToDate, upToDate ? "up-to-date" : "newer input", newestInputPath, newestInput, oldestOutputPath, oldestOutput);
     }
@@ -3448,62 +3298,136 @@ static class TargetIncrementality {
     }
 }
 
-static class TargetRuntime {
-    static readonly AsyncLocal<string[]?> _targetStack = new();
+static class ValueTaskHelpers {
+    public static Task WhenAll(Task t1, Task t2) =>
+        Task.WhenAll(t1, t2);
 
-    public static bool TryEnter(string targetName, ref int state, ref TaskCompletionSource? completion, out Task? waitTask) {
-        waitTask = null;
-        var stack = _targetStack.Value ?? Array.Empty<string>();
-        var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (Interlocked.CompareExchange(ref state, 1, 0) == 0) {
-            Volatile.Write(ref completion, created);
-            Push(stack, targetName);
-            return true;
-        }
+    public static Task WhenAll(Task t1, Task t2, Task t3) =>
+        Task.WhenAll(t1, t2, t3);
 
-        if (Volatile.Read(ref state) == 2)
-            return false;
+    public static Task WhenAll(Task t1, Task t2, Task t3, Task t4) =>
+        Task.WhenAll(t1, t2, t3, t4);
 
-        if (stack.Contains(targetName, StringComparer.OrdinalIgnoreCase)) {
-            var cycle = string.Join(" -> ", stack.Concat(new[] { targetName }));
-            throw new InvalidOperationException($"Target deadlock detected: {cycle}");
-        }
+    public static Task WhenAll(params Task[] tasks) =>
+        Task.WhenAll(tasks);
 
-        var spin = new SpinWait();
-        TaskCompletionSource? existing;
-        while ((existing = Volatile.Read(ref completion)) is null) {
-            if (Volatile.Read(ref state) == 2)
-                return false;
-            spin.SpinOnce();
-        }
-
-        waitTask = existing.Task;
-        return false;
+    public static async ValueTask WhenAll(ValueTask t1, ValueTask t2) {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+        try { await t1; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t2; } catch (Exception ex) { Capture(ex, ref first); }
+        first?.Throw();
     }
 
-    public static async ValueTask WaitForCompletionAsync(string targetName, Task waitTask) {
+    public static async ValueTask WhenAll(ValueTask t1, ValueTask t2, ValueTask t3) {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+        try { await t1; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t2; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t3; } catch (Exception ex) { Capture(ex, ref first); }
+        first?.Throw();
+    }
+
+    public static async ValueTask WhenAll(ValueTask t1, ValueTask t2, ValueTask t3, ValueTask t4) {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+        try { await t1; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t2; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t3; } catch (Exception ex) { Capture(ex, ref first); }
+        try { await t4; } catch (Exception ex) { Capture(ex, ref first); }
+        first?.Throw();
+    }
+
+    public static async ValueTask WhenAll(params ValueTask[] tasks) {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? first = null;
+        foreach (var task in tasks) {
+            try { await task; } catch (Exception ex) { Capture(ex, ref first); }
+        }
+        first?.Throw();
+    }
+
+    static void Capture(Exception ex, ref System.Runtime.ExceptionServices.ExceptionDispatchInfo? first) {
+        first ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+    }
+}
+
+static class TargetRuntime {
+    static readonly AsyncLocal<string[]?> _targetStack = new();
+    static readonly object _completionLock = new();
+
+    public static bool TryEnter(string targetName, ref int state, ref TaskCompletionSource? completion, out Task? waitTask) {
+        while (true) {
+            waitTask = null;
+            var trackStack = StackDiagnosticsEnabled();
+            var stack = trackStack ? _targetStack.Value ?? Array.Empty<string>() : Array.Empty<string>();
+            if (Interlocked.CompareExchange(ref state, 1, 0) == 0) {
+                if (trackStack)
+                    Push(stack, targetName);
+                return true;
+            }
+
+            if (Volatile.Read(ref state) == 2)
+                return false;
+
+            if (trackStack && stack.Contains(targetName, StringComparer.OrdinalIgnoreCase)) {
+                var cycle = string.Join(" -> ", stack.Concat(new[] { targetName }));
+                throw new InvalidOperationException($"Target deadlock detected: {cycle}");
+            }
+
+            lock (_completionLock) {
+                var currentState = Volatile.Read(ref state);
+                if (currentState == 0)
+                    continue;
+                if (currentState == 2)
+                    return false;
+                completion ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                waitTask = completion.Task;
+                return false;
+            }
+        }
+    }
+
+    public static async Task WaitForCompletionAsync(string targetName, Task waitTask) {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var stack = string.Join(" -> ", _targetStack.Value ?? Array.Empty<string>());
+        string? stack = null;
         while (!waitTask.IsCompleted) {
             var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
             if (completed == waitTask)
                 break;
-            Console.Error.WriteLine($"bsharp: still waiting after {(int)sw.Elapsed.TotalSeconds}s for target '{targetName}' to complete; current target stack: {stack}");
+            if (StackDiagnosticsEnabled())
+                stack ??= string.Join(" -> ", _targetStack.Value ?? Array.Empty<string>());
+            Console.Error.WriteLine(stack is null
+                ? $"bsharp: still waiting after {(int)sw.Elapsed.TotalSeconds}s for target '{targetName}' to complete"
+                : $"bsharp: still waiting after {(int)sw.Elapsed.TotalSeconds}s for target '{targetName}' to complete; current target stack: {stack}");
         }
         await waitTask;
     }
 
     public static void MarkDone(string targetName, ref int state, ref TaskCompletionSource? completion) {
-        Volatile.Write(ref state, 2);
-        Volatile.Read(ref completion)?.TrySetResult();
-        Pop(targetName);
+        TaskCompletionSource? toSignal;
+        lock (_completionLock) {
+            Volatile.Write(ref state, 2);
+            toSignal = completion;
+            completion = null;
+        }
+        toSignal?.TrySetResult();
+        if (StackDiagnosticsEnabled())
+            Pop(targetName);
     }
 
     public static void MarkSkipped(string targetName, ref int state, ref TaskCompletionSource? completion) {
-        Volatile.Write(ref state, 0);
-        Volatile.Read(ref completion)?.TrySetResult();
-        Pop(targetName);
+        TaskCompletionSource? toSignal;
+        lock (_completionLock) {
+            Volatile.Write(ref state, 0);
+            toSignal = completion;
+            completion = null;
+        }
+        toSignal?.TrySetResult();
+        if (StackDiagnosticsEnabled())
+            Pop(targetName);
     }
+
+    static bool StackDiagnosticsEnabled() =>
+        Log.Level >= Log.Verbosity.Diagnostic
+        || Environment.GetEnvironmentVariable("BSHARP_TRACE") == "1"
+        || Environment.GetEnvironmentVariable("BSHARP_TARGET_STACK") == "1";
 
     static void Push(string[] stack, string targetName) {
         var next = new string[stack.Length + 1];
@@ -3652,7 +3576,8 @@ static class Log {
         sb.AppendLine("static partial class TaskRunner {");
         sb.AppendLine("    static partial void RegisterTasks() {");
         if (_taskMeta != null) {
-            foreach (var t in _taskMeta.ByTaskName.Values.OrderBy(t => t.FullTypeName, StringComparer.Ordinal)) {
+            var taskTypes = _taskMeta.ByTaskName.Values.OrderBy(t => t.FullTypeName, StringComparer.Ordinal).ToArray();
+            foreach (var t in taskTypes) {
                 var shortName = t.FullTypeName.Contains('.')
                     ? t.FullTypeName.Substring(t.FullTypeName.LastIndexOf('.') + 1)
                     : t.FullTypeName;
@@ -3661,11 +3586,28 @@ static class Log {
                     : $"new[] {{ {string.Join(", ", t.OutputProperties.Select(p => CSharpLiteral(p.Name)))} }}";
                 sb.AppendLine($"        Add({CSharpLiteral(shortName)}, {CSharpLiteral(t.FullTypeName)}, {CSharpLiteral(t.AssemblyPath)}, {outputs});");
             }
+            sb.AppendLine("    }");
+        } else {
+            sb.AppendLine("    }");
         }
-        sb.AppendLine("    }");
         sb.AppendLine("}");
         sb.AppendLine();
     }
+
+    static Dictionary<string, string> TaskAssemblyAliases() {
+        var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (_taskMeta == null) return aliases;
+        foreach (var path in _taskMeta.ByTaskName.Values
+                     .Select(t => t.AssemblyPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)) {
+            aliases[path] = "taskasm" + aliases.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return aliases;
+    }
+
+    static string CSharpTaskTypeReference(string alias, string fullTypeName) =>
+        alias + "::" + fullTypeName.Replace('+', '.');
 
     static void EmitNativeAotTaskRoots(StringBuilder sb, TaskMetadataLoader.MetadataIndex? meta) {
         sb.AppendLine("static class TaskReflectionRoots {");
@@ -3864,61 +3806,168 @@ static class Log {
 readonly struct ParamList {
     public static readonly ParamList Empty = default;
     readonly (string Key, string Value)[]? _items;
-    readonly string? _key;
-    readonly string? _value;
+    readonly int _count;
+    readonly string? _key1;
+    readonly string? _value1;
+    readonly string? _key2;
+    readonly string? _value2;
+    readonly string? _key3;
+    readonly string? _value3;
+    readonly string? _key4;
+    readonly string? _value4;
     public ParamList((string Key, string Value)[] items) {
         _items = items;
-        _key = null;
-        _value = null;
+        _count = -1;
+        _key1 = _value1 = _key2 = _value2 = _key3 = _value3 = _key4 = _value4 = null;
     }
     public ParamList(string key, string value) {
         _items = null;
-        _key = key;
-        _value = value;
+        _count = 1;
+        _key1 = key;
+        _value1 = value;
+        _key2 = _value2 = _key3 = _value3 = _key4 = _value4 = null;
+    }
+    public ParamList(string key1, string value1, string key2, string value2) {
+        _items = null;
+        _count = 2;
+        _key1 = key1;
+        _value1 = value1;
+        _key2 = key2;
+        _value2 = value2;
+        _key3 = _value3 = _key4 = _value4 = null;
+    }
+    public ParamList(string key1, string value1, string key2, string value2, string key3, string value3) {
+        _items = null;
+        _count = 3;
+        _key1 = key1;
+        _value1 = value1;
+        _key2 = key2;
+        _value2 = value2;
+        _key3 = key3;
+        _value3 = value3;
+        _key4 = _value4 = null;
+    }
+    public ParamList(string key1, string value1, string key2, string value2, string key3, string value3, string key4, string value4) {
+        _items = null;
+        _count = 4;
+        _key1 = key1;
+        _value1 = value1;
+        _key2 = key2;
+        _value2 = value2;
+        _key3 = key3;
+        _value3 = value3;
+        _key4 = key4;
+        _value4 = value4;
     }
     public string? GetValueOrDefault(string key) {
-        if (_key != null) {
-            if (string.Equals(_key, key, StringComparison.OrdinalIgnoreCase))
-                return _value;
-        } else if (_items != null) {
+        if (_items != null) {
             foreach (var (k, v) in _items)
                 if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase))
                     return v;
         }
+        if (_count >= 1 && string.Equals(_key1, key, StringComparison.OrdinalIgnoreCase)) return _value1;
+        if (_count >= 2 && string.Equals(_key2, key, StringComparison.OrdinalIgnoreCase)) return _value2;
+        if (_count >= 3 && string.Equals(_key3, key, StringComparison.OrdinalIgnoreCase)) return _value3;
+        if (_count >= 4 && string.Equals(_key4, key, StringComparison.OrdinalIgnoreCase)) return _value4;
         return null;
     }
 }
 
 readonly struct OutputList {
     readonly (string Key, string itemName, string? metadataName)[]? _items;
-    readonly string? _key;
-    readonly string? _itemName;
-    readonly string? _metadataName;
+    readonly int _count;
+    readonly string? _key1;
+    readonly string? _itemName1;
+    readonly string? _metadataName1;
+    readonly string? _key2;
+    readonly string? _itemName2;
+    readonly string? _metadataName2;
+    readonly string? _key3;
+    readonly string? _itemName3;
+    readonly string? _metadataName3;
+    readonly string? _key4;
+    readonly string? _itemName4;
+    readonly string? _metadataName4;
     public OutputList((string Key, string itemName, string? metadataName)[] items) {
         _items = items;
-        _key = null;
-        _itemName = null;
-        _metadataName = null;
+        _count = -1;
+        _key1 = _itemName1 = _metadataName1 = _key2 = _itemName2 = _metadataName2 = null;
+        _key3 = _itemName3 = _metadataName3 = _key4 = _itemName4 = _metadataName4 = null;
     }
     public OutputList(string key, string itemName, string? metadataName) {
         _items = null;
-        _key = key;
-        _itemName = itemName;
-        _metadataName = metadataName;
+        _count = 1;
+        _key1 = key;
+        _itemName1 = itemName;
+        _metadataName1 = metadataName;
+        _key2 = _itemName2 = _metadataName2 = _key3 = _itemName3 = _metadataName3 = null;
+        _key4 = _itemName4 = _metadataName4 = null;
+    }
+    public OutputList(string key1, string itemName1, string? metadataName1, string key2, string itemName2, string? metadataName2) {
+        _items = null;
+        _count = 2;
+        _key1 = key1;
+        _itemName1 = itemName1;
+        _metadataName1 = metadataName1;
+        _key2 = key2;
+        _itemName2 = itemName2;
+        _metadataName2 = metadataName2;
+        _key3 = _itemName3 = _metadataName3 = _key4 = _itemName4 = _metadataName4 = null;
+    }
+    public OutputList(string key1, string itemName1, string? metadataName1, string key2, string itemName2, string? metadataName2, string key3, string itemName3, string? metadataName3) {
+        _items = null;
+        _count = 3;
+        _key1 = key1;
+        _itemName1 = itemName1;
+        _metadataName1 = metadataName1;
+        _key2 = key2;
+        _itemName2 = itemName2;
+        _metadataName2 = metadataName2;
+        _key3 = key3;
+        _itemName3 = itemName3;
+        _metadataName3 = metadataName3;
+        _key4 = _itemName4 = _metadataName4 = null;
+    }
+    public OutputList(string key1, string itemName1, string? metadataName1, string key2, string itemName2, string? metadataName2, string key3, string itemName3, string? metadataName3, string key4, string itemName4, string? metadataName4) {
+        _items = null;
+        _count = 4;
+        _key1 = key1;
+        _itemName1 = itemName1;
+        _metadataName1 = metadataName1;
+        _key2 = key2;
+        _itemName2 = itemName2;
+        _metadataName2 = metadataName2;
+        _key3 = key3;
+        _itemName3 = itemName3;
+        _metadataName3 = metadataName3;
+        _key4 = key4;
+        _itemName4 = itemName4;
+        _metadataName4 = metadataName4;
     }
     public bool TryGetValue(string key, out (string itemName, string? metadataName) value) {
-        if (_key != null) {
-            if (string.Equals(_key, key, StringComparison.OrdinalIgnoreCase)) {
-                value = (_itemName!, _metadataName);
-                return true;
-            }
-        } else if (_items != null) {
+        if (_items != null) {
             foreach (var item in _items) {
                 if (string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase)) {
                     value = (item.itemName, item.metadataName);
                     return true;
                 }
             }
+        }
+        if (_count >= 1 && string.Equals(_key1, key, StringComparison.OrdinalIgnoreCase)) {
+            value = (_itemName1!, _metadataName1);
+            return true;
+        }
+        if (_count >= 2 && string.Equals(_key2, key, StringComparison.OrdinalIgnoreCase)) {
+            value = (_itemName2!, _metadataName2);
+            return true;
+        }
+        if (_count >= 3 && string.Equals(_key3, key, StringComparison.OrdinalIgnoreCase)) {
+            value = (_itemName3!, _metadataName3);
+            return true;
+        }
+        if (_count >= 4 && string.Equals(_key4, key, StringComparison.OrdinalIgnoreCase)) {
+            value = (_itemName4!, _metadataName4);
+            return true;
         }
         value = default;
         return false;
@@ -4836,10 +4885,19 @@ static partial class Tasks {
         // Public entry point — direct call so Main doesn't root the dispatcher switch.
         var compiledDefaultTargets = compiledTargets.Count > 0 ? initialTargets.Concat(compiledTargets) : initialTargets.Concat(defaultTargets);
         sb.AppendLine("    public static async ValueTask Build(IReadOnlyList<string>? requestedTargets = null) {");
-        sb.AppendLine($"        var targets = requestedTargets is {{ Count: > 0 }} ? {TargetArrayLiteral(initialTargets)}.Concat(requestedTargets).ToArray() : {TargetArrayLiteral(compiledDefaultTargets)};");
-        sb.AppendLine("        foreach (var target in targets)");
-        sb.AppendLine("            if (!await RunBuildTarget(target))");
-        sb.AppendLine("                AddError(target, \"target does not exist in generated build graph\");");
+        sb.AppendLine("        if (requestedTargets is { Count: > 0 }) {");
+        foreach (var target in initialTargets)
+            sb.AppendLine($"            await RunTargetOrError({CSharpLiteral(target)});");
+        sb.AppendLine("            foreach (var target in requestedTargets)");
+        sb.AppendLine("                await RunTargetOrError(target);");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        foreach (var target in compiledDefaultTargets)
+            sb.AppendLine($"        await RunTargetOrError({CSharpLiteral(target)});");
+        sb.AppendLine("    }");
+        sb.AppendLine("    static async ValueTask RunTargetOrError(string target) {");
+        sb.AppendLine("        if (!await RunBuildTarget(target))");
+        sb.AppendLine("            AddError(target, \"target does not exist in generated build graph\");");
         sb.AppendLine("    }");
         if (indexOf.TryGetValue("Restore", out _))
             sb.AppendLine($"    public static ValueTask Restore() => {Method("Restore")}();");
@@ -4847,23 +4905,19 @@ static partial class Tasks {
             sb.AppendLine("    public static ValueTask Restore() => ValueTask.CompletedTask;");
         sb.AppendLine();
         sb.AppendLine("    public static List<Item> GetReturns(string name) {");
-        sb.AppendLine("        return name.ToLowerInvariant() switch {");
         foreach (var name in sequence) {
             if (!instance.Targets.TryGetValue(name, out var target) || string.IsNullOrWhiteSpace(target.Returns))
                 continue;
-            sb.AppendLine($"            {CSharpLiteral(name.ToLowerInvariant())} => {CompileTargetReturns(target.Returns)},");
+            sb.AppendLine($"        if (string.Equals(name, {CSharpLiteral(name)}, StringComparison.OrdinalIgnoreCase)) return {CompileTargetReturns(target.Returns)};");
         }
-        sb.AppendLine("            _ => new List<Item>(),");
-        sb.AppendLine("        };");
+        sb.AppendLine("        return new List<Item>();");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    static async ValueTask<bool> RunBuildTarget(string name) {");
-        sb.AppendLine("        switch (name.ToLowerInvariant()) {");
         foreach (var name in sequence) {
-            sb.AppendLine($"            case \"{name.ToLowerInvariant()}\": await {Method(name)}(); return true;");
+            sb.AppendLine($"        if (string.Equals(name, {CSharpLiteral(name)}, StringComparison.OrdinalIgnoreCase)) {{ await {Method(name)}(); return true; }}");
         }
-        sb.AppendLine("            default: return false;");
-        sb.AppendLine("        }");
+        sb.AppendLine("        return false;");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -4872,12 +4926,10 @@ static partial class Tasks {
             sb.AppendLine("    public static async ValueTask Run(string name) {");
             sb.AppendLine("        if (string.IsNullOrEmpty(name)) return;");
             sb.AppendLine("        try {");
-            sb.AppendLine("            switch (name.ToLowerInvariant()) {");
             foreach (var name in sequence) {
-                sb.AppendLine($"                case \"{name.ToLowerInvariant()}\": await {Method(name)}(); break;");
+                sb.AppendLine($"            if (string.Equals(name, {CSharpLiteral(name)}, StringComparison.OrdinalIgnoreCase)) {{ await {Method(name)}(); return; }}");
             }
-            sb.AppendLine("                default: break; // unknown target: silent skip (matches MSBuild)");
-            sb.AppendLine("            }");
+            sb.AppendLine("            return; // unknown target: silent skip (matches MSBuild)");
             sb.AppendLine("        } catch (Exception ex) {");
             sb.AppendLine("            AddError(name, ex.Message);");
             sb.AppendLine("        }");
@@ -4988,10 +5040,17 @@ static partial class Tasks {
         var hasAfters = afterCompanions.TryGetValue(name, out var afters);
 
         var literalRun = new List<string>();
+        var literalRunBatch = 0;
         void FlushLiteralRun() {
             if (literalRun.Count == 0) return;
-            foreach (var dependency in literalRun)
-                sb.AppendLine($"            await {Method(dependency)}();");
+            if (literalRun.Count == 1) {
+                sb.AppendLine($"            await {Method(literalRun[0])}();");
+            } else {
+                var batch = literalRunBatch++;
+                for (var i = 0; i < literalRun.Count; i++)
+                    sb.AppendLine($"            var dependencyTask{batch}_{i} = {Method(literalRun[i])}();");
+                sb.AppendLine($"            await ValueTaskHelpers.WhenAll({string.Join(", ", Enumerable.Range(0, literalRun.Count).Select(i => $"dependencyTask{batch}_{i}"))});");
+            }
             literalRun.Clear();
         }
 
@@ -5031,9 +5090,8 @@ static partial class Tasks {
         // DependsOnTargets are ordered by MSBuild semantics. Do not de-duplicate:
         // a condition-skipped target is not considered run, so "A;Mutate;A" can
         // legitimately execute the second A after Mutate changes A's Condition.
-        // Also do not flatten into Task.WhenAll: later targets often consume
-        // item/property mutations from earlier targets (e.g. CoreCompile needs
-        // references populated by ResolveReferences).
+        // Literal runs are launched as one batch to expose independent target work
+        // to the thread pool; dynamic target lists still form a sequence boundary.
         foreach (var (kind, val) in ParseDeps(target.DependsOnTargets)) {
             if (kind == "literal") {
                 literalRun.Add(val);
@@ -5280,7 +5338,10 @@ static partial class Tasks {
                     && string.Equals(dynamic.ItemType, batch, StringComparison.OrdinalIgnoreCase))
                 {
                     if (!openedBatch) {
-                        sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                        var batchEnumerable = string.Equals(TryCanonicalItemKey(batch), TryCanonicalItemKey(item.ItemType), StringComparison.OrdinalIgnoreCase)
+                            ? $"{ItemAccess(batch)}.ToArray()"
+                            : ItemAccess(batch);
+                        sb.AppendLine($"{iind}foreach (var batchItem in {batchEnumerable}) {{");
                         iind += "    ";
                         openedBatch = true;
                     }
@@ -5381,9 +5442,13 @@ static partial class Tasks {
                 }
 
                 // Snapshot the batch list before iterating so the body can safely mutate the
-                // underlying list. Defensive — covers patterns we haven't special-cased above.
+                // underlying list when adding back to the same item type. Cross-list transforms
+                // can enumerate directly without invalidating the source enumerator.
                 if (batch != null) {
-                    sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                    var batchEnumerable = string.Equals(TryCanonicalItemKey(batch), TryCanonicalItemKey(item.ItemType), StringComparison.OrdinalIgnoreCase)
+                        ? $"{ItemAccess(batch)}.ToArray()"
+                        : ItemAccess(batch);
+                    sb.AppendLine($"{iind}foreach (var batchItem in {batchEnumerable}) {{");
                     iind += "    ";
                     openedBatch = true;
                 }
@@ -5478,9 +5543,13 @@ static partial class Tasks {
                     continue;
                 }
                 // Snapshot the batch list before iterating so the body can safely mutate the
-                // underlying list. Defensive — covers patterns we haven't special-cased above.
+                // underlying list when removing from the same item type. Cross-list removals
+                // can enumerate directly without invalidating the source enumerator.
                 if (batch != null) {
-                    sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(batch)}.ToArray()) {{");
+                    var batchEnumerable = string.Equals(TryCanonicalItemKey(batch), TryCanonicalItemKey(item.ItemType), StringComparison.OrdinalIgnoreCase)
+                        ? $"{ItemAccess(batch)}.ToArray()"
+                        : ItemAccess(batch);
+                    sb.AppendLine($"{iind}foreach (var batchItem in {batchEnumerable}) {{");
                     iind += "    ";
                     openedBatch = true;
                 }
@@ -5719,6 +5788,42 @@ static partial class Tasks {
         "MSBuildInternalMessage" or "NetSdkWarning" or "MSBuild" or "AssignProjectConfiguration"
         or "SetRidAgnosticValueForProjects" or "AllowEmptyTelemetry" or "ShowPreviewMessage";
 
+    static string? OutputListCtorArg(object output) =>
+        output switch {
+            ProjectTaskOutputItemInstance oi => $"{CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null",
+            ProjectTaskOutputPropertyInstance op => $"{CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\"",
+            _ => null,
+        };
+
+    static void EmitOutputListAssignment(StringBuilder sb, string ind, IEnumerable<object> outputsEnumerable) {
+        var outputs = outputsEnumerable.ToList();
+        if (outputs.Count == 0) {
+            sb.AppendLine($"{ind}    OutputList? outputs = null;");
+            return;
+        }
+
+        if (outputs.Count == 1) {
+            var arg = OutputListCtorArg(outputs.First());
+            if (arg != null)
+                sb.AppendLine($"{ind}    var outputs = new OutputList({arg});");
+            else
+                sb.AppendLine($"{ind}    var outputs = new OutputList(Array.Empty<(string Key, string itemName, string? metadataName)>());");
+            return;
+        }
+
+        var args = outputs.Select(OutputListCtorArg).ToArray();
+        if (outputs.Count <= 4 && args.All(a => a != null)) {
+            sb.AppendLine($"{ind}    var outputs = new OutputList({string.Join(", ", args!)});");
+            return;
+        }
+
+        sb.AppendLine($"{ind}    var outputs = new OutputList(new (string Key, string itemName, string? metadataName)[] {{");
+        foreach (var arg in args)
+            if (arg != null)
+                sb.AppendLine($"{ind}        ({arg}),");
+        sb.AppendLine($"{ind}    }});");
+    }
+
     static void EmitTask(StringBuilder sb, ProjectTaskInstance task) {
         var ind = "        ";
         var strs = new List<string?> { task.Condition };
@@ -5828,26 +5933,7 @@ static partial class Tasks {
             var targets = task.Parameters.TryGetValue("Targets", out var targetsRaw) ? CompileExpr(targetsRaw, batch, itemAccessOverrides) : "\"\"";
             var properties = task.Parameters.TryGetValue("Properties", out var propertiesRaw) ? CompileExpr(propertiesRaw, batch, itemAccessOverrides) : "\"\"";
             var removeProperties = task.Parameters.TryGetValue("RemoveProperties", out var removePropertiesRaw) ? CompileExpr(removePropertiesRaw, batch, itemAccessOverrides) : "\"\"";
-            if (task.Outputs.Count == 1) {
-                var o = task.Outputs.First();
-                if (o is ProjectTaskOutputItemInstance oi)
-                    sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null);");
-                else if (o is ProjectTaskOutputPropertyInstance op)
-                    sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\");");
-                else
-                    sb.AppendLine($"{ind}    var outputs = new OutputList(Array.Empty<(string Key, string itemName, string? metadataName)>());");
-            } else if (task.Outputs.Count > 1) {
-                sb.AppendLine($"{ind}    var outputs = new OutputList(new (string Key, string itemName, string? metadataName)[] {{");
-                foreach (var o in task.Outputs) {
-                    if (o is ProjectTaskOutputItemInstance oi)
-                        sb.AppendLine($"{ind}        ({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null),");
-                    else if (o is ProjectTaskOutputPropertyInstance op)
-                        sb.AppendLine($"{ind}        ({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\"),");
-                }
-                sb.AppendLine($"{ind}    }});");
-            } else {
-                sb.AppendLine($"{ind}    OutputList? outputs = null;");
-            }
+            EmitOutputListAssignment(sb, ind, task.Outputs);
             sb.AppendLine($"{ind}    Tasks.MSBuildItems(ItemSerde.CloneItems({ItemAccess(projectItemType)}), {targets}, {properties}, {removeProperties}, outputs);");
             return;
         }
@@ -5857,6 +5943,9 @@ static partial class Tasks {
         } else if (task.Parameters.Count == 1) {
             var kv = task.Parameters.First();
             sb.AppendLine($"{ind}    var parameters = new ParamList({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)});");
+        } else if (task.Parameters.Count <= 4) {
+            var args = task.Parameters.Select(kv => $"{CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)}");
+            sb.AppendLine($"{ind}    var parameters = new ParamList({string.Join(", ", args)});");
         } else {
             sb.AppendLine($"{ind}    var parameters = new ParamList(new (string Key, string Value)[] {{");
             foreach (var kv in task.Parameters)
@@ -5865,24 +5954,7 @@ static partial class Tasks {
         }
         if (TaskTakesOutputs(task.Name)) {
             if (task.Outputs.Count > 0) {
-                if (task.Outputs.Count == 1) {
-                    var o = task.Outputs.First();
-                    if (o is ProjectTaskOutputItemInstance oi)
-                        sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null);");
-                    else if (o is ProjectTaskOutputPropertyInstance op)
-                        sb.AppendLine($"{ind}    var outputs = new OutputList({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\");");
-                    else
-                        sb.AppendLine($"{ind}    var outputs = new OutputList(Array.Empty<(string Key, string itemName, string? metadataName)>());");
-                } else {
-                    sb.AppendLine($"{ind}    var outputs = new OutputList(new (string Key, string itemName, string? metadataName)[] {{");
-                    foreach (var o in task.Outputs) {
-                        if (o is ProjectTaskOutputItemInstance oi)
-                            sb.AppendLine($"{ind}        ({CSharpLiteral(oi.TaskParameter)}, {CSharpLiteral(oi.ItemType.ToLowerInvariant())}, null),");
-                        else if (o is ProjectTaskOutputPropertyInstance op)
-                            sb.AppendLine($"{ind}        ({CSharpLiteral(op.TaskParameter)}, {CSharpLiteral(op.PropertyName.ToLowerInvariant())}, \"property\"),");
-                    }
-                    sb.AppendLine($"{ind}    }});");
-                }
+                EmitOutputListAssignment(sb, ind, task.Outputs);
                 sb.AppendLine($"{ind}    Tasks.{task.Name}(parameters, outputs);");
             } else {
                 sb.AppendLine($"{ind}    Tasks.{task.Name}(parameters, null);");
@@ -6793,6 +6865,7 @@ static class CondCompiler {
                 };
             }
             if (leftIsBool) return left;
+            if (TryExtractBoolString(left, out var boolExpr)) return boolExpr;
             return $"string.Equals({left}, \"true\", StringComparison.OrdinalIgnoreCase)";
         }
 
@@ -7041,6 +7114,7 @@ static class CondCompiler {
         static bool TryExtractBoolString(string value, out string boolExpr) {
             boolExpr = "";
             value = StripOuterParens(value.Trim());
+            value = StripTrailingToString(value);
             var question = FindTopLevelChar(value, '?');
             if (question < 0) return false;
             var colon = FindTopLevelChar(value.Substring(question + 1), ':');
@@ -7061,6 +7135,17 @@ static class CondCompiler {
                 }
             }
             return false;
+        }
+
+        static string StripTrailingToString(string value) {
+            const string suffix = ".ToString()";
+            while (value.EndsWith(suffix, StringComparison.Ordinal)) {
+                var receiver = value.Substring(0, value.Length - suffix.Length).Trim();
+                if (receiver.Length < 2 || receiver[0] != '(' || receiver[^1] != ')' || !EnclosesWholeExpression(receiver))
+                    break;
+                value = StripOuterParens(receiver);
+            }
+            return value;
         }
 
         static int FindTopLevelChar(string value, char needle) {

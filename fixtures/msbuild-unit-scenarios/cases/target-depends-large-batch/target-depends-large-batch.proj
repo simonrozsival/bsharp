@@ -1,0 +1,8 @@
+<Project DefaultTargets="Build">
+  <Target Name="A" />
+  <Target Name="B" />
+  <Target Name="C" />
+  <Target Name="D" />
+  <Target Name="E" />
+  <Target Name="Build" DependsOnTargets="A;B;C;D;E" />
+</Project>

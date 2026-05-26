@@ -37,19 +37,36 @@ public sealed class CodegenUnitTests
             "if (!(string.Equals(P.RunMaybe, \"true\", StringComparison.OrdinalIgnoreCase)))",
             "await T_002_BeforeMaybe();",
             "Log.TargetSkipped(\"Maybe\", \"condition was false\");",
-            "await T_006_AfterMaybe();",
-            "await T_001_MaybeDependency();",
-            "await T_002_BeforeMaybe();",
-            "await T_003_Maybe_Core();");
+            "await T_006_AfterMaybe();");
+        StringAssert.Contains(generated.ProgramText, "await T_001_MaybeDependency();");
+        StringAssert.Contains(generated.ProgramText, "await T_002_BeforeMaybe();");
 
         AssertInOrder(
             generated.ProgramText,
             "public static async ValueTask T_005_Build()",
-            "await T_003_Maybe();",
-            "await T_004_Flip();",
-            "await T_003_Maybe();");
+            "var dependencyTask0_0 = T_003_Maybe();",
+            "var dependencyTask0_1 = T_004_Flip();",
+            "var dependencyTask0_2 = T_003_Maybe();",
+            "await ValueTaskHelpers.WhenAll(dependencyTask0_0, dependencyTask0_1, dependencyTask0_2);");
 
         StringAssert.Contains(generated.ProgramText, "TargetRuntime.MarkSkipped(\"Maybe\"");
+    }
+
+    [TestMethod]
+    public void LargeLiteralDependencyBatchKeepsValueTasks()
+    {
+        using var project = CodegenUnitProject.FromScenario("target-depends-large-batch", "target-depends-large-batch.proj");
+        var generated = project.Generate();
+
+        AssertInOrder(
+            generated.ProgramText,
+            "public static async ValueTask T_006_Build()",
+            "var dependencyTask0_0 = T_001_A();",
+            "var dependencyTask0_4 = T_005_E();",
+            "await ValueTaskHelpers.WhenAll(dependencyTask0_0, dependencyTask0_1, dependencyTask0_2, dependencyTask0_3, dependencyTask0_4);");
+        Assert.IsFalse(generated.ProgramText.Contains(".AsTask()", StringComparison.Ordinal),
+            "ValueTask dependency fan-in should not allocate Tasks just to call Task.WhenAll.");
+        StringAssert.Contains(generated.ProgramText, "public static async ValueTask WhenAll(params ValueTask[] tasks)");
     }
 
     [TestMethod]
@@ -61,15 +78,18 @@ public sealed class CodegenUnitTests
         StringAssert.Contains(defaultGenerated.Result.StandardOutput, "Initial targets: InitA;InitB");
         StringAssert.Contains(defaultGenerated.Result.StandardOutput, "Default targets: DefaultA;DefaultB");
         StringAssert.Contains(defaultGenerated.ProgramText, "requestedTargets is { Count: > 0 }");
-        StringAssert.Contains(defaultGenerated.ProgramText, "new[] { \"InitA\", \"InitB\", \"DefaultA\", \"DefaultB\" }");
+        StringAssert.Contains(defaultGenerated.ProgramText, "await RunTargetOrError(\"InitA\");");
+        StringAssert.Contains(defaultGenerated.ProgramText, "await RunTargetOrError(\"DefaultB\");");
         Assert.IsFalse(defaultGenerated.ProgramText.Contains("ExplicitA", StringComparison.Ordinal),
             "Default generation should not include unrelated explicit-only targets.");
 
         var explicitGenerated = project.Generate(entryTarget: null, "--targets", "ExplicitA;ExplicitB");
         StringAssert.Contains(explicitGenerated.Result.StandardOutput, "Requested targets: ExplicitA;ExplicitB");
-        StringAssert.Contains(explicitGenerated.ProgramText, "new[] { \"InitA\", \"InitB\" }.Concat(requestedTargets).ToArray()");
-        StringAssert.Contains(explicitGenerated.ProgramText, "case \"explicita\":");
-        StringAssert.Contains(explicitGenerated.ProgramText, "case \"explicitb\":");
+        StringAssert.Contains(explicitGenerated.ProgramText, "await RunTargetOrError(\"InitA\");");
+        StringAssert.Contains(explicitGenerated.ProgramText, "await RunTargetOrError(\"InitB\");");
+        StringAssert.Contains(explicitGenerated.ProgramText, "foreach (var target in requestedTargets)");
+        StringAssert.Contains(explicitGenerated.ProgramText, "string.Equals(name, \"ExplicitA\", StringComparison.OrdinalIgnoreCase)");
+        StringAssert.Contains(explicitGenerated.ProgramText, "string.Equals(name, \"ExplicitB\", StringComparison.OrdinalIgnoreCase)");
     }
 
     [TestMethod]
@@ -274,7 +294,7 @@ public sealed class CodegenUnitTests
 
         StringAssert.Contains(generated.Result.StandardOutput, "Targets emitted: 2 (all, due to CallTarget)");
         StringAssert.Contains(generated.ProgramText, "public static async ValueTask Run(string name)");
-        StringAssert.Contains(generated.ProgramText, "case \"other\": await T_002_Other(); break;");
+        StringAssert.Contains(generated.ProgramText, "if (string.Equals(name, \"Other\", StringComparison.OrdinalIgnoreCase)) { await T_002_Other(); return; }");
         StringAssert.Contains(generated.ProgramText, "using var taskLog = Log.Task(\"CallTarget\")");
     }
 
