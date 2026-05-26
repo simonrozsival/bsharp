@@ -13,7 +13,7 @@ return Launcher.Run(args);
 static class Launcher {
     const string BackgroundCodegenEnvironmentVariable = "BSHARP_BACKGROUND_CODEGEN";
     const string BackgroundRebuildCommand = "--bsharp-background-rebuild";
-    const string ShapeHashVersion = "bsharp-shape-v3-package-task-empty-guard";
+    const string ShapeHashVersion = "bsharp-shape-v4-nativeaot-direct-tasks";
 
     public static int Run(string[] args) {
         if (args.Length > 0 && string.Equals(args[0], BackgroundRebuildCommand, StringComparison.Ordinal))
@@ -682,21 +682,12 @@ static class Launcher {
         }
         Console.Error.WriteLine($"bsharp: codegen done in {codegenSw.ElapsedMilliseconds}ms");
 
-        var taskServerProject = Path.Combine(srcDir, "task-server", "BsharpTaskServer.csproj");
-        if (!File.Exists(taskServerProject)) {
-            Console.Error.WriteLine("bsharp: codegen output is missing task-server/BsharpTaskServer.csproj.");
-            Console.Error.WriteLine("bsharp: this usually means BSHARP_CODEGEN points to an older Codegen.dll/executable.");
-            Console.Error.WriteLine("bsharp: rebuild tools/codegen and point BSHARP_CODEGEN at tools/codegen/bin/Debug/net11.0/Codegen or Codegen.dll.");
-            return 5;
-        }
-
         var rid = RuntimeInformation.RuntimeIdentifier;
 
-        // The generated host always runs as NativeAOT and delegates real SDK tasks to
-        // the persistent CoreCLR task server. Keeping one execution mode avoids rooting
-        // the older in-proc reflection loader in generated binaries.
+        // Experiment: keep the generated host NativeAOT while referencing and rooting
+        // UsingTask assemblies for direct in-process task execution.
         var modes = new (string Label, string[] ExtraProps)[] {
-            ("NativeAOTHost", new[] {
+            ("NativeAOTDirectTasks", new[] {
                 "-p:PublishAot=true",
                 "-p:PublishReadyToRun=false",
                 "-p:SelfContained=true",
@@ -736,36 +727,12 @@ static class Launcher {
             return 6;
         }
 
-        var publishDir = Path.GetDirectoryName(publishedBin)!;
-        var taskServerRootDst = Path.Combine(publishDir, "tasks");
-        {
-            var serverDst = Path.Combine(taskServerRootDst, "server");
-            Directory.CreateDirectory(serverDst);
-            Console.Error.WriteLine("bsharp: publishing persistent task server (CoreCLR R2R)...");
-            var serverSw = Stopwatch.StartNew();
-            var serverArgs = new List<string> {
-                "publish", taskServerProject, "-c", "Release", "-r", rid, "-o", serverDst, "--nologo", "-v:q",
-                "-p:PublishAot=false",
-                "-p:PublishReadyToRun=true",
-                "-p:SelfContained=false",
-                "-p:NoWarn=CS8012%3BCS8602%3BIL2026",
-            };
-            var serverRc = RunProcess("dotnet", serverArgs);
-            serverSw.Stop();
-            if (serverRc != 0) {
-                Console.Error.WriteLine($"bsharp: task server publish failed (exit {serverRc})");
-                return 7;
-            }
-            Console.Error.WriteLine($"bsharp: task server publish done in {serverSw.ElapsedMilliseconds}ms");
-        }
-
-        // Single-file publishes keep the app and runtime in the apphost. Prefer a link, but
-        // fall back to copying because Windows may disallow symlink creation.
+        // Prefer a link, but fall back to copying because Windows may disallow symlink creation.
         var binFile = Path.Combine(bsharpDir, "build");
         ReplaceFileLinkOrCopy(binFile, publishedBin);
 
         var hashFile = Path.Combine(bsharpDir, "shape.hash");
-        var fullMode = $"{usedMode}+CoreCLRTaskServer";
+        var fullMode = usedMode;
         File.WriteAllText(hashFile, currentHash + "\n" + fullMode + "\n");
         Console.Error.WriteLine($"bsharp: build binary ready (mode={fullMode}) at {binFile} -> {publishedBin}");
         return 0;

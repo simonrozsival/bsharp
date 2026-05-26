@@ -702,8 +702,11 @@ public static class TaskModelExt {
     }
 
     static string ProjectTemplate(UsingTaskRegistry.Registry registry, TaskMetadataLoader.MetadataIndex meta) {
-        // The generated host stays NativeAOT-friendly. Real SDK task assemblies are not
-        // referenced here; they run inside the persistent CoreCLR task server.
+        static string XmlAttr(string value) =>
+            System.Security.SecurityElement.Escape(value) ?? value;
+
+        var sdkRoot = FindSdkRootWithFrameworkDll(registry);
+
         var sb = new StringBuilder();
         sb.AppendLine("""
 <Project Sdk="Microsoft.NET.Sdk">
@@ -734,6 +737,22 @@ public static class TaskModelExt {
     <PackageReference Include="System.IO.Hashing" Version="11.0.0-preview.4.26208.110" />
   </ItemGroup>
 """);
+        sb.AppendLine("  <ItemGroup>");
+        if (sdkRoot != null) {
+            foreach (var asm in new[] { "Microsoft.Build.Framework.dll", "Microsoft.Build.Utilities.Core.dll", "Microsoft.Build.dll", "System.CodeDom.dll" }) {
+                var path = Path.Combine(sdkRoot, asm);
+                if (File.Exists(path))
+                    sb.AppendLine($"    <Reference Include=\"{Path.GetFileNameWithoutExtension(asm)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private></Reference>");
+            }
+        }
+        foreach (var path in meta.ByTaskName.Values
+                     .Select(t => t.AssemblyPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)) {
+            var include = Path.GetFileNameWithoutExtension(path);
+            sb.AppendLine($"    <Reference Include=\"{XmlAttr(include)}\"><HintPath>{XmlAttr(path)}</HintPath><Private>true</Private></Reference>");
+        }
+        sb.AppendLine("  </ItemGroup>");
         sb.AppendLine("""
 </Project>
 """);
@@ -845,6 +864,9 @@ static class TaskServer {
             SetBuildEngine(type, task);
             SetTaskEnvironment(type, task);
             foreach (var kv in req.Properties) SetValue(type, task, kv.Key, kv.Value);
+            ApplyDirectTaskDefaults(type, task, desc);
+            if (string.Equals(desc.ShortName, "Csc", StringComparison.OrdinalIgnoreCase) && task is Microsoft.CodeAnalysis.BuildTasks.Csc csc)
+                return ExecuteCscDirect(csc, req, desc);
             var guard = CaptureTimestampGuard(req, desc);
             BsharpBuildEngine.CapturedErrors.Clear();
             var execute = type.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance, binder: null, Type.EmptyTypes, modifiers: null) ?? throw new MissingMethodException(desc.FullTypeName, "Execute");
@@ -1174,6 +1196,229 @@ sealed class BsharpEngineServices : Microsoft.Build.Framework.EngineServices {
     public static readonly BsharpEngineServices Instance = new();
     public override bool LogsMessagesOfImportance(Microsoft.Build.Framework.MessageImportance importance) => true;
     public override bool IsTaskInputLoggingEnabled => false;
+}
+""";
+
+    public static string DirectTaskExecutorSource() => """
+
+static class DirectTaskExecutor {
+    static readonly Dictionary<string, Type> TypesByShortName = new(StringComparer.OrdinalIgnoreCase);
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, PropertyInfo>> PropertiesByType = new();
+    static readonly Microsoft.Build.Framework.TaskEnvironment TaskEnvironment =
+        Microsoft.Build.Framework.TaskEnvironment.CreateWithProjectDirectoryAndEnvironment(Directory.GetCurrentDirectory());
+
+    public static TaskResult Execute(TaskRunner.TaskDescriptor desc, TaskInvocation req) {
+        try {
+            var type = GetTaskType(desc);
+            var task = Activator.CreateInstance(type) ?? throw new InvalidOperationException($"Could not create task '{desc.FullTypeName}'");
+            SetBuildEngine(type, task);
+            SetTaskEnvironment(type, task);
+            foreach (var kv in req.Properties) SetValue(type, task, kv.Key, kv.Value);
+            var guard = CaptureTimestampGuard(req, desc);
+            BsharpBuildEngine.CapturedErrors.Clear();
+            var execute = type.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance, binder: null, Type.EmptyTypes, modifiers: null) ?? throw new MissingMethodException(desc.FullTypeName, "Execute");
+            var success = execute.Invoke(task, Array.Empty<object?>()) as bool? ?? false;
+            RestoreTimestampIfContentUnchanged(guard);
+            var resp = new TaskResult { Success = success };
+            foreach (var outputName in desc.OutputNames) CaptureOutput(resp, type, task, outputName);
+            if (!success) resp.Error = BsharpBuildEngine.CapturedErrors.Count > 0 ? string.Join("\n", BsharpBuildEngine.CapturedErrors) : $"task '{desc.ShortName}' returned false";
+            return resp;
+        } catch (TargetInvocationException ex) when (ex.InnerException != null) {
+            return new TaskResult { Success = false, Error = ex.InnerException.GetType().Name + ": " + ex.InnerException.Message + "\n" + ex.InnerException.StackTrace };
+        } catch (Exception ex) {
+            return new TaskResult { Success = false, Error = ex.GetType().Name + ": " + ex.Message + "\n" + ex.StackTrace };
+        }
+    }
+
+    static Type GetTaskType(TaskRunner.TaskDescriptor desc) {
+        if (TypesByShortName.TryGetValue(desc.ShortName, out var cached)) return cached;
+        var assemblyName = Path.GetFileNameWithoutExtension(desc.AssemblyPath);
+        var asm = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => string.Equals(a.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase))
+            ?? Assembly.Load(new AssemblyName(assemblyName));
+        var type = asm.GetType(desc.FullTypeName, throwOnError: true)!;
+        TypesByShortName[desc.ShortName] = type;
+        return type;
+    }
+
+    static void SetBuildEngine(Type type, object task) {
+        var prop = type.GetProperty("BuildEngine", BindingFlags.Public | BindingFlags.Instance);
+        if (prop != null && prop.CanWrite) prop.SetValue(task, BsharpBuildEngine.Instance);
+    }
+
+    static void SetTaskEnvironment(Type type, object task) {
+        var prop = type.GetProperty("TaskEnvironment", BindingFlags.Public | BindingFlags.Instance);
+        if (prop != null && prop.CanWrite && prop.PropertyType == typeof(Microsoft.Build.Framework.TaskEnvironment))
+            prop.SetValue(task, TaskEnvironment);
+    }
+
+    static void SetValue(Type type, object task, string name, JsonElement value) {
+        var prop = GetProperty(type, name);
+        if (prop == null || !prop.CanWrite) return;
+        var targetType = prop.PropertyType;
+        object? converted = null;
+        if (targetType == typeof(string)) converted = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
+        else if (targetType == typeof(bool)) converted = value.ValueKind == JsonValueKind.True || (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var b) && b);
+        else if (targetType == typeof(int) || targetType == typeof(int?)) converted = value.TryGetInt32(out var i) ? i : 0;
+        else if (targetType == typeof(long) || targetType == typeof(long?)) converted = value.TryGetInt64(out var l) ? l : 0L;
+        else if (targetType == typeof(double) || targetType == typeof(double?)) converted = value.TryGetDouble(out var d) ? d : 0d;
+        else if (targetType == typeof(string[])) converted = JsonSerializer.Deserialize(value, TaskModelJson.Default.StringArray) ?? Array.Empty<string>();
+        else if (typeof(Microsoft.Build.Framework.ITaskItem).IsAssignableFrom(targetType))
+            converted = JsonSerializer.Deserialize(value, TaskModelJson.Default.ItemSpec) is { } spec ? new BsharpTaskItem(spec) : null;
+        else if (targetType.IsArray && typeof(Microsoft.Build.Framework.ITaskItem).IsAssignableFrom(targetType.GetElementType())) {
+            var specs = JsonSerializer.Deserialize(value, TaskModelJson.Default.ItemSpecArray) ?? Array.Empty<ItemSpec>();
+            var arr = Array.CreateInstance(targetType.GetElementType()!, specs.Length);
+            for (int idx = 0; idx < specs.Length; idx++) arr.SetValue(new BsharpTaskItem(specs[idx]), idx);
+            converted = arr;
+        }
+        if (converted != null) prop.SetValue(task, converted);
+    }
+
+    static void ApplyDirectTaskDefaults(Type type, object task, TaskRunner.TaskDescriptor desc) {
+        if (!string.Equals(desc.ShortName, "Csc", StringComparison.OrdinalIgnoreCase))
+            return;
+        var roslynDir = Path.Combine(Path.GetDirectoryName(desc.AssemblyPath) ?? "", "bincore");
+        if (task is Microsoft.CodeAnalysis.BuildTasks.Csc csc && Directory.Exists(roslynDir)) {
+            csc.ToolPath = roslynDir;
+            csc.ToolExe = "csc.dll";
+            csc.UseSharedCompilation = false;
+            return;
+        }
+        var toolPath = GetProperty(type, "ToolPath");
+        if (toolPath != null && toolPath.CanWrite && string.IsNullOrEmpty(toolPath.GetValue(task) as string) && Directory.Exists(roslynDir))
+            toolPath.SetValue(task, roslynDir);
+        var toolExe = GetProperty(type, "ToolExe");
+        if (toolExe != null && toolExe.CanWrite && File.Exists(Path.Combine(roslynDir, "csc.dll")))
+            toolExe.SetValue(task, "csc.dll");
+    }
+
+    static TaskResult ExecuteCscDirect(Microsoft.CodeAnalysis.BuildTasks.Csc csc, TaskInvocation req, TaskRunner.TaskDescriptor desc) {
+        try {
+            var roslynDir = Path.Combine(Path.GetDirectoryName(desc.AssemblyPath) ?? "", "bincore");
+            var cscDll = Path.Combine(roslynDir, "csc.dll");
+            if (!File.Exists(cscDll))
+                return new TaskResult { Success = false, Error = $"Could not find Roslyn compiler at '{cscDll}'" };
+
+            var response = InvokeTaskString(csc, "GenerateResponseFileContents");
+            var command = "";
+            var rsp = Path.Combine(Path.GetTempPath(), "bsharp-csc-" + Guid.NewGuid().ToString("N") + ".rsp");
+            File.WriteAllText(rsp, response);
+            try {
+                var psi = new ProcessStartInfo(ResolveDotnetHost()) {
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    WorkingDirectory = Directory.GetCurrentDirectory(),
+                };
+                psi.ArgumentList.Add(cscDll);
+                foreach (var arg in SplitCommandLine(command)) psi.ArgumentList.Add(arg);
+                psi.ArgumentList.Add("@" + rsp);
+                var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start csc");
+                var stdout = process.StandardOutput.ReadToEnd();
+                var stderr = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                var result = new TaskResult { Success = process.ExitCode == 0 };
+                result.SetString("ExitCode", process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                if (req.Properties.TryGetValue("OutputAssembly", out var outputAssembly) && JsonSerializer.Deserialize(outputAssembly, TaskModelJson.Default.ItemSpec) is { } asm)
+                    result.SetItems("OutputAssembly", new[] { asm });
+                if (req.Properties.TryGetValue("OutputRefAssembly", out var outputRefAssembly) && JsonSerializer.Deserialize(outputRefAssembly, TaskModelJson.Default.ItemSpec) is { } refAsm)
+                    result.SetItems("OutputRefAssembly", new[] { refAsm });
+                var args = SplitCommandLine(command).Concat(new[] { "@" + rsp }).Select(arg => new Bsharp.Generated.TaskModel.ItemSpec { Identity = arg }).ToArray();
+                result.SetItems("CommandLineArgs", args);
+                if (!result.Success)
+                    result.Error = string.Join("\n", new[] { stdout, stderr }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                return result;
+            } finally {
+                try { File.Delete(rsp); } catch { }
+            }
+        } catch (Exception ex) {
+            return new TaskResult { Success = false, Error = ex.GetType().Name + ": " + ex.Message + "\n" + ex.StackTrace };
+        }
+    }
+
+    static string InvokeTaskString(object task, string name) {
+        var method = task.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new MissingMethodException(task.GetType().FullName, name);
+        return method.Invoke(task, Array.Empty<object?>()) as string ?? "";
+    }
+
+    static string ResolveDotnetHost() {
+        var host = P.Get("DotNetHostPath");
+        if (!string.IsNullOrEmpty(host) && File.Exists(host)) return host;
+        var dir = P.Get("DotNetHostDirectory");
+        var file = P.Get("DotNetHostFileName");
+        if (!string.IsNullOrEmpty(dir) && !string.IsNullOrEmpty(file)) {
+            var combined = Path.Combine(dir, file);
+            if (File.Exists(combined)) return combined;
+        }
+        return "dotnet";
+    }
+
+    static List<string> SplitCommandLine(string command) {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuotes = false;
+        for (var i = 0; i < command.Length; i++) {
+            var ch = command[i];
+            if (ch == '"') { inQuotes = !inQuotes; continue; }
+            if (!inQuotes && char.IsWhiteSpace(ch)) {
+                if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
+                continue;
+            }
+            current.Append(ch);
+        }
+        if (current.Length > 0) result.Add(current.ToString());
+        return result;
+    }
+
+    static PropertyInfo? GetProperty(Type type, string name) {
+        var props = PropertiesByType.GetOrAdd(type, static t => {
+            var map = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in t.GetProperties(BindingFlags.Public | BindingFlags.Instance)) map[prop.Name] = prop;
+            return map;
+        });
+        return props.TryGetValue(name, out var prop) ? prop : null;
+    }
+
+    static void CaptureOutput(TaskResult resp, Type type, object task, string name) {
+        var value = GetProperty(type, name)?.GetValue(task);
+        switch (value) {
+            case null: break;
+            case string s: resp.SetString(name, s); break;
+            case bool b: resp.SetString(name, b ? "true" : "false"); break;
+            case string[] strings: resp.Outputs[name] = JsonSerializer.SerializeToElement(strings, TaskModelJson.Default.StringArray); break;
+            case Microsoft.Build.Framework.ITaskItem item: resp.SetItems(name, new[] { ToSpec(item) }); break;
+            case Microsoft.Build.Framework.ITaskItem[] items: resp.SetItems(name, items.Select(ToSpec).ToArray()); break;
+            default: resp.SetString(name, value.ToString() ?? ""); break;
+        }
+    }
+
+    static Bsharp.Generated.TaskModel.ItemSpec ToSpec(Microsoft.Build.Framework.ITaskItem item) {
+        var spec = new Bsharp.Generated.TaskModel.ItemSpec { Identity = item.ItemSpec };
+        foreach (var k in item.MetadataNames) {
+            var key = k?.ToString() ?? "";
+            if (key.Length > 0 && !MetadataHelpers.IsWellKnown(key))
+                (spec.Metadata ??= new())[key] = item.GetMetadata(key) ?? "";
+        }
+        return spec;
+    }
+
+    static (string Path, byte[] Content, DateTime TimestampUtc)? CaptureTimestampGuard(TaskInvocation req, TaskRunner.TaskDescriptor desc) {
+        var path = desc.ShortName switch {
+            "WriteCodeFragment" => req.GetString("OutputFile"),
+            "GenerateMSBuildEditorConfig" => FirstNonEmpty(req.GetString("FileName"), req.GetString("File")),
+            _ => ""
+        };
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+        return (path, File.ReadAllBytes(path), File.GetLastWriteTimeUtc(path));
+    }
+
+    static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(value => !string.IsNullOrEmpty(value)) ?? "";
+
+    static void RestoreTimestampIfContentUnchanged((string Path, byte[] Content, DateTime TimestampUtc)? guard) {
+        if (guard is not { } g || !File.Exists(g.Path)) return;
+        var current = File.ReadAllBytes(g.Path);
+        if (current.AsSpan().SequenceEqual(g.Content)) File.SetLastWriteTimeUtc(g.Path, g.TimestampUtc);
+    }
 }
 """;
 
@@ -2054,14 +2299,14 @@ static class Emitter {
         IReadOnlyList<string> defaultTargets,
         IReadOnlyList<string> compiledTargets) {
         sb.AppendLine("// <auto-generated/>");
-        sb.AppendLine("// Generated by bsharp codegen. Static fields + R2R/JIT in-proc SDK task loading.");
+        sb.AppendLine("// Generated by bsharp codegen. Static fields + NativeAOT in-proc SDK task loading.");
         sb.AppendLine("#nullable enable");
         sb.AppendLine("#pragma warning disable CS1998");
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.Diagnostics;");
+        sb.AppendLine("using System.Diagnostics.CodeAnalysis;");
         sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Reflection;");
-        sb.AppendLine("using System.Runtime.Loader;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using System.Text.Json;");
@@ -2080,6 +2325,7 @@ static class Emitter {
         // Main
         sb.AppendLine("""
 var sw = Stopwatch.StartNew();
+TaskReflectionRoots.Preserve();
 var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
@@ -2164,7 +2410,7 @@ if (!noBuild) {
         // hand-write a minimal runtimeconfig.json so the binary is actually runnable.
         // For HelloConsole this is sufficient; projects with framework references beyond
         // Microsoft.NETCore.App need a richer config.
-        if (!string.Equals(P.UseMaui, "true", StringComparison.OrdinalIgnoreCase) &&
+        if (!string.Equals(P.Get("UseMaui"), "true", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrEmpty(P.TargetPlatformIdentifier)) {
             try {
             // Normalize path separators — some baked SDK properties use literal `\`.
@@ -2543,6 +2789,9 @@ static class FastPathFileHelpers {
 
         EmitItemAndRuntimeHelpers(sb);
         EmitTaskHostRegistry(sb);
+        EmitNativeAotTaskRoots(sb, _taskMeta);
+        sb.AppendLine(Codegen.TaskAdapterSource());
+        sb.AppendLine(Codegen.DirectTaskExecutorSource());
         EmitP(sb, project);
         EmitI(sb, project);
         EmitTasks(sb);
@@ -2776,7 +3025,7 @@ static partial class TaskRunner {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try {
             var timestampGuard = CaptureTimestampGuard(task);
-            task.Result = GetTaskServer().Invoke(task.Invocation);
+            task.Result = DirectTaskExecutor.Execute(task.Desc, task.Invocation);
             RestoreTimestampIfContentUnchanged(timestampGuard);
             var error = task.Result.Success ? null : task.Result.Error ?? $"task '{task.Desc.ShortName}' returned false";
             TaskDiagnostics.Write(task, started, error);
@@ -3414,6 +3663,22 @@ static class Log {
             }
         }
         sb.AppendLine("    }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    static void EmitNativeAotTaskRoots(StringBuilder sb, TaskMetadataLoader.MetadataIndex? meta) {
+        sb.AppendLine("static class TaskReflectionRoots {");
+        if (meta != null) {
+            foreach (var t in meta.ByTaskName.Values.OrderBy(t => t.FullTypeName, StringComparer.Ordinal)) {
+                var assemblyName = Path.GetFileNameWithoutExtension(t.AssemblyPath);
+                sb.AppendLine($"    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.PublicProperties, {CSharpLiteral(t.FullTypeName)}, {CSharpLiteral(assemblyName)})]");
+            }
+        }
+        sb.AppendLine("    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.PublicProperties, \"Microsoft.CSharp.CSharpCodeProvider\", \"System.CodeDom\")]");
+        sb.AppendLine("    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicMethods, \"Microsoft.Build.Utilities.ToolTask\", \"Microsoft.Build.Utilities.Core\")]");
+        sb.AppendLine("    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicMethods, \"Microsoft.CodeAnalysis.BuildTasks.ManagedToolTask\", \"Microsoft.Build.Tasks.CodeAnalysis\")]");
+        sb.AppendLine("    public static void Preserve() { }");
         sb.AppendLine("}");
         sb.AppendLine();
     }
