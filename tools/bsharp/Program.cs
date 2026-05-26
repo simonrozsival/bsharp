@@ -972,29 +972,60 @@ static class Launcher {
             return 2;
         }
 
-        Console.WriteLine($"bsharp: building {solution.Projects.Length} project(s)");
-        int failedCount = 0;
-        foreach (var proj in solution.Projects) {
-            Console.WriteLine($"  Building {proj.Name}...");
-            var projectArgs = new List<string> { "build", proj.Path };
-            // Forward relevant args but skip solution file and "build" command
-            foreach (var arg in forwardArgs) {
-                if (!arg.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) && arg != "build")
-                    projectArgs.Add(arg);
-            }
-            foreach (var prop in globalProps)
-                projectArgs.Add($"-p:{prop.Key}={prop.Value}");
-            if (noCache)
-                projectArgs.Add("--no-cache");
-            if (backgroundCodegen)
-                projectArgs.Add("--background-codegen");
+        // Build dependency graph
+        var graph = DependencyGraph.Build(solution.Projects);
+        var projectsByPath = solution.Projects.ToDictionary(p => p.Path, StringComparer.OrdinalIgnoreCase);
 
-            int rc = Run(projectArgs.ToArray());
-            if (rc != 0) {
-                Console.Error.WriteLine($"  ✗ {proj.Name} failed (exit code {rc})");
-                failedCount++;
-            } else {
-                Console.WriteLine($"  ✓ {proj.Name} succeeded");
+        Console.WriteLine($"bsharp: building {solution.Projects.Length} project(s) in {graph.LayerCount} layer(s)");
+        
+        int failedCount = 0;
+        var failedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int layerIndex = 0; layerIndex < graph.LayerCount; layerIndex++) {
+            var layer = graph.GetLayer(layerIndex);
+            if (layer.Length == 0) continue;
+
+            if (graph.LayerCount > 1) {
+                Console.WriteLine($"  Layer {layerIndex + 1}/{graph.LayerCount}: {layer.Length} project(s)");
+            }
+
+            // Build projects in this layer in parallel
+            var buildTasks = new List<Task<(string Path, string Name, int ExitCode)>>();
+            
+            foreach (var projectPath in layer) {
+                var proj = projectsByPath[projectPath];
+                
+                // Skip if any dependency failed
+                var deps = graph.GetDependencies(projectPath);
+                if (deps.Any(d => failedProjects.Contains(d))) {
+                    Console.Error.WriteLine($"    ⊘ {proj.Name} skipped (dependency failed)");
+                    failedProjects.Add(projectPath);
+                    failedCount++;
+                    continue;
+                }
+
+                var task = Task.Run(() => BuildProject(proj, command, forwardArgs, globalProps, noCache, backgroundCodegen));
+                buildTasks.Add(task);
+            }
+
+            // Wait for all builds in this layer to complete
+            Task.WaitAll(buildTasks.ToArray());
+
+            foreach (var task in buildTasks) {
+                var (path, name, rc) = task.Result;
+                if (rc != 0) {
+                    Console.Error.WriteLine($"    ✗ {name} failed (exit code {rc})");
+                    failedProjects.Add(path);
+                    failedCount++;
+                } else {
+                    Console.WriteLine($"    ✓ {name} succeeded");
+                }
+            }
+
+            // Stop if any project in this layer failed
+            if (failedProjects.Count > 0 && layerIndex < graph.LayerCount - 1) {
+                Console.Error.WriteLine($"bsharp: stopping due to failures in layer {layerIndex + 1}");
+                break;
             }
         }
 
@@ -1005,6 +1036,24 @@ static class Launcher {
 
         Console.WriteLine($"bsharp: all {solution.Projects.Length} project(s) built successfully");
         return 0;
+    }
+
+    static (string Path, string Name, int ExitCode) BuildProject(SolutionProject proj, string command, string[] forwardArgs, List<KeyValuePair<string, string>> globalProps, bool noCache, bool backgroundCodegen) {
+        var projectArgs = new List<string> { "build", proj.Path };
+        // Forward relevant args but skip solution file and "build" command
+        foreach (var arg in forwardArgs) {
+            if (!arg.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) && arg != "build")
+                projectArgs.Add(arg);
+        }
+        foreach (var prop in globalProps)
+            projectArgs.Add($"-p:{prop.Key}={prop.Value}");
+        if (noCache)
+            projectArgs.Add("--no-cache");
+        if (backgroundCodegen)
+            projectArgs.Add("--background-codegen");
+
+        int rc = Run(projectArgs.ToArray());
+        return (proj.Path, proj.Name, rc);
     }
 
     static string ComputeShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
