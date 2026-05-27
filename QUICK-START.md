@@ -134,22 +134,18 @@ After 1+ second gap, it validates the hash again (~134ms).
 After running bsharp, you'll have:
 
 ```
-your-project/
-├── .bsharp/
-│   └── variants/
-│       └── <hash>/              # One per project "shape"
-│           ├── build            # The NativeAOT build host (symlink)
-│           ├── shape.hash       # Cached hash value
-│           ├── src/             # Generated C# source
-│           │   ├── Program.cs   # Main entry point
-│           │   ├── TaskModel.cs # Task definitions
-│           │   └── ...
-│           └── task-server/     # CoreCLR task sidekick
-│               └── ...
-├── YourProject.csproj
-├── obj/
-└── bin/
+.bsharp/
+├── build                        # Symlink to generated NativeAOT binary
+├── shape.hash                   # Cached hash value
+├── src/                         # Generated C# source
+│   ├── Program.cs               # Main entry point
+│   ├── TaskModel.cs             # Task definitions
+│   ├── BsharpGenerated.csproj   # Generated project file
+│   ├── bin/                     # Build output (NativeAOT host)
+│   └── task-server/             # CoreCLR task sidekick
 ```
+
+**Note**: Multi-config projects (with different global properties) create `variants/<hash>/` subdirectories. Single-config projects use the flat structure shown above.
 
 ## Supported Projects
 
