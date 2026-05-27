@@ -2244,15 +2244,20 @@ if (!noBuild) {
     if (!fastNoOp) {
         // Match `dotnet build` semantics: always invoke the Restore target unless
         // `--no-restore` was passed. NuGet's RestoreTask self-skips when nothing
-        // changed, and the launcher already pre-restored (adding `--no-restore`)
-        // for the cases where the host can't be invoked yet.
+        // changed, but restore is still expensive (~1-2s). Skip if assets are fresh.
         if (!noRestore) {
-            var restoreSw = Stopwatch.StartNew();
-            var restoreRc = RunRestore(csprojPath);
-            restoreSw.Stop();
-            restoreElapsed = restoreSw.Elapsed;
-            if (restoreRc != 0)
-                return restoreRc;
+            if (ShouldSkipRestore(csprojPath)) {
+                // Restore outputs are fresh - skip it entirely
+                if (Log.Level >= Log.Verbosity.Minimal)
+                    Console.WriteLine("bsharp: skipping restore (project.assets.json is up-to-date)");
+            } else {
+                var restoreSw = Stopwatch.StartNew();
+                var restoreRc = RunRestore(csprojPath);
+                restoreSw.Stop();
+                restoreElapsed = restoreSw.Elapsed;
+                if (restoreRc != 0)
+                    return restoreRc;
+            }
         }
         Targets.Build(requestedTargets.Count > 0 ? requestedTargets : null).GetAwaiter().GetResult();
         if (targetResultPath is not null)
@@ -2506,6 +2511,30 @@ static bool FastNoOpBuild(string csprojPath) {
         if (File.GetLastWriteTimeUtc(input) > outputTime)
             return false;
     }
+    return true;
+}
+
+static bool ShouldSkipRestore(string csprojPath) {
+    var projectDir = Path.GetDirectoryName(csprojPath)!;
+    var assetsPath = Path.Combine(projectDir, "obj", "project.assets.json");
+    
+    // If project.assets.json doesn't exist, we need to restore
+    if (!File.Exists(assetsPath))
+        return false;
+    
+    var assetsTime = File.GetLastWriteTimeUtc(assetsPath);
+    
+    // Check if project file changed since last restore
+    if (File.Exists(csprojPath) && File.GetLastWriteTimeUtc(csprojPath) > assetsTime)
+        return false;
+    
+    // Check Directory.Build.props, Directory.Packages.props
+    foreach (var input in FastNoOpShapeInputs(projectDir)) {
+        if (File.Exists(input) && File.GetLastWriteTimeUtc(input) > assetsTime)
+            return false;
+    }
+    
+    // Assets are up-to-date
     return true;
 }
 
