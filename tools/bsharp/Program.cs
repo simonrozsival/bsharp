@@ -933,8 +933,10 @@ static class Launcher {
         var selfDir = Path.GetDirectoryName(self)!;
         // Common install layouts to probe
         string[] probes = {
+            Path.Combine(selfDir, "Codegen.dll"),                                // Sibling (deployed layout)
+            Path.Combine(selfDir, ExecutableName("Codegen")),                    // Sibling native
             Path.Combine(selfDir, "codegen", ExecutableName("Codegen")),
-            Path.Combine(selfDir, "codegen", "Codegen.dll"),                 // /usr/share/bsharp/codegen/...
+            Path.Combine(selfDir, "codegen", "Codegen.dll"),                     // /usr/share/bsharp/codegen/...
             Path.Combine(selfDir, "..", "codegen", ExecutableName("Codegen")),
             Path.Combine(selfDir, "..", "codegen", "Codegen.dll"),
             // Dev layout: launcher at tools/bsharp/bin/Release/net11.0/<rid>/publish/bsharp
