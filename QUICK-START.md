@@ -33,7 +33,7 @@ bsharp build YourProject.csproj
 
 This will:
 1. Compute a "shape hash" of your project
-2. Generate a custom build host in `.bsharp/variants/<hash>/`
+2. Generate a custom build host in `.bsharp/`
 3. Compile it with NativeAOT + CoreCLR task sidekick
 4. Run the build
 
