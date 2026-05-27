@@ -681,10 +681,24 @@ static class Launcher {
     static int Rebuild(string projectPath, string bsharpDir, string currentHash, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets) {
         Console.Error.WriteLine($"bsharp: regenerating build binary for {Path.GetFileName(projectPath)}...");
 
+        // SIMPLIFIED STRUCTURE: Generate directly into .bsharp/ instead of .bsharp/src/
+        // Old: .bsharp/src/{Program.cs, TaskModel.cs, BsharpGenerated.csproj, task-server/, bin/, obj/}
+        // New: .bsharp/{Program.cs, TaskModel.cs, BsharpGenerated.csproj, task-server/, bin/, obj/}
+        // Benefits: Flatter, easier to inspect, fewer directories
         Directory.CreateDirectory(bsharpDir);
-        var srcDir = Path.Combine(bsharpDir, "src");
-        if (Directory.Exists(srcDir)) Directory.Delete(srcDir, true);
-        Directory.CreateDirectory(srcDir);
+        var genDir = bsharpDir; // Generate directly into .bsharp/ root
+
+        // Clean old generated files if they exist (but preserve shape.hash, build symlink)
+        var filesToClean = new[] { "Program.cs", "TaskModel.cs", "BsharpGenerated.csproj", "tasks.report.txt" };
+        foreach (var f in filesToClean) {
+            var path = Path.Combine(genDir, f);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        var dirsToClean = new[] { "task-server", "bin", "obj", "src" }; // Include old 'src/' for migration
+        foreach (var d in dirsToClean) {
+            var path = Path.Combine(genDir, d);
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+        }
 
         var codegenTool = FindCodegen();
         if (codegenTool == null) {
@@ -693,7 +707,7 @@ static class Launcher {
         }
         Console.Error.WriteLine($"bsharp: codegen ({Path.GetFileName(codegenTool.Path)})...");
         var codegenSw = Stopwatch.StartNew();
-        var codegenArgs = new List<string> { "--project", projectPath, "--out-dir", srcDir };
+        var codegenArgs = new List<string> { "--project", projectPath, "--out-dir", genDir };
         if (requestedTargets.Count > 0) {
             codegenArgs.Add("--targets");
             codegenArgs.Add(string.Join(';', requestedTargets));
@@ -712,7 +726,7 @@ static class Launcher {
         }
         Console.Error.WriteLine($"bsharp: codegen done in {codegenSw.ElapsedMilliseconds}ms");
 
-        var taskServerProject = Path.Combine(srcDir, "task-server", "BsharpTaskServer.csproj");
+        var taskServerProject = Path.Combine(genDir, "task-server", "BsharpTaskServer.csproj");
         if (!File.Exists(taskServerProject)) {
             Console.Error.WriteLine("bsharp: codegen output is missing task-server/BsharpTaskServer.csproj.");
             Console.Error.WriteLine("bsharp: this usually means BSHARP_CODEGEN points to an older Codegen.dll/executable.");
@@ -740,12 +754,12 @@ static class Launcher {
         foreach (var (label, props) in modes) {
             Console.Error.WriteLine($"bsharp: publish ({rid}, {label})...");
             var publishSw = Stopwatch.StartNew();
-            var args = new List<string> { "publish", srcDir, "-c", "Release", "-r", rid, "--nologo", "-v:q" };
+            var args = new List<string> { "publish", genDir, "-c", "Release", "-r", rid, "--nologo", "-v:q" };
             args.AddRange(props);
             var rc = RunProcess("dotnet", args);
             publishSw.Stop();
 
-            var candidate = Path.Combine(srcDir, "bin", "Release", "net11.0", rid, "publish", ExecutableName("BsharpGenerated"));
+            var candidate = Path.Combine(genDir, "bin", "Release", "net11.0", rid, "publish", ExecutableName("BsharpGenerated"));
             if (rc == 0 && File.Exists(candidate)) {
                 publishedBin = candidate;
                 usedMode = label;
