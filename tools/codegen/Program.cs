@@ -2381,13 +2381,13 @@ if (!noBuild) {
                 var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory()
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var runtimeVersion = Path.GetFileName(runtimeDir);
-                return !string.IsNullOrEmpty(runtimeVersion) && char.IsDigit(runtimeVersion[0]) ? runtimeVersion : CodegenConstants.DefaultRuntimeVersion;
+                return !string.IsNullOrEmpty(runtimeVersion) && char.IsDigit(runtimeVersion[0]) ? runtimeVersion : "11.0.0";
             }
             var dll = string.IsNullOrEmpty(P.TargetPath) ? "" : FindBuilt(P.TargetPath);
             if (!string.IsNullOrEmpty(dll) && File.Exists(dll)) {
                 var configPath = Path.ChangeExtension(dll, ".runtimeconfig.json");
                 if (!File.Exists(configPath)) {
-                    var tfm = string.IsNullOrEmpty(P.TargetFramework) ? CodegenConstants.DefaultTargetFramework : P.TargetFramework;
+                    var tfm = string.IsNullOrEmpty(P.TargetFramework) ? "net11.0" : P.TargetFramework;
                     var rfv = string.IsNullOrEmpty(P.RuntimeFrameworkVersion) ? DefaultRuntimeFrameworkVersion() : P.RuntimeFrameworkVersion;
                     File.WriteAllText(configPath,
                         "{\n" +
