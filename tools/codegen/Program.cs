@@ -2517,8 +2517,20 @@ static bool FastNoOpBuild(string csprojPath) {
 static bool ShouldSkipRestore(string csprojPath) {
     var projectDir = Path.GetDirectoryName(csprojPath)!;
     var assetsPath = Path.Combine(projectDir, "obj", "project.assets.json");
+    var cacheFile = Path.Combine(projectDir, "obj", "project.nuget.cache");
     
-    // If project.assets.json doesn't exist, we need to restore
+    // NuGet creates project.nuget.cache with hash when restore succeeds
+    // If it exists and is recent, restore was successful and current
+    if (File.Exists(cacheFile)) {
+        var cacheAge = DateTime.UtcNow - new FileInfo(cacheFile).LastWriteTimeUtc;
+        if (cacheAge.TotalHours < 24) {
+            // Trust NuGet's cache marker for 24 hours
+            // This is more reliable than timestamp checking
+            return true;
+        }
+    }
+    
+    // Fallback: If project.assets.json doesn't exist, we need to restore
     if (!File.Exists(assetsPath))
         return false;
     
