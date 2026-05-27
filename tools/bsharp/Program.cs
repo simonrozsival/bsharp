@@ -195,8 +195,10 @@ static class Launcher {
     }
 
     static string ResolveProjectCacheRoot(string bsharpRoot, List<KeyValuePair<string, string>> globalProps) {
+        // Ignore properties that don't affect build shape (just optimization/noise flags)
+        var ignoreKeys = new[] { "TargetFramework", "SuppressNETCoreSdkPreviewMessage", "EnableSourceControlManagerQueries", "EnableSourceLink" };
         var cacheProps = globalProps
-            .Where(p => !string.Equals(p.Key, "TargetFramework", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !ignoreKeys.Any(k => string.Equals(p.Key, k, StringComparison.OrdinalIgnoreCase)))
             .ToArray();
         if (cacheProps.Length == 0)
             return bsharpRoot;
