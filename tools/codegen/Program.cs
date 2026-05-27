@@ -5,6 +5,7 @@ using Microsoft.Build.Locator;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Bsharp.Codegen;
 
 if (args.Length < 2) {
     Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [--targets X;Y] [-p Name=Value ...]");
@@ -183,7 +184,7 @@ static class Codegen {
                 dynamicProject = ContainsPropertyOrItemReference(e.Project)
             })
             .Where(e => e.dynamicProject)
-            .Take(200)
+            .Take(CodegenConstants.MaxDiagnosticEntries)
             .ToArray();
 
         var audit = new {
@@ -234,14 +235,14 @@ static class Codegen {
                     ? "Project evaluated as an outer build. MAUI support requires an outer dispatcher that creates per-TargetFramework inner generated hosts."
                     : null,
                 dynamicImports = importingElements,
-                dynamicTargets = targetDiagnostics.Take(200).ToArray(),
-                callTargets = callTargets.Take(200).ToArray(),
-                msbuildTasks = msbuildTasks.Take(200).ToArray(),
-                cscTasks = cscTasks.Take(200).ToArray(),
-                projectReferences = projectReferences.Take(200).ToArray(),
-                targetBatchingSites = targetBatchingSites.Take(200).ToArray(),
-                taskBatchingSites = taskBatchingSites.Take(200).ToArray(),
-                propertyFunctionSites = propertyFunctionSites.Take(200).ToArray(),
+                dynamicTargets = targetDiagnostics.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                callTargets = callTargets.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                msbuildTasks = msbuildTasks.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                cscTasks = cscTasks.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                projectReferences = projectReferences.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                targetBatchingSites = targetBatchingSites.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                taskBatchingSites = taskBatchingSites.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
+                propertyFunctionSites = propertyFunctionSites.Take(CodegenConstants.MaxDiagnosticEntries).ToArray(),
                 inlineUsingTasks = taskRegistry.Entries.Where(e => e.IsInline).Select(e => new {
                     e.TaskName,
                     e.ExpandedTaskName,
@@ -756,12 +757,13 @@ public static class TaskModelExt {
     }
 
     static string ProjectTemplate(UsingTaskRegistry.Registry registry, TaskMetadataLoader.MetadataIndex meta) {
-        var sb = new StringBuilder();
-        sb.AppendLine("""
+        var tfm = CodegenConstants.DefaultTargetFramework;
+        var hashingVersion = CodegenConstants.SystemIOHashingVersion;
+        return $"""
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net11.0</TargetFramework>
+    <TargetFramework>{tfm}</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -784,13 +786,10 @@ public static class TaskModelExt {
   </PropertyGroup>
   <ItemGroup>
     <!-- Hashing utility used by Tasks.Hash. Pin to the SDK shipping version. -->
-    <PackageReference Include="System.IO.Hashing" Version="11.0.0-preview.4.26208.110" />
+    <PackageReference Include="System.IO.Hashing" Version="{hashingVersion}" />
   </ItemGroup>
 </Project>
-""");
-        _ = registry;
-        _ = meta;
-        return sb.ToString();
+""";
     }
 
     static void EmitTaskServer(string serverDir, UsingTaskRegistry.Registry registry, TaskMetadataLoader.MetadataIndex meta, string sharedOutDir) {
@@ -807,7 +806,7 @@ public static class TaskModelExt {
         sb.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
         sb.AppendLine("  <PropertyGroup>");
         sb.AppendLine("    <OutputType>Exe</OutputType>");
-        sb.AppendLine("    <TargetFramework>net11.0</TargetFramework>");
+        sb.AppendLine($"    <TargetFramework>{CodegenConstants.DefaultTargetFramework}</TargetFramework>");
         sb.AppendLine("    <Nullable>enable</Nullable>");
         sb.AppendLine("    <ImplicitUsings>enable</ImplicitUsings>");
         sb.AppendLine("    <InvariantGlobalization>true</InvariantGlobalization>");
@@ -2382,13 +2381,13 @@ if (!noBuild) {
                 var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory()
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var runtimeVersion = Path.GetFileName(runtimeDir);
-                return !string.IsNullOrEmpty(runtimeVersion) && char.IsDigit(runtimeVersion[0]) ? runtimeVersion : "11.0.0";
+                return !string.IsNullOrEmpty(runtimeVersion) && char.IsDigit(runtimeVersion[0]) ? runtimeVersion : CodegenConstants.DefaultRuntimeVersion;
             }
             var dll = string.IsNullOrEmpty(P.TargetPath) ? "" : FindBuilt(P.TargetPath);
             if (!string.IsNullOrEmpty(dll) && File.Exists(dll)) {
                 var configPath = Path.ChangeExtension(dll, ".runtimeconfig.json");
                 if (!File.Exists(configPath)) {
-                    var tfm = string.IsNullOrEmpty(P.TargetFramework) ? "net11.0" : P.TargetFramework;
+                    var tfm = string.IsNullOrEmpty(P.TargetFramework) ? CodegenConstants.DefaultTargetFramework : P.TargetFramework;
                     var rfv = string.IsNullOrEmpty(P.RuntimeFrameworkVersion) ? DefaultRuntimeFrameworkVersion() : P.RuntimeFrameworkVersion;
                     File.WriteAllText(configPath,
                         "{\n" +
