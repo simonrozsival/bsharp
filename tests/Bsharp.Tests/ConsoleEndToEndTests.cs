@@ -20,6 +20,7 @@ public sealed class ConsoleEndToEndTests
         cold.AssertSuccess("run a cold launcher build");
         StringAssert.Contains(cold.StandardError, "regenerating build binary");
         AssertGeneratedHostExists(project);
+        AssertGeneratedTaskServerUsesDirectExecution(project);
         AssertBuiltAppRuns(project, ConsoleFixtureOutput);
 
         var originalShapeHash = ReadShapeHash(project);
@@ -352,6 +353,30 @@ public sealed class ConsoleEndToEndTests
         var candidates = Directory.GetFiles(Path.Combine(project.DirectoryPath, ".bsharp"), "Program.cs", SearchOption.AllDirectories);
         Assert.IsTrue(candidates.Length > 0, "Expected generated Program.cs under .bsharp.");
         return File.ReadAllText(candidates.OrderBy(path => path, StringComparer.Ordinal).First());
+    }
+
+    private static string ReadGeneratedTaskServerText(TempProject project)
+    {
+        var path = Path.Combine(project.DirectoryPath, ".bsharp", "task-server", "Program.cs");
+        Assert.IsTrue(File.Exists(path), "Expected generated task-server/Program.cs under .bsharp.");
+        return File.ReadAllText(path);
+    }
+
+    private static void AssertGeneratedTaskServerUsesDirectExecution(TempProject project)
+    {
+        var text = ReadGeneratedTaskServerText(project);
+        StringAssert.Contains(text, "extern alias taskasm");
+        StringAssert.Contains(text, "static TaskResult ExecuteTask");
+        StringAssert.Contains(text, "new taskasm");
+        StringAssert.Contains(text, "::Microsoft.CodeAnalysis.BuildTasks.Csc");
+        StringAssert.Contains(text, "TaskServer.PrepareTask(task);");
+        StringAssert.Contains(text, "var success = task.Execute();");
+
+        Assert.IsFalse(text.Contains("Activator.CreateInstance", StringComparison.Ordinal), "Task server should instantiate task types directly.");
+        Assert.IsFalse(text.Contains("execute.Invoke", StringComparison.Ordinal), "Task server should call task.Execute() directly.");
+        Assert.IsFalse(text.Contains("MethodInfo", StringComparison.Ordinal), "Task server should not reflectively find Execute().");
+        Assert.IsFalse(text.Contains("GetProperty(", StringComparison.Ordinal), "Task server should not reflectively get task properties.");
+        Assert.IsFalse(text.Contains("using System.Reflection;", StringComparison.Ordinal), "Task server should not import reflection.");
     }
 
     private static void AssertCumulativeTasksEqualToZero(CommandResult result, string message) =>
