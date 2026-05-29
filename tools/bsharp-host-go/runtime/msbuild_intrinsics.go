@@ -139,6 +139,26 @@ func msbuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 			return "", false
 		}
 		return normalizePathJoin(args, true), true
+	case "doestaskhostexist":
+		// In MSBuild, DoesTaskHostExist asks the build engine whether a
+		// task-host process is available for a specific (Runtime,
+		// Architecture) pair. We always run tasks in-process via
+		// bsharp-taskd in the closed-world host, so every supported pair
+		// is "available". Returning True unconditionally matches the
+		// semantics the SDK conditions are gating on (they use this to
+		// avoid emitting fallback warnings when the task host exists).
+		return "True", true
+	case "istargetframeworkcompatible":
+		// `$([MSBuild]::IsTargetFrameworkCompatible(currentTfm, targetTfm))`
+		// → True iff `currentTfm` can consume libraries built for
+		// `targetTfm`. We already model the .NET 5+/netstandard/netcoreapp
+		// compatibility table in IsTargetFrameworkCompatible for cond_eval;
+		// expose it here too so SDK conditions checking compatibility (e.g.
+		// AOT TFM gates) evaluate consistently.
+		if len(args) != 2 {
+			return "", false
+		}
+		return boolToMSBuild(IsTargetFrameworkCompatible(args[0], args[1])), true
 	}
 	return "", false
 }

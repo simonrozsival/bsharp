@@ -1179,6 +1179,8 @@ internal static class GoEmitter {
                 new() { Name = "MakeRelative", RequiresArgs = true },
                 new() { Name = "NormalizePath", RequiresArgs = true },
                 new() { Name = "NormalizeDirectory", RequiresArgs = true },
+                new() { Name = "DoesTaskHostExist", RequiresArgs = true },
+                new() { Name = "IsTargetFrameworkCompatible", RequiresArgs = true },
             },
             ["System.IO.Path"] = new IntrinsicMember[] {
                 new() { Name = "Combine", RequiresArgs = true },
@@ -1421,20 +1423,21 @@ internal static class GoEmitter {
 
     static bool IsSimpleConditionTemplate(string? condition) {
         if (string.IsNullOrWhiteSpace(condition)) return true;
-        // Reject explicit Phase C+ markers that we don't model. The
-        // `[MSBuild]::F(args)` shape is validated via IsSimpleExpressionInner
-        // when we walk $() constructs below, so we do NOT blanket-reject
-        // `MSBuild::` here.
-        if (condition!.IndexOf("System.", StringComparison.Ordinal) >= 0) return false;
         // Reject ANY batching reference anywhere in the condition — `%()` in
         // an operand (even inside quotes) silently expands to "" and matches
         // nothing, which would be wrong-not-loud. Batched conditions need
         // Phase D's batching infrastructure to evaluate correctly.
-        if (condition.Contains("%(", StringComparison.Ordinal)) return false;
+        if (condition!.Contains("%(", StringComparison.Ordinal)) return false;
         // Validate every $() expansion in the condition, including those
         // inside quoted operands. The structural walk below skips quoted
         // sections, so this pass guarantees no quoted intrinsic of an
-        // unsupported shape slips through.
+        // unsupported shape slips through. Intrinsic calls like
+        // `$([System.IO.Path]::Combine(...))` go through IsSimpleExpressionInner
+        // and the IntrinsicMembers whitelist — we don't blanket-reject the
+        // bare substring "System." here because that throws out perfectly
+        // supported `[System.IO.Path]::*` / `[System.Text.RegularExpressions.Regex]::*`
+        // intrinsics. Any bare-word "System.X" outside `$()` would be an
+        // unknown identifier and trip the identifier-whitelist below anyway.
         if (!ValidateAllDollarExpansions(condition)) return false;
         // Walk top-level constructs: $(...) must be a simple property expression
         // (Phase A or B form); bare identifiers must be And/Or/Not/True/False or
