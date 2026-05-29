@@ -434,6 +434,14 @@ internal static class GoEmitter {
 
     static void EmitItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
         var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
+        // Batched per-item condition path: the classifier guarantees
+        // Include is `@(SrcList)` and every `%()` in the condition either
+        // is unqualified or qualifies SrcList. Iterate per source item and
+        // evaluate the condition against the item's metadata bag.
+        if (hasCond && item.Condition!.Contains("%(", StringComparison.Ordinal)) {
+            EmitBatchedItemGroupChild(sb, item, indent);
+            return;
+        }
         var bodyIndent = indent;
         if (hasCond) {
             sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(item.Condition)).AppendLine(", P, I) {");
@@ -510,6 +518,42 @@ internal static class GoEmitter {
         }
 
         if (hasCond) sb.Append(indent).AppendLine("}");
+    }
+
+    // EmitBatchedItemGroupChild emits a per-item iteration for the batched
+    // form `<X Include="@(SrcList)" Condition="...%(SrcList.Meta)..."/>`.
+    // The classifier guarantees Include is exactly `@(SrcList)` and every
+    // `%()` ref in the condition is either unqualified or qualified with
+    // SrcList. The whole emission lives in a Go block so the `excluded` /
+    // `meta` / `item` locals don't collide with sibling ItemGroup children.
+    static void EmitBatchedItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
+        var include = item.Include!.Trim();
+        var srcList = include.Substring(2, include.Length - 3).Trim();
+        var exclude = item.Exclude ?? "";
+        var hasExclude = exclude.Length > 0;
+        var itemType = item.ItemType;
+
+        sb.Append(indent).AppendLine("{");
+        var bi = indent + "\t";
+        if (hasExclude) {
+            sb.Append(bi).AppendLine("excluded := make(map[string]struct{})");
+            sb.Append(bi).Append("for _, ex := range rt.SplitSemicolon(rt.MustExpand(")
+              .Append(GoStringLiteral(exclude)).AppendLine(", P, I, nil)) {");
+            sb.Append(bi).AppendLine("\tif ex != \"\" { excluded[ex] = struct{}{} }");
+            sb.Append(bi).AppendLine("}");
+        }
+        sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
+        sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
+        sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+          .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+        if (hasExclude) {
+            sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+        }
+        sb.Append(bi).AppendLine("\titem := src.Clone()");
+        EmitItemMetadata(sb, item, bi + "\t", "item");
+        sb.Append(bi).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+        sb.Append(bi).AppendLine("}");
+        sb.Append(indent).AppendLine("}");
     }
 
     static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar) {
@@ -722,7 +766,20 @@ internal static class GoEmitter {
         if (!IsSimpleConditionTemplate(ig.Condition)) return "ig-complex-condition";
         foreach (var item in ig.Items) {
             if (!IsSimpleIdentifierName(item.ItemType)) return "ig-complex-item-type";
-            if (!IsSimpleConditionTemplate(item.Condition)) return "ig-complex-item-condition";
+            if (!IsSimpleConditionTemplate(item.Condition)) {
+                // Batched per-item form: `<X Include="@(SrcList)" Condition="'%(SrcList.M)' op 'lit'"/>`.
+                // The Include must be a literal ItemListCopy and every `%()` in
+                // the condition must be either unqualified or qualified with
+                // the source list name. Anything else is genuine batching that
+                // the runtime doesn't yet model.
+                var rawInc = item.Include ?? "";
+                if (rawInc.Length == 0) return "ig-complex-item-condition";
+                if (ClassifyItemIncludeSpec(rawInc) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
+                var trimmed = rawInc.Trim();
+                var srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
+                if (!IsSimpleIdentifierName(srcList)) return "ig-complex-item-condition";
+                if (!IsSimpleConditionTemplate(item.Condition, srcList)) return "ig-complex-item-condition";
+            }
             // Reject advanced item attributes that we don't model.
             if (!string.IsNullOrEmpty(item.Exclude)) {
                 // Exclude must be an expression the runtime can evaluate
@@ -1432,24 +1489,21 @@ internal static class GoEmitter {
         return parts.ToArray();
     }
 
-    static bool IsSimpleConditionTemplate(string? condition) {
+    static bool IsSimpleConditionTemplate(string? condition) =>
+        IsSimpleConditionTemplate(condition, allowedQualifier: null);
+
+    // IsSimpleConditionTemplate returns true when the condition can be
+    // evaluated by the runtime cond_eval grammar. When `allowedQualifier`
+    // is non-null, `%(Meta)` and `%(allowedQualifier.Meta)` are permitted
+    // as operands (per-item batched ItemGroup conditions). Any other `%()`
+    // reference is rejected.
+    static bool IsSimpleConditionTemplate(string? condition, string? allowedQualifier) {
         if (string.IsNullOrWhiteSpace(condition)) return true;
-        // Reject ANY batching reference anywhere in the condition — `%()` in
-        // an operand (even inside quotes) silently expands to "" and matches
-        // nothing, which would be wrong-not-loud. Batched conditions need
-        // Phase D's batching infrastructure to evaluate correctly.
-        if (condition!.Contains("%(", StringComparison.Ordinal)) return false;
-        // Validate every $() expansion in the condition, including those
-        // inside quoted operands. The structural walk below skips quoted
-        // sections, so this pass guarantees no quoted intrinsic of an
-        // unsupported shape slips through. Intrinsic calls like
-        // `$([System.IO.Path]::Combine(...))` go through IsSimpleExpressionInner
-        // and the IntrinsicMembers whitelist — we don't blanket-reject the
-        // bare substring "System." here because that throws out perfectly
-        // supported `[System.IO.Path]::*` / `[System.Text.RegularExpressions.Regex]::*`
-        // intrinsics. Any bare-word "System.X" outside `$()` would be an
-        // unknown identifier and trip the identifier-whitelist below anyway.
-        if (!ValidateAllDollarExpansions(condition)) return false;
+        // Fast-reject `%()` when batching is not allowed — silent expansion
+        // to "" would be wrong-not-loud. Batched callers pass an allowed
+        // qualifier and validate each %()-ref explicitly below.
+        if (allowedQualifier == null && condition!.Contains("%(", StringComparison.Ordinal)) return false;
+        if (!ValidateAllDollarExpansions(condition!, allowedQualifier)) return false;
         // Walk top-level constructs: $(...) must be a simple property expression
         // (Phase A or B form); bare identifiers must be And/Or/Not/True/False or
         // Exists/HasTrailingSlash followed by '('.
@@ -1511,7 +1565,16 @@ internal static class GoEmitter {
                     i++;
                     continue;
                 case '%':
-                    return false; // batching in conditions is Phase D+
+                    if (allowedQualifier == null) return false;
+                    if (i + 1 >= condition.Length || condition[i + 1] != '(') return false;
+                    {
+                        var pend = FindMatchingParenQuoteAware(condition, i + 1);
+                        if (pend < 0) return false;
+                        var pinner = condition.Substring(i + 2, pend - i - 2);
+                        if (!IsValidBatchMetaRef(pinner, allowedQualifier)) return false;
+                        i = pend + 1;
+                    }
+                    continue;
                 case '@':
                     if (i + 1 < condition.Length && condition[i + 1] == '(') {
                         // Allow @(X), @(X,'sep'), and @(X->Count()) in conditions.
@@ -1545,7 +1608,7 @@ internal static class GoEmitter {
                             // ValidateAllDollarExpansions pass above already enforced the
                             // @() shape (no transforms, no custom separators).
                             var argSrc = condition.Substring(j + 1, end - j - 1);
-                            if (argSrc.Contains("%(", StringComparison.Ordinal)) return false;
+                            if (!ValidateBatchMetaRefsInString(argSrc, allowedQualifier)) return false;
                             i = end + 1;
                         }
                         continue;
@@ -1567,7 +1630,10 @@ internal static class GoEmitter {
     // by ensuring quoted operands like `'$([MSBuild]::UnsupportedF(...))' == 'x'`
     // or `'@(X->Count())' != '0'` are caught before reaching the runtime
     // (where they would panic).
-    static bool ValidateAllDollarExpansions(string s) {
+    static bool ValidateAllDollarExpansions(string s) =>
+        ValidateAllDollarExpansions(s, allowedQualifier: null);
+
+    static bool ValidateAllDollarExpansions(string s, string? allowedQualifier) {
         for (int i = 0; i < s.Length; i++) {
             var c = s[i];
             if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
@@ -1587,8 +1653,49 @@ internal static class GoEmitter {
                 continue;
             }
             if (c == '%' && i + 1 < s.Length && s[i + 1] == '(') {
-                return false;
+                if (allowedQualifier == null) return false;
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return false;
+                var inner = s.Substring(i + 2, end - i - 2);
+                if (!IsValidBatchMetaRef(inner, allowedQualifier)) return false;
+                i = end;
+                continue;
             }
+        }
+        return true;
+    }
+
+    // IsValidBatchMetaRef returns true when `inner` (the content between
+    // `%(` and `)`) is either a bare identifier (`Meta`) or a qualified
+    // reference (`AllowedQualifier.Meta`) where AllowedQualifier matches
+    // `allowedQualifier` case-insensitively.
+    static bool IsValidBatchMetaRef(string inner, string allowedQualifier) {
+        var s = inner.Trim();
+        if (s.Length == 0) return false;
+        var dot = s.IndexOf('.');
+        if (dot < 0) {
+            return IsSimpleIdentifierName(s);
+        }
+        var qual = s.Substring(0, dot).Trim();
+        var meta = s.Substring(dot + 1).Trim();
+        if (!IsSimpleIdentifierName(qual) || !IsSimpleIdentifierName(meta)) return false;
+        return string.Equals(qual, allowedQualifier, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ValidateBatchMetaRefsInString walks `s` looking for `%(...)` chunks
+    // and validates each against `allowedQualifier`. When the allowed
+    // qualifier is null, any `%(` aborts. Used by the Exists/HasTrailingSlash
+    // arg validator to thread the per-item batching context through.
+    static bool ValidateBatchMetaRefsInString(string s, string? allowedQualifier) {
+        for (int i = 0; i < s.Length; i++) {
+            if (s[i] != '%') continue;
+            if (i + 1 >= s.Length || s[i + 1] != '(') continue;
+            if (allowedQualifier == null) return false;
+            var end = FindMatchingParenQuoteAware(s, i + 1);
+            if (end < 0) return false;
+            var inner = s.Substring(i + 2, end - i - 2);
+            if (!IsValidBatchMetaRef(inner, allowedQualifier)) return false;
+            i = end;
         }
         return true;
     }

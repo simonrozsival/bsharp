@@ -157,9 +157,13 @@ func TestExpandBatchMetadataQualified(t *testing.T) {
 }
 
 func TestExpandBatchMetadataOutsideBatch(t *testing.T) {
-	got, ok := Expand("res.%(Culture).resx", &stubPB{}, &stubIB{}, nil)
-	if !ok || got != "res..resx" {
-		t.Errorf("got %q ok=%v", got, ok)
+	// `%()` outside a batched context is unsupported — the classifier
+	// rejects these at codegen time, and the runtime now surfaces them
+	// as ok=false so any unexpected leak panics via MustExpand rather
+	// than silently expanding to "" (wrong-not-loud).
+	_, ok := Expand("res.%(Culture).resx", &stubPB{}, &stubIB{}, nil)
+	if ok {
+		t.Error("expected ok=false for %()-bearing template outside batched context")
 	}
 }
 

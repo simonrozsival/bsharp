@@ -32,6 +32,15 @@ var ProjectDir string
 //
 // Empty condition is treated as true (matches MSBuild semantics).
 func EvalCondition(condition string, p PropertyBag, i ItemBag) (result bool, ok bool) {
+	return EvalConditionWithMeta(condition, p, i, nil)
+}
+
+// EvalConditionWithMeta is EvalCondition with an optional per-item metadata
+// bag that resolves `%(Name)` and `%(Qualifier.Name)` references in
+// operands. When `batchMeta` is nil this behaves identically to
+// EvalCondition; when supplied, %()-bearing conditions become evaluable
+// (used by per-item batched ItemGroup emission to filter source items).
+func EvalConditionWithMeta(condition string, p PropertyBag, i ItemBag, batchMeta map[string]string) (result bool, ok bool) {
 	cond := strings.TrimSpace(condition)
 	if cond == "" {
 		return true, true
@@ -40,7 +49,7 @@ func EvalCondition(condition string, p PropertyBag, i ItemBag) (result bool, ok 
 	if !tokOk {
 		return false, false
 	}
-	parser := &condParser{tokens: tokens, p: p, i: i}
+	parser := &condParser{tokens: tokens, p: p, i: i, batchMeta: batchMeta}
 	res, parseOk := parser.parseOr()
 	if !parseOk || parser.pos != len(parser.tokens) {
 		return false, false
@@ -51,7 +60,14 @@ func EvalCondition(condition string, p PropertyBag, i ItemBag) (result bool, ok 
 // MustEvalCondition is the panicking convenience wrapper for emitter-classified
 // simple conditions.
 func MustEvalCondition(condition string, p PropertyBag, i ItemBag) bool {
-	res, ok := EvalCondition(condition, p, i)
+	return MustEvalConditionWithMeta(condition, p, i, nil)
+}
+
+// MustEvalConditionWithMeta is the per-item-batched variant of
+// MustEvalCondition. The emitter calls this from the per-item loop it
+// generates for batched ItemGroup item conditions.
+func MustEvalConditionWithMeta(condition string, p PropertyBag, i ItemBag, batchMeta map[string]string) bool {
+	res, ok := EvalConditionWithMeta(condition, p, i, batchMeta)
 	if !ok {
 		panic("MustEvalCondition: unsupported: " + condition)
 	}
@@ -250,10 +266,11 @@ func readBareWord(s string) (string, int) {
 }
 
 type condParser struct {
-	tokens []condToken
-	pos    int
-	p      PropertyBag
-	i      ItemBag
+	tokens    []condToken
+	pos       int
+	p         PropertyBag
+	i         ItemBag
+	batchMeta map[string]string
 }
 
 func (cp *condParser) peek() condTokenKind {
@@ -326,7 +343,7 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 	case condTokCall:
 		t := cp.tokens[cp.pos]
 		cp.pos++
-		left, ok := evalCondCall(t.text, cp.p, cp.i)
+		left, ok := evalCondCall(t.text, cp.p, cp.i, cp.batchMeta)
 		if !ok {
 			return false, false
 		}
@@ -401,7 +418,7 @@ func (cp *condParser) finishComparison(left string) (bool, bool) {
 // semicolon-joined path list and returns True if ANY path exists (matches
 // MSBuild's IntrinsicFunctions.Exists behavior). Metadata refs (`%(...)`)
 // are batching constructs and remain unsupported.
-func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
+func evalCondCall(src string, p PropertyBag, i ItemBag, batchMeta map[string]string) (string, bool) {
 	openIdx := strings.IndexByte(src, '(')
 	if openIdx < 0 {
 		return "", false
@@ -412,11 +429,14 @@ func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
 	}
 	fn := strings.ToLower(strings.TrimSpace(src[:openIdx]))
 	argSrc := strings.TrimSpace(src[openIdx+1 : closeIdx])
-	// Metadata refs are batching and remain unsupported.
-	if strings.Contains(argSrc, "%(") {
+	// Metadata refs (`%(...)`) are only resolvable when a per-item batchMeta
+	// bag is in scope. When called outside a batched context (batchMeta==nil)
+	// we keep the historical "%() in cond call is unsupported" rejection so
+	// non-batched callers don't silently observe empty-string substitution.
+	if batchMeta == nil && strings.Contains(argSrc, "%(") {
 		return "", false
 	}
-	arg, ok := readSingleOperand(argSrc, p, i)
+	arg, ok := readSingleOperand(argSrc, p, i, batchMeta)
 	if !ok {
 		return "", false
 	}
@@ -456,17 +476,17 @@ func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
 // readSingleOperand parses one operand for a condition function argument.
 // Accepts a single quoted string literal (with $(X) / %(Y) expansion inside),
 // or a single bare expansion like `$(Foo)` (NOT item or batch refs).
-func readSingleOperand(s string, p PropertyBag, i ItemBag) (string, bool) {
+func readSingleOperand(s string, p PropertyBag, i ItemBag, batchMeta map[string]string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", true
 	}
 	if (s[0] == '\'' || s[0] == '"') && len(s) >= 2 && s[len(s)-1] == s[0] {
 		inner := s[1 : len(s)-1]
-		return Expand(inner, p, i, nil)
+		return Expand(inner, p, i, batchMeta)
 	}
 	if strings.HasPrefix(s, "$(") {
-		return Expand(s, p, i, nil)
+		return Expand(s, p, i, batchMeta)
 	}
 	return "", false
 }
@@ -476,12 +496,12 @@ func (cp *condParser) parseOperand() (string, bool) {
 	case condTokString:
 		t := cp.tokens[cp.pos]
 		cp.pos++
-		expanded, ok := Expand(t.text, cp.p, cp.i, nil)
+		expanded, ok := Expand(t.text, cp.p, cp.i, cp.batchMeta)
 		return expanded, ok
 	case condTokBareExp:
 		t := cp.tokens[cp.pos]
 		cp.pos++
-		expanded, ok := Expand(t.text, cp.p, cp.i, nil)
+		expanded, ok := Expand(t.text, cp.p, cp.i, cp.batchMeta)
 		return expanded, ok
 	case condTokTrue:
 		cp.pos++

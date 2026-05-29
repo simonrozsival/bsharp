@@ -78,3 +78,46 @@ func TestIsTargetFrameworkCompatible(t *testing.T) {
 		}
 	}
 }
+
+func TestEvalConditionWithMetaBatchedEquality(t *testing.T) {
+	cases := []struct {
+		cond string
+		meta map[string]string
+		want bool
+	}{
+		{`'%(Extension)' == '.pri'`, map[string]string{"extension": ".pri"}, true},
+		{`'%(Extension)' == '.pri'`, map[string]string{"extension": ".dll"}, false},
+		{`'%(FilesCopiedToPublishDir.Filename)%(FilesCopiedToPublishDir.Extension)' == 'foo.dll'`,
+			map[string]string{"filename": "foo", "extension": ".dll"}, true},
+		{`'%(ContentWithTargetPath.CopyToOutputDirectory)'=='Always' and '%(ContentWithTargetPath.CopyToPublishDirectory)' == ''`,
+			map[string]string{"copytooutputdirectory": "Always", "copytopublishdirectory": ""}, true},
+		{`'%(ContentWithTargetPath.CopyToOutputDirectory)'=='Always' and '%(ContentWithTargetPath.CopyToPublishDirectory)' == ''`,
+			map[string]string{"copytooutputdirectory": "Never", "copytopublishdirectory": ""}, false},
+		{`'%(Identity)' == 'Microsoft.NETCore.App'`,
+			map[string]string{"identity": "Microsoft.NETCore.App"}, true},
+	}
+	for _, c := range cases {
+		got, ok := EvalConditionWithMeta(c.cond, &stubPB{}, &stubIB{}, c.meta)
+		if !ok || got != c.want {
+			t.Errorf("EvalConditionWithMeta(%q, meta=%v) = %v ok=%v, want %v", c.cond, c.meta, got, ok, c.want)
+		}
+	}
+}
+
+func TestEvalConditionWithoutMetaRejectsBatch(t *testing.T) {
+	// Sanity: without a meta bag, %()-bearing condition is still unsupported.
+	_, ok := EvalCondition(`'%(Extension)' == '.pri'`, &stubPB{}, &stubIB{})
+	if ok {
+		t.Error("EvalCondition without batchMeta should reject %()-bearing operand")
+	}
+}
+
+func TestEvalConditionWithMetaExistsCall(t *testing.T) {
+	// `Exists('%(FullPath)')` should resolve through the batchMeta bag.
+	// Just verify that a missing path returns False without panicking.
+	got, ok := EvalConditionWithMeta(`Exists('%(FullPath)')`, &stubPB{}, &stubIB{},
+		map[string]string{"fullpath": "/nonexistent/zzz-bogus-path-xyz"})
+	if !ok || got {
+		t.Errorf("Exists('%%(FullPath)' missing) = %v ok=%v, want False", got, ok)
+	}
+}

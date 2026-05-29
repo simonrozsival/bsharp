@@ -122,8 +122,12 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 			}
 			inner := strings.TrimSpace(template[j+2 : end])
 			if batchMeta == nil {
-				j = end
-				continue
+				// `%()` outside a batched context is a metadata reference
+				// the classifier should have rejected; observing it here is
+				// a classifier bug or unguarded caller. Surface ok=false so
+				// MustExpand panics loudly instead of silently expanding to
+				// "" (which would be wrong-not-loud).
+				return sb.String(), false
 			}
 			// Either "Meta" (unqualified) or "ItemName.Meta" (qualified).
 			key := inner
@@ -321,6 +325,11 @@ func parseTransformRhs(rhs string) (template, sep string, ok bool) {
 	}
 	return template, rest[1 : 1+endSep], true
 }
+
+// ItemBatchMeta is the exported wrapper around itemBatchMeta so the
+// emitter can materialize the batched-metadata bag from generated code.
+// The returned map's keys are lowercase to match Expand's `%()` handler.
+func ItemBatchMeta(it *Item) map[string]string { return itemBatchMeta(it) }
 
 // itemBatchMeta materializes an item's well-known and custom metadata into
 // a lowercase-keyed map suitable for passing as `batchMeta` to Expand. The
