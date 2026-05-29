@@ -1282,7 +1282,18 @@ static class Launcher {
     }
 
     static IEnumerable<string> EnumerateStaticMsBuildPaths(string filePath, string elementName, string attributeName) {
-        var doc = XDocument.Load(filePath, LoadOptions.None);
+        // Fast bail: read the file once and check for the element marker. The vast
+        // majority of SDK-style csprojs have no static <Import> / <ProjectReference>
+        // (everything is implicit via the SDK), so we can skip the comparatively
+        // expensive XDocument.Load + DOM walk entirely. This avoids ~5-10ms of
+        // launcher overhead per warm fast-path check on the hot incremental path.
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(filePath); }
+        catch { yield break; }
+        if (!ContainsAsciiSequence(bytes, "<" + elementName))
+            yield break;
+
+        var doc = XDocument.Parse(System.Text.Encoding.UTF8.GetString(bytes), LoadOptions.None);
         var baseDir = Path.GetDirectoryName(filePath)!;
         foreach (var element in doc.Descendants().Where(e => e.Name.LocalName.Equals(elementName, StringComparison.OrdinalIgnoreCase))) {
             var value = element.Attribute(attributeName)?.Value;
@@ -1290,6 +1301,26 @@ static class Launcher {
             if (resolved != null)
                 yield return resolved;
         }
+    }
+
+    // Case-insensitive ASCII substring search over a byte buffer. MSBuild element
+    // names are pure ASCII so we don't need a full string-comparison fallback.
+    static bool ContainsAsciiSequence(byte[] haystack, string needle) {
+        if (needle.Length == 0) return true;
+        if (haystack.Length < needle.Length) return false;
+        var first = (byte)char.ToLowerInvariant(needle[0]);
+        for (int i = 0; i <= haystack.Length - needle.Length; i++) {
+            var h = haystack[i];
+            if ((h | 0x20) != first) continue;
+            bool matched = true;
+            for (int j = 1; j < needle.Length; j++) {
+                var hh = haystack[i + j];
+                var nn = (byte)char.ToLowerInvariant(needle[j]);
+                if ((hh | 0x20) != nn) { matched = false; break; }
+            }
+            if (matched) return true;
+        }
+        return false;
     }
 
     static string? ResolveStaticMsBuildPath(string baseDir, string? value) {
