@@ -49,6 +49,22 @@ public static class Program {
     const int LOCK_EX = 2;
     const int LOCK_NB = 4;
 
+    // POSIX `close` for releasing inherited file descriptors that we never want
+    // the daemon to hold open. macOS keeps `dup`'d fds from the spawning shell
+    // alive in the child (e.g. the launcher's stdout pipe via `_NSGetExecutablePath`-style
+    // helpers); failing to close them keeps the parent's pipeline open forever
+    // after the launcher exits.
+    [DllImport("libc", SetLastError = true)]
+    static extern int close(int fd);
+    [DllImport("libc", SetLastError = true)]
+    static extern int open(string path, int flags, int mode);
+    [DllImport("libc", SetLastError = true)]
+    static extern int dup2(int oldfd, int newfd);
+    const int O_RDONLY = 0x0000;
+    const int O_WRONLY = 0x0001;
+    const int O_CREAT = 0x0200; // macOS value
+    const int O_APPEND = 0x0008; // macOS value
+
     static readonly SemaphoreSlim ExecutionLock = new(1, 1);
     static int _activeConnections;
     static DateTime _lastActivityUtc = DateTime.UtcNow;
@@ -56,6 +72,16 @@ public static class Program {
     static string _expectedFingerprint = "";
 
     public static async Task<int> Main(string[] args) {
+        // Detach from the spawner's stdio. The host spawns us with
+        // Process.Start(RedirectStandard*=false) which inherits the launcher's
+        // stdout/stderr file descriptors — typically a pipe to a parent process
+        // (e.g. `bsharp build | tail`). Keeping those fds open in this
+        // long-lived daemon would pin the parent pipeline alive after the
+        // launcher and host exit. Redirect stdin to /dev/null and stdout/stderr
+        // to the daemon log file, then close every other inherited fd so the
+        // daemon owns nothing tied to the spawning process.
+        DetachFromSpawner();
+
         string? fingerprint = null;
         for (var i = 0; i < args.Length; i++) {
             switch (args[i]) {
@@ -89,6 +115,9 @@ public static class Program {
         var logPath = DaemonPaths.GetLogPath(fingerprint);
 
         // Open the log file early so we capture startup failures.
+        // Also dup2 the log fd onto OS fds 1 and 2 so any direct write(2) — for
+        // example from libc/CoreCLR diagnostics that bypass System.Console — is
+        // captured and, crucially, no inherited pipe end remains on stdout/stderr.
         StreamWriter? logWriter = null;
         try {
             var logStream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
@@ -96,6 +125,13 @@ public static class Program {
             Log.SetTarget(logWriter);
             Console.SetOut(logWriter);
             Console.SetError(logWriter);
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                var logFd = (int)logStream.SafeFileHandle.DangerousGetHandle();
+                if (logFd > 0) {
+                    _ = dup2(logFd, 1);
+                    _ = dup2(logFd, 2);
+                }
+            }
         } catch { /* best-effort logging */ }
 
         // Cross-platform single-instance: hold a file descriptor open and apply an
@@ -166,7 +202,9 @@ public static class Program {
                 }
                 Interlocked.Increment(ref _activeConnections);
                 _lastActivityUtc = DateTime.UtcNow;
-                _ = HandleClientAsync(client);
+                // Run on the thread pool so the listener loop is never blocked even
+                // briefly by a slow handshake on a freshly-accepted connection.
+                _ = Task.Run(() => HandleClientAsync(client));
             }
         } finally {
             try { listener.Close(); } catch { }
@@ -182,7 +220,7 @@ public static class Program {
         try {
             using (client) {
                 using var stream = new NetworkStream(client, ownsSocket: false);
-                var handshakeBytes = FrameProtocol.ReadFrame(stream);
+                var handshakeBytes = await FrameProtocol.ReadFrameAsync(stream).ConfigureAwait(false);
                 if (handshakeBytes == null) return;
                 var handshake = JsonSerializer.Deserialize(handshakeBytes, TaskModelJson.Default.HandshakeRequest) ?? new HandshakeRequest();
                 var response = new HandshakeResponse {
@@ -193,45 +231,65 @@ public static class Program {
                     response.Error = $"protocol version mismatch: client={handshake.ProtocolVersion}, daemon={TaskModel.ProtocolVersion}";
                 else if (!string.IsNullOrEmpty(handshake.SdkFingerprint) && handshake.SdkFingerprint != _expectedFingerprint)
                     response.Error = $"sdk fingerprint mismatch: client={handshake.SdkFingerprint}, daemon={_expectedFingerprint}";
-                FrameProtocol.WriteFrame(stream, JsonSerializer.SerializeToUtf8Bytes(response, TaskModelJson.Default.HandshakeResponse));
+                await FrameProtocol.WriteFrameAsync(stream, JsonSerializer.SerializeToUtf8Bytes(response, TaskModelJson.Default.HandshakeResponse)).ConfigureAwait(false);
                 if (response.Error != null) return;
 
                 while (true) {
-                    var payload = FrameProtocol.ReadFrame(stream);
+                    var payload = await FrameProtocol.ReadFrameAsync(stream).ConfigureAwait(false);
                     if (payload == null) return;
                     var req = JsonSerializer.Deserialize(payload, TaskModelJson.Default.TaskInvocation) ?? new TaskInvocation();
-                    var resp = await ExecuteSerializedAsync(req);
-                    FrameProtocol.WriteFrame(stream, JsonSerializer.SerializeToUtf8Bytes(resp, TaskModelJson.Default.TaskResult));
+                    var resp = await ExecuteSerializedAsync(req).ConfigureAwait(false);
+                    await FrameProtocol.WriteFrameAsync(stream, JsonSerializer.SerializeToUtf8Bytes(resp, TaskModelJson.Default.TaskResult)).ConfigureAwait(false);
                     _lastActivityUtc = DateTime.UtcNow;
                 }
             }
         } catch (EndOfStreamException) {
             // Normal client close mid-frame; ignore.
         } catch (Exception ex) {
-            Log.WriteLine($"client connection ended with error: {ex.GetType().Name}: {ex.Message}");
+            Log.WriteLine($"client connection ended with error: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
         } finally {
             Interlocked.Decrement(ref _activeConnections);
         }
+    }
+
+    static readonly string _stableHomeDir = ResolveStableHomeDir();
+
+    static string ResolveStableHomeDir() {
+        var tmp = Path.GetTempPath();
+        try { if (Directory.Exists(tmp)) return tmp; } catch { }
+        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "C:\\" : "/";
     }
 
     static async Task<TaskResult> ExecuteSerializedAsync(TaskInvocation req) {
         await ExecutionLock.WaitAsync();
         try {
             // Cwd + Console redirect are process-global. We redirect Console here so any
-            // task output is silenced; cwd is set per invocation and restored.
-            var savedCwd = Directory.GetCurrentDirectory();
+            // task output is silenced; cwd is set per invocation and restored to a stable
+            // home (tmp dir) so previous-invocation cwd deletion doesn't break us.
+            string savedCwd;
+            try { savedCwd = Directory.GetCurrentDirectory(); }
+            catch { savedCwd = _stableHomeDir; }
             var savedOut = Console.Out;
             var savedErr = Console.Error;
             try {
                 if (!string.IsNullOrEmpty(req.Cwd) && Directory.Exists(req.Cwd))
                     Directory.SetCurrentDirectory(req.Cwd);
+                else if (!Directory.Exists(savedCwd))
+                    try { Directory.SetCurrentDirectory(_stableHomeDir); } catch { }
                 Console.SetOut(TextWriter.Null);
                 Console.SetError(TextWriter.Null);
                 return TaskExecutor.Execute(req);
             } finally {
                 Console.SetOut(savedOut);
                 Console.SetError(savedErr);
-                try { Directory.SetCurrentDirectory(savedCwd); } catch { }
+                // Always restore to a stable cwd: the saved cwd may have been deleted
+                // by the client between invocations (common in test harnesses).
+                try {
+                    if (Directory.Exists(savedCwd))
+                        Directory.SetCurrentDirectory(savedCwd);
+                    else
+                        Directory.SetCurrentDirectory(_stableHomeDir);
+                } catch { }
             }
         } finally {
             ExecutionLock.Release();
@@ -254,5 +312,23 @@ public static class Program {
     static int Fatal(string message) {
         Console.Error.WriteLine($"bsharp-taskd: {message}");
         return 2;
+    }
+
+    static void DetachFromSpawner() {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+        // Redirect stdin to /dev/null so we never block on (or hold open) the
+        // launcher's stdin handle.
+        var devnull = open("/dev/null", O_RDONLY, 0);
+        if (devnull >= 0) {
+            _ = dup2(devnull, 0);
+            if (devnull != 0) _ = close(devnull);
+        }
+        // Conservatively close descriptors 3..1023. macOS' default soft
+        // RLIMIT_NOFILE is 256, hard is normally 1024 — covering 1024 is cheap
+        // and safe. fds 1 and 2 stay attached to whatever the spawner gave us
+        // until we re-point them at the daemon log a few statements later.
+        for (var fd = 3; fd < 1024; fd++) {
+            _ = close(fd);
+        }
     }
 }
