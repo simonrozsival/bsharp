@@ -231,6 +231,7 @@ internal static class GoEmitter {
         var hasBefores = befores is { Count: > 0 };
         var hasAfters = afters is { Count: > 0 };
         var hasCond = !string.IsNullOrWhiteSpace(target.Condition);
+        var hasIO = !string.IsNullOrWhiteSpace(target.Inputs) || !string.IsNullOrWhiteSpace(target.Outputs);
 
         sb.Append("// ").Append(target.Name).AppendLine(": real body");
         sb.Append("func ").Append(ident).AppendLine("() {");
@@ -279,9 +280,7 @@ internal static class GoEmitter {
             if (hasCond) {
                 sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
             }
-            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
-            EmitTargetChildren(sb, target);
-            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+            EmitTargetBodyOrIncremental(sb, target, hasIO);
             sb.AppendLine("\tts.MarkDone()");
         } else {
             // Extender path: keep TargetState in `running` until after-extenders
@@ -296,9 +295,7 @@ internal static class GoEmitter {
             // Body emitted at \t (child emitters hardcode \t indent). When the
             // condition wraps the body, the resulting code is visually
             // mis-indented but valid Go.
-            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
-            EmitTargetChildren(sb, target);
-            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+            EmitTargetBodyOrIncremental(sb, target, hasIO);
             sb.AppendLine("\tts.MarkDone()");
             if (hasCond) {
                 sb.AppendLine("\t}");
@@ -319,12 +316,64 @@ internal static class GoEmitter {
         sb.AppendLine();
     }
 
+    // EmitTargetBodyOrIncremental emits either the unconditional body (started
+    // → children → finished) or the Phase D incremental shape:
+    //
+    //     if !rt.IsUpToDate(name, inputs, outputs) {
+    //         started := ...; <children>; finished := ...
+    //     } else {
+    //         rt.Log.TargetUpToDate(name)
+    //         <output inference: PG/IG only — task <Output/> is rejected at classifier>
+    //     }
+    //
+    // MarkDone() is emitted by the caller, AFTER this block, regardless of
+    // branch. Up-to-date is a successful terminal completion; downstream
+    // targets must not re-run the target.
+    static void EmitTargetBodyOrIncremental(StringBuilder sb, ProjectTargetInstance target, bool hasIO) {
+        if (hasIO) {
+            sb.Append("\tif !rt.IsUpToDate(").Append(GoStringLiteral(target.Name))
+              .Append(", rt.MustExpand(").Append(GoStringLiteral(target.Inputs ?? "")).Append(", P, I, nil)")
+              .Append(", rt.MustExpand(").Append(GoStringLiteral(target.Outputs ?? "")).AppendLine(", P, I, nil)) {");
+            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+            EmitTargetChildren(sb, target);
+            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+            sb.AppendLine("\t} else {");
+            sb.Append("\trt.Log.TargetUpToDate(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+            EmitTargetChildrenForUpToDateSkip(sb, target);
+            sb.AppendLine("\t}");
+        } else {
+            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+            EmitTargetChildren(sb, target);
+            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+        }
+    }
+
     static void EmitTargetChildren(StringBuilder sb, ProjectTargetInstance target) {
         foreach (var child in target.Children) {
             switch (child) {
                 case ProjectTaskInstance task:
                     EmitLocalTaskCall(sb, target, task);
                     break;
+                case ProjectPropertyGroupTaskInstance pg:
+                    EmitPropertyGroup(sb, pg);
+                    break;
+                case ProjectItemGroupTaskInstance ig:
+                    EmitItemGroup(sb, ig);
+                    break;
+            }
+        }
+    }
+
+    // EmitTargetChildrenForUpToDateSkip emits the "output inference" pass
+    // MSBuild applies when a target is skipped as up-to-date: PropertyGroup
+    // and ItemGroup mutations are re-applied so downstream targets see the
+    // same state they would see if the target had executed. Tasks are
+    // intentionally NOT emitted: targets containing a task with <Output/> are
+    // rejected at classifier level (task-has-outputs:X), and tasks without
+    // outputs have no state to infer.
+    static void EmitTargetChildrenForUpToDateSkip(StringBuilder sb, ProjectTargetInstance target) {
+        foreach (var child in target.Children) {
+            switch (child) {
                 case ProjectPropertyGroupTaskInstance pg:
                     EmitPropertyGroup(sb, pg);
                     break;
@@ -470,9 +519,8 @@ internal static class GoEmitter {
         if (ContainsBatching(target.Inputs) || ContainsBatching(target.Outputs)) {
             return "target-batching";
         }
-        if (!string.IsNullOrWhiteSpace(target.Inputs) || !string.IsNullOrWhiteSpace(target.Outputs)) {
-            return "target-inputs-outputs";
-        }
+        if (!IsSimpleExpressionTemplate(target.Inputs)) return "target-inputs-complex";
+        if (!IsSimpleExpressionTemplate(target.Outputs)) return "target-outputs-complex";
         if (HasDynamicExtenderAttr(target.BeforeTargets) || HasDynamicExtenderAttr(target.AfterTargets)) {
             // Dynamic Before/AfterTargets ($/@/% in the attribute) would require
             // runtime extender registration, which Phase E doesn't model.
