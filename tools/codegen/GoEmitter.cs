@@ -594,6 +594,35 @@ internal static class GoEmitter {
         return null;
     }
 
+    // ComputeTaskBatchSrcList resolves the single source-list qualifier for
+    // a task whose condition or any parameter value contains `%(...)`. The
+    // result is the item-type name to iterate over at runtime; condition
+    // and parameter values then expand against each source item's metadata.
+    // Returns null when no batching refs are found OR when refs use more
+    // than one distinct qualifier (cross-list batching is unsupported).
+    //
+    // All qualified refs must agree on the qualifier; unqualified refs
+    // (`%(Identity)` etc.) are tolerated and resolve against the chosen
+    // source list at runtime. Returns null when only unqualified refs
+    // exist, because we cannot guess the source list — those cases need
+    // implicit-source resolution from the surrounding target context, which
+    // we don't model.
+    static string? ComputeTaskBatchSrcList(ProjectTaskInstance task) {
+        var fromCond = ExtractSingleBatchQualifier(task.Condition ?? "");
+        string? found = fromCond;
+        foreach (var p in task.Parameters) {
+            var q = ExtractSingleBatchQualifier(p.Value ?? "");
+            if (q == null) continue;
+            if (found == null) {
+                found = q;
+            } else if (!string.Equals(found, q, StringComparison.OrdinalIgnoreCase)) {
+                return null;
+            }
+        }
+        return found;
+    }
+
+
     // EmitBatchedItemGroupChild emits a per-item iteration when an item
     // requires batched evaluation. The classifier guarantees a single
     // source list can be resolved; the loop iterates over `I.Get(SrcList)`
@@ -760,6 +789,17 @@ internal static class GoEmitter {
             return;
         }
 
+        // Task-level batching: the classifier accepted this task with a
+        // resolvable single source-list qualifier. Emit a per-source loop
+        // that threads `meta` into both the condition and each parameter
+        // value expansion. The whole emission lives in its own Go block
+        // so the loop locals don't collide with sibling tasks/IGs.
+        var taskSrcList = ComputeTaskBatchSrcList(task);
+        if (taskSrcList != null) {
+            EmitBatchedLocalTaskCall(sb, target, task, fn, taskSrcList);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(task.Condition)) {
             sb.Append("\tif rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
         }
@@ -787,6 +827,38 @@ internal static class GoEmitter {
         if (!string.IsNullOrWhiteSpace(task.Condition)) {
             sb.AppendLine("\t}");
         }
+    }
+
+    // EmitBatchedLocalTaskCall emits the per-source-item loop variant of a
+    // local-task call. The classifier guaranteed that no <Output/> bindings
+    // exist (per-iter accumulation isn't modelled) and that taskSrcList is
+    // the single qualifier shared by every batched ref in the condition or
+    // any parameter value.
+    static void EmitBatchedLocalTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task, string fn, string srcList) {
+        sb.Append("\t{").AppendLine();
+        sb.Append("\t\tfor _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
+        sb.Append("\t\t\tmeta := rt.ItemBatchMeta(src)").AppendLine();
+        sb.AppendLine("\t\t\t_ = meta // may be unused if every ref is qualified-only");
+        var bodyIndent = "\t\t\t";
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.Append(bodyIndent).Append("if !rt.MustEvalConditionWithMeta(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I, meta) { continue }");
+        }
+        sb.Append(bodyIndent).Append("if err := rt.").Append(fn).Append("(rt.NewParamList(");
+        var first = true;
+        foreach (var param in task.Parameters) {
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append("rt.Param{Key: ").Append(GoStringLiteral(param.Key))
+              .Append(", Value: rt.MustExpand(").Append(GoStringLiteral(param.Value)).Append(", P, I, meta)}");
+        }
+        sb.Append("));");
+        if (TaskNeedsItemBag(task.Name)) {
+            sb.Length -= 2;
+            sb.Append(", nil, I, P);");
+        }
+        sb.AppendLine(" err != nil { rt.GetErrorList().Add(\"" + EscapeForGo(target.Name) + "\", err) }");
+        sb.Append("\t\t}").AppendLine();
+        sb.Append("\t}").AppendLine();
     }
 
     // EmitTaskOutputList emits the second argument to a task helper —
@@ -902,10 +974,27 @@ internal static class GoEmitter {
                             }
                         }
                     }
-                    if (!IsSimpleConditionTemplate(task.Condition)) return "complex-task-condition";
-                    foreach (var p in task.Parameters) {
-                        if (!IsSimpleExpressionTemplate(p.Value)) return "complex-task-param:" + task.Name + "." + p.Key;
-                        if (ContainsBatching(p.Value)) return "task-batching";
+                    {
+                        // Detect task-level batching: when condition or any
+                        // parameter value contains %() outside `@()`, MSBuild
+                        // runs the task once per unique combination of the
+                        // referenced metadata values. We accept the simple
+                        // single-source-list form (all qualified refs share
+                        // one qualifier).
+                        var taskSrcList = ComputeTaskBatchSrcList(task);
+                        var hasBatching = taskSrcList != null
+                            || ContainsBatching(task.Condition)
+                            || task.Parameters.Any(p => ContainsBatching(p.Value));
+                        if (hasBatching && taskSrcList == null) return "task-batching";
+                        // Batched tasks with <Output/> bindings would need
+                        // per-iter output accumulation (each batch appends to
+                        // the output list / overwrites the output property).
+                        // For now, reject so the wrong-output case is loud.
+                        if (taskSrcList != null && task.Outputs.Count > 0) return "task-batching-with-outputs";
+                        if (!IsSimpleConditionTemplate(task.Condition, taskSrcList)) return "complex-task-condition";
+                        foreach (var p in task.Parameters) {
+                            if (!IsSimpleExpressionTemplate(p.Value, taskSrcList)) return "complex-task-param:" + task.Name + "." + p.Key;
+                        }
                     }
                     break;
                 case ProjectPropertyGroupTaskInstance pg:
