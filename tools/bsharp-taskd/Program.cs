@@ -60,6 +60,14 @@ public static class Program {
     static extern int open(string path, int flags, int mode);
     [DllImport("libc", SetLastError = true)]
     static extern int dup2(int oldfd, int newfd);
+    // setsid(2): create a new session and process group with the calling process
+    // as leader. Without this, the daemon stays in the spawning shell's process
+    // group and dies on SIGHUP when that shell exits (very common when bsharp
+    // is invoked from a script or a `bash -c` subshell). setsid only succeeds
+    // when the caller is NOT already a process-group leader, which is true
+    // for us because we were exec'd by /bin/sh -c "exec bsharp-taskd ...".
+    [DllImport("libc", SetLastError = true)]
+    static extern int setsid();
     const int O_RDONLY = 0x0000;
     const int O_WRONLY = 0x0001;
     const int O_CREAT = 0x0200; // macOS value
@@ -235,12 +243,20 @@ public static class Program {
                 if (response.Error != null) return;
 
                 while (true) {
+                    var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     var payload = await FrameProtocol.ReadFrameAsync(stream).ConfigureAwait(false);
                     if (payload == null) return;
+                    var t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                     var req = JsonSerializer.Deserialize(payload, TaskModelJson.Default.TaskInvocation) ?? new TaskInvocation();
+                    var t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                     var resp = await ExecuteSerializedAsync(req).ConfigureAwait(false);
-                    await FrameProtocol.WriteFrameAsync(stream, JsonSerializer.SerializeToUtf8Bytes(resp, TaskModelJson.Default.TaskResult)).ConfigureAwait(false);
+                    var t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(resp, TaskModelJson.Default.TaskResult);
+                    var t4 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    await FrameProtocol.WriteFrameAsync(stream, bytes).ConfigureAwait(false);
+                    var t5 = System.Diagnostics.Stopwatch.GetTimestamp();
                     _lastActivityUtc = DateTime.UtcNow;
+                    if (DaemonTiming.Enabled) DaemonTiming.Record(req.TaskName, t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, payload.Length, bytes.Length);
                 }
             }
         } catch (EndOfStreamException) {
@@ -248,6 +264,7 @@ public static class Program {
         } catch (Exception ex) {
             Log.WriteLine($"client connection ended with error: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
         } finally {
+            DaemonTiming.Dump("client closed");
             Interlocked.Decrement(ref _activeConnections);
         }
     }
@@ -316,6 +333,10 @@ public static class Program {
 
     static void DetachFromSpawner() {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+        // Create a new session so the daemon survives when the spawning shell
+        // exits (or signals its process group). Returning -1 here just means we
+        // were already a session leader — harmless.
+        _ = setsid();
         // Redirect stdin to /dev/null so we never block on (or hold open) the
         // launcher's stdin handle.
         var devnull = open("/dev/null", O_RDONLY, 0);
