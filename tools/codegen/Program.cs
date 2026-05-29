@@ -2489,6 +2489,10 @@ static partial class TaskRunner {
     static readonly Dictionary<string, TaskDescriptor> _tasks = new(StringComparer.OrdinalIgnoreCase);
     static string _subCliDir = "";
     static DaemonClient? _daemon;
+    // Cached once per build: cwd is process-global and stable across a single
+    // bsharp invocation, so reading it via syscall on every task call wastes
+    // ~5-10us per task (~210us-420us per warm build).
+    static string? _cachedCwd;
 
     static TaskRunner() => RegisterTasks();
     static partial void RegisterTasks();
@@ -2518,7 +2522,7 @@ static partial class TaskRunner {
                 AssemblyPath = desc.AssemblyPath,
                 TypeName = desc.FullTypeName,
                 OutputNames = desc.OutputNames,
-                Cwd = Directory.GetCurrentDirectory(),
+                Cwd = _cachedCwd ??= Directory.GetCurrentDirectory(),
             }
         };
     }
@@ -2717,12 +2721,30 @@ static partial class TaskRunner {
 
     static DaemonClient GetDaemon() => _daemon ??= new DaemonClient(_subCliDir);
 
+    // Fire-and-forget background connect. Call right after Init() so the daemon
+    // is connected (and spawned, if needed) in parallel with the host's
+    // populate() phase. By the time the first task fires, the socket is ready
+    // — we skip the per-build connect latency entirely on warm daemon and
+    // overlap daemon spawn with populate on cold daemon.
+    public static void StartConnectionPrewarm() {
+        var daemon = GetDaemon();
+        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(static d => {
+            try { ((DaemonClient)d!).EnsureConnectedSafe(); } catch { /* lazy retry from Invoke */ }
+        }, daemon);
+    }
+
     sealed class DaemonClient {
         readonly string _daemonHostDir;
         Socket? _socket;
         NetworkStream? _stream;
         readonly object _sync = new();
         public DaemonClient(string daemonHostDir) => _daemonHostDir = daemonHostDir;
+
+        // Prewarm-friendly variant: acquires _sync so concurrent first-Invoke
+        // doesn't race us; the lock is held briefly.
+        public void EnsureConnectedSafe() {
+            lock (_sync) EnsureConnected();
+        }
 
         public Bsharp.Generated.TaskModel.TaskResult Invoke(Bsharp.Generated.TaskModel.TaskInvocation invocation) {
             lock (_sync) {
@@ -4566,6 +4588,11 @@ static partial class Tasks {
         sb.AppendLine("        var executableInfo = new FileInfo(executable);");
         sb.AppendLine("        if (!string.IsNullOrEmpty(executableInfo.LinkTarget)) executable = Path.GetFullPath(executableInfo.LinkTarget, Path.GetDirectoryName(executable)!);");
         sb.AppendLine("        TaskRunner.Init(Path.GetDirectoryName(executable)!);");
+        sb.AppendLine("        // Kick off daemon spawn + connect in parallel with populate so the");
+        sb.AppendLine("        // socket is ready by the time the first task fires. On cold daemon");
+        sb.AppendLine("        // this overlaps ~50ms of daemon spawn with ~5ms of populate; on warm");
+        sb.AppendLine("        // daemon it shaves the per-build connect latency entirely.");
+        sb.AppendLine("        TaskRunner.StartConnectionPrewarm();");
         sb.AppendLine();
         sb.AppendLine("        // User-set properties from csproj XML (override the baked field defaults).");
         sb.AppendLine("        PopulateProjectProperties(csprojPath);");
