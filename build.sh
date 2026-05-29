@@ -35,9 +35,6 @@ else
     BSHARP_GO_BIN=""
 fi
 
-echo "==> Build C launcher (experiment)"
-( cd "$BSHARP_ROOT/tools/bsharp-c" && cc -O3 -Wall -Wextra -o bsharp-c bsharp-c.c )
-BSHARP_C_BIN="$BSHARP_ROOT/tools/bsharp-c/bsharp-c"
 
 echo "==> Stage daemon next to the launcher"
 TASKD_PUBLISH_DIR="$BSHARP_ROOT/tools/bsharp-taskd/bin/Release/net11.0/osx-arm64/publish"
@@ -45,9 +42,6 @@ LAUNCHER_DIR="$(dirname "$BSHARP_BIN")"
 cp -f "$TASKD_PUBLISH_DIR"/* "$LAUNCHER_DIR/" || true
 if [ -n "$BSHARP_GO_BIN" ] && [ -f "$BSHARP_GO_BIN" ]; then
     cp -f "$BSHARP_GO_BIN" "$LAUNCHER_DIR/bsharp-go"
-fi
-if [ -f "$BSHARP_C_BIN" ]; then
-    cp -f "$BSHARP_C_BIN" "$LAUNCHER_DIR/bsharp-c"
 fi
 
 echo "==> Done. Try:"
