@@ -434,11 +434,13 @@ internal static class GoEmitter {
 
     static void EmitItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
         var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
-        // Batched per-item condition path: the classifier guarantees
-        // Include is `@(SrcList)` and every `%()` in the condition either
-        // is unqualified or qualifies SrcList. Iterate per source item and
-        // evaluate the condition against the item's metadata bag.
-        if (hasCond && item.Condition!.Contains("%(", StringComparison.Ordinal)) {
+        // Batched per-item path: when the condition, include/remove spec,
+        // or any metadata references `%()` outside an `@()` transform, the
+        // ItemGroup is per-item-batched. The classifier guarantees we can
+        // determine a single source list (Include/Remove `@(SrcList)`, or
+        // ItemType when both are empty, or a single qualifier extracted
+        // from the cond/metadata refs).
+        if (ItemNeedsBatchedEmission(item)) {
             EmitBatchedItemGroupChild(sb, item, indent);
             return;
         }
@@ -520,17 +522,67 @@ internal static class GoEmitter {
         if (hasCond) sb.Append(indent).AppendLine("}");
     }
 
-    // EmitBatchedItemGroupChild emits a per-item iteration for the batched
-    // forms:
-    //   1. `<X Include="@(SrcList)" Condition="...%(SrcList.Meta)..."/>`
-    //   2. modify-meta `<X Condition="...%(X.Meta)..."><M>v</M></X>` (no
-    //      Include/Remove — modifies existing items of type X in place).
-    //   3. `<X Remove="@(SrcList)" Condition="...%(SrcList.Meta)..."/>` —
-    //      remove items whose per-item condition matches.
-    // The classifier guarantees every `%()` ref in the condition is either
-    // unqualified or qualified with the source list name. The whole emission
-    // lives in a Go block so the `excluded` / `meta` / `item` locals don't
-    // collide with sibling ItemGroup children.
+    // ItemNeedsBatchedEmission returns true when the item references `%()`
+    // anywhere that requires per-item iteration to evaluate: condition,
+    // Include/Remove spec, or any metadata Value/Condition. `ContainsBatching`
+    // correctly skips inside `@(X->'...')` transforms so this only triggers
+    // on genuine batching refs.
+    static bool ItemNeedsBatchedEmission(ProjectItemGroupTaskItemInstance item) {
+        if (ContainsBatching(item.Condition)) return true;
+        if (ContainsBatching(item.Include)) return true;
+        if (ContainsBatching(item.Remove)) return true;
+        foreach (var m in item.Metadata) {
+            if (ContainsBatching(m.Value)) return true;
+            if (ContainsBatching(m.Condition)) return true;
+        }
+        return false;
+    }
+
+    // ComputeBatchSrcList mirrors the classifier's source-list resolution
+    // for an item that the dispatcher has decided needs batched emission.
+    // Returns null only if the classifier missed something (defensive —
+    // callers should treat null as a bug since the dispatcher already
+    // gated on the classifier's acceptance).
+    static string? ComputeBatchSrcList(ProjectItemGroupTaskItemInstance item) {
+        var rawInc = item.Include ?? "";
+        var rawRem = item.Remove ?? "";
+        if (rawInc.Length > 0 && ClassifyItemIncludeSpec(rawInc) == ItemIncludeKind.ItemListCopy) {
+            var trimmed = rawInc.Trim();
+            var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+            if (IsSimpleIdentifierName(ident)) return ident;
+        } else if (rawInc.Length == 0 && rawRem.Length > 0
+                   && ClassifyItemIncludeSpec(rawRem) == ItemIncludeKind.ItemListCopy) {
+            var trimmed = rawRem.Trim();
+            var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+            if (IsSimpleIdentifierName(ident)) return ident;
+        } else if (rawInc.Length == 0 && rawRem.Length == 0) {
+            return item.ItemType;
+        }
+        var fromCond = ExtractSingleBatchQualifier(item.Condition ?? "");
+        if (fromCond != null) return fromCond;
+        foreach (var meta in item.Metadata) {
+            var q = ExtractSingleBatchQualifier(meta.Value ?? "")
+                 ?? ExtractSingleBatchQualifier(meta.Condition ?? "");
+            if (q != null) return q;
+        }
+        return null;
+    }
+
+    // EmitBatchedItemGroupChild emits a per-item iteration when an item
+    // requires batched evaluation. The classifier guarantees a single
+    // source list can be resolved; the loop iterates over `I.Get(SrcList)`
+    // and threads each source item's metadata bag (`meta`) into condition
+    // evaluation and metadata expansion.
+    //
+    // Includes/Removes/modify-meta are routed:
+    //   - Include="@(SrcList)" → append a clone of each matching source item.
+    //   - Include=literal/expr  → expand Include per iteration (may reference
+    //                              `%(SrcList.M)`) and append a fresh item.
+    //   - Remove="@(SrcList)"   → collect identities first, then bulk-remove.
+    //   - No Include/Remove     → modify metadata on existing items in place.
+    //
+    // The whole emission lives in a Go block so the `excluded` / `meta` /
+    // `item` locals don't collide with sibling ItemGroup children.
     static void EmitBatchedItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
         var include = item.Include ?? "";
         var remove = item.Remove ?? "";
@@ -540,17 +592,16 @@ internal static class GoEmitter {
         var isInclude = include.Length > 0;
         var isRemove = !isInclude && remove.Length > 0;
         var isModifyMeta = !isInclude && !isRemove;
+        var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
 
-        string srcList;
-        if (isInclude) {
-            var trimmed = include.Trim();
-            srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
-        } else if (isRemove) {
-            var trimmed = remove.Trim();
-            srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
-        } else {
-            srcList = itemType;
-        }
+        var srcList = ComputeBatchSrcList(item)
+            ?? throw new InvalidOperationException(
+                $"batched emission requested but no source list resolved for item type {itemType}");
+
+        // Is the Include literal-shaped (not @(SrcList))? Only meaningful when
+        // isInclude. Detected by checking the classified include kind.
+        var includeIsLiteral = isInclude
+            && ClassifyItemIncludeSpec(include) != ItemIncludeKind.ItemListCopy;
 
         sb.Append(indent).AppendLine("{");
         var bi = indent + "\t";
@@ -562,13 +613,15 @@ internal static class GoEmitter {
             sb.Append(bi).AppendLine("}");
         }
         if (isRemove) {
-            // Collect identities first to avoid mutating the underlying list
-            // while iterating it (matters when srcList == itemType).
             sb.Append(bi).AppendLine("var toRemove []string");
             sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
             sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
-            sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
-              .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+            if (hasCond) {
+                sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+                  .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+            } else {
+                sb.Append(bi).AppendLine("\t_ = meta");
+            }
             if (hasExclude) {
                 sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
             }
@@ -582,36 +635,68 @@ internal static class GoEmitter {
         }
         sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
         sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
-        sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
-          .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+        if (hasCond) {
+            sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+              .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+        }
         if (hasExclude) {
             sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
         }
         if (isModifyMeta) {
-            // Mutate the existing item in place — same semantics as the
-            // non-batched modify-meta path.
             sb.Append(bi).AppendLine("\titem := src");
-            EmitItemMetadata(sb, item, bi + "\t", "item");
+            EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
+        } else if (includeIsLiteral) {
+            // Expand the Include per source item, splitting on ';' to support
+            // expressions like `"a;b"` that should produce multiple items.
+            sb.Append(bi).Append("\tfor _, id := range rt.SplitSemicolon(rt.MustExpand(")
+              .Append(GoStringLiteral(include)).AppendLine(", P, I, meta)) {");
+            sb.Append(bi).AppendLine("\t\tif id == \"\" { continue }");
+            sb.Append(bi).AppendLine("\t\titem := rt.NewItem(id)");
+            EmitItemMetadata(sb, item, bi + "\t\t", "item", "meta");
+            sb.Append(bi).Append("\t\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+            sb.Append(bi).AppendLine("\t}");
         } else {
+            // Include="@(SrcList)" — clone the source item per iteration.
             sb.Append(bi).AppendLine("\titem := src.Clone()");
-            EmitItemMetadata(sb, item, bi + "\t", "item");
+            EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
             sb.Append(bi).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+        }
+        if (!hasCond && !hasExclude && isModifyMeta && item.Metadata.Count == 0) {
+            // Pathological — shouldn't reach here, but suppress unused.
+            sb.Append(bi).AppendLine("\t_ = meta");
         }
         sb.Append(bi).AppendLine("}");
         sb.Append(indent).AppendLine("}");
     }
 
-    static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar) {
+    static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar)
+        => EmitItemMetadata(sb, item, indent, itemVar, batchMetaVar: null);
+
+    // EmitItemMetadata emits the per-metadata SetMetadata calls. When
+    // `batchMetaVar` is non-null, metadata Conditions and Values are
+    // evaluated/expanded with that variable as the per-item batch bag
+    // — required for `%(SrcList.M)` references inside batched ItemGroups.
+    static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar, string? batchMetaVar) {
+        var metaArg = batchMetaVar ?? "nil";
         foreach (var meta in item.Metadata) {
             var hasMetaCond = !string.IsNullOrWhiteSpace(meta.Condition);
             if (hasMetaCond) {
-                sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(meta.Condition)).AppendLine(", P, I) {");
+                if (batchMetaVar != null) {
+                    sb.Append(indent).Append("if rt.MustEvalConditionWithMeta(")
+                      .Append(GoStringLiteral(meta.Condition)).Append(", P, I, ")
+                      .Append(batchMetaVar).AppendLine(") {");
+                } else {
+                    sb.Append(indent).Append("if rt.MustEvalCondition(")
+                      .Append(GoStringLiteral(meta.Condition)).AppendLine(", P, I) {");
+                }
                 sb.Append(indent).Append("\t").Append(itemVar).Append(".SetMetadata(").Append(GoStringLiteral(meta.Name))
-                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).AppendLine(", P, I, nil))");
+                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).Append(", P, I, ")
+                  .Append(metaArg).AppendLine("))");
                 sb.Append(indent).AppendLine("}");
             } else {
                 sb.Append(indent).Append(itemVar).Append(".SetMetadata(").Append(GoStringLiteral(meta.Name))
-                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).AppendLine(", P, I, nil))");
+                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).Append(", P, I, ")
+                  .Append(metaArg).AppendLine("))");
             }
         }
     }
@@ -811,35 +896,50 @@ internal static class GoEmitter {
         if (!IsSimpleConditionTemplate(ig.Condition)) return "ig-complex-condition";
         foreach (var item in ig.Items) {
             if (!IsSimpleIdentifierName(item.ItemType)) return "ig-complex-item-type";
-            if (!IsSimpleConditionTemplate(item.Condition)) {
-                // Batched per-item form. Three shapes:
-                //   1. `<X Include="@(SrcList)" Condition="...%(SrcList.M)..."/>`
-                //   2. modify-meta: `<X Condition="...%(X.M)..."><Meta>v</Meta></X>`
-                //      (no Include/Remove → operates on existing items of type X).
-                //   3. `<X Remove="@(SrcList)" Condition="...%(SrcList.M)..."/>`
-                //      (remove matching items by per-item filter).
-                // In all cases every `%()` in the condition must be either
-                // unqualified or qualified with the source list name.
-                var rawInc = item.Include ?? "";
-                var rawRem = item.Remove ?? "";
-                string? srcList = null;
-                if (rawInc.Length > 0) {
-                    if (ClassifyItemIncludeSpec(rawInc) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
-                    var trimmed = rawInc.Trim();
-                    var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
-                    if (!IsSimpleIdentifierName(ident)) return "ig-complex-item-condition";
-                    srcList = ident;
-                } else if (rawRem.Length > 0) {
-                    if (ClassifyItemIncludeSpec(rawRem) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
-                    var trimmed = rawRem.Trim();
-                    var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
-                    if (!IsSimpleIdentifierName(ident)) return "ig-complex-item-condition";
-                    srcList = ident;
-                } else {
-                    srcList = item.ItemType;
-                }
-                if (!IsSimpleConditionTemplate(item.Condition, srcList)) return "ig-complex-item-condition";
+
+            var rawInc = item.Include ?? "";
+            var rawRem = item.Remove ?? "";
+
+            // Determine the batched source list once. Order of precedence:
+            //   1. Include / Remove "@(SrcList)" literal — the cleanest signal.
+            //   2. No Include/Remove → modify-meta, srcList = ItemType.
+            //   3. Fall back to a single qualifier extracted from the
+            //      condition or metadata (literal Include with batched
+            //      `%(L.M)` references, e.g. AssemblyAttribute / InternalsVisibleTo).
+            string? srcList = null;
+            if (rawInc.Length > 0 && ClassifyItemIncludeSpec(rawInc) == ItemIncludeKind.ItemListCopy) {
+                var trimmed = rawInc.Trim();
+                var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+                if (IsSimpleIdentifierName(ident)) srcList = ident;
+            } else if (rawInc.Length == 0 && rawRem.Length > 0
+                       && ClassifyItemIncludeSpec(rawRem) == ItemIncludeKind.ItemListCopy) {
+                var trimmed = rawRem.Trim();
+                var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+                if (IsSimpleIdentifierName(ident)) srcList = ident;
+            } else if (rawInc.Length == 0 && rawRem.Length == 0) {
+                srcList = item.ItemType;
             }
+            if (srcList == null) {
+                var fromCond = ExtractSingleBatchQualifier(item.Condition ?? "");
+                string? fromMeta = null;
+                foreach (var meta in item.Metadata) {
+                    fromMeta ??= ExtractSingleBatchQualifier(meta.Value ?? "");
+                    fromMeta ??= ExtractSingleBatchQualifier(meta.Condition ?? "");
+                }
+                if (fromCond != null && fromMeta != null
+                    && !string.Equals(fromCond, fromMeta, StringComparison.OrdinalIgnoreCase)) {
+                    // Conflicting qualifiers across cond and meta would require
+                    // cross-list batching — not supported.
+                    return "ig-meta-batching";
+                }
+                srcList = fromCond ?? fromMeta;
+            }
+
+            // Validate item condition. Without a srcList, %()-bearing conditions
+            // fall through as ig-complex-item-condition; with one, batched
+            // operands are allowed.
+            if (!IsSimpleConditionTemplate(item.Condition, srcList)) return "ig-complex-item-condition";
+
             // Reject advanced item attributes that we don't model.
             if (!string.IsNullOrEmpty(item.Exclude)) {
                 // Exclude must be an expression the runtime can evaluate
@@ -870,7 +970,15 @@ internal static class GoEmitter {
                 if (item.Metadata.Count == 0) return "ig-empty-include-remove";
             } else {
                 var spec = include.Length > 0 ? include : remove;
-                if (ContainsBatching(spec)) return "ig-spec-batching";
+                if (ContainsBatching(spec)) {
+                    // Batched Include/Remove value (e.g. literal text with
+                    // `%(L.M)`). Only accept when srcList is known and the
+                    // spec validates against it. Transforms `@(X->'%(F)')`
+                    // are still ig-include-complex.
+                    if (srcList == null) return "ig-spec-batching";
+                    if (!IsSimpleExpressionTemplate(spec)) return "ig-spec-batching";
+                    if (!ValidateBatchMetaRefsInString(spec, srcList)) return "ig-spec-batching";
+                }
                 if (ContainsGlobChar(spec)) return "ig-spec-glob-not-supported";
                 if (include.Length > 0) {
                     var includeKind = ClassifyItemIncludeSpec(include);
@@ -886,9 +994,14 @@ internal static class GoEmitter {
             }
 
             foreach (var meta in item.Metadata) {
-                if (ContainsBatching(meta.Value)) return "ig-meta-batching";
-                if (!IsSimpleConditionTemplate(meta.Condition)) return "ig-complex-meta-condition";
-                if (!IsSimpleExpressionTemplate(meta.Value)) return "ig-complex-meta-value";
+                if (ContainsBatching(meta.Value)) {
+                    if (srcList == null) return "ig-meta-batching";
+                    if (!IsSimpleExpressionTemplate(meta.Value)) return "ig-complex-meta-value";
+                    if (!ValidateBatchMetaRefsInString(meta.Value, srcList)) return "ig-meta-batching";
+                } else if (!IsSimpleExpressionTemplate(meta.Value)) {
+                    return "ig-complex-meta-value";
+                }
+                if (!IsSimpleConditionTemplate(meta.Condition, srcList)) return "ig-complex-meta-condition";
                 if (!IsSimpleIdentifierName(meta.Name)) return "ig-complex-meta-name";
             }
         }
@@ -1758,6 +1871,35 @@ internal static class GoEmitter {
             i = end;
         }
         return true;
+    }
+
+    // ExtractSingleBatchQualifier walks `%(...)` references in `s` and
+    // returns the unique qualifier name when every qualified reference
+    // uses the same identifier (case-insensitive) and at least one such
+    // reference exists. Unqualified references are ignored — they're
+    // ambiguous and don't constrain the result. Returns null when there
+    // are zero qualified refs, when distinct qualifiers appear, or when
+    // any ref is malformed.
+    static string? ExtractSingleBatchQualifier(string s) {
+        string? found = null;
+        for (int i = 0; i + 1 < s.Length; i++) {
+            if (s[i] != '%' || s[i + 1] != '(') continue;
+            var end = FindMatchingParenQuoteAware(s, i + 1);
+            if (end < 0) return null;
+            var inner = s.Substring(i + 2, end - i - 2).Trim();
+            var dot = inner.IndexOf('.');
+            if (dot > 0) {
+                var qual = inner.Substring(0, dot).Trim();
+                if (!IsSimpleIdentifierName(qual)) return null;
+                if (found == null) {
+                    found = qual;
+                } else if (!string.Equals(found, qual, StringComparison.OrdinalIgnoreCase)) {
+                    return null;
+                }
+            }
+            i = end;
+        }
+        return found;
     }
 
     static int FindMatchingParenQuoteAware(string s, int openIdx) {
