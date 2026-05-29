@@ -1,34 +1,41 @@
 package runtime
 
 import (
+	"path/filepath"
 	"runtime"
 	"strings"
 )
 
-// EvalMSBuildIntrinsic evaluates `[MSBuild]::Name(args)` where the receiver
-// has already been stripped. The argument string `argsStr` is the raw text
-// between the outer parens (may contain commas, quoted strings, and `$(…)`
-// expansions). Returns (value, ok). ok=false signals an unsupported intrinsic
-// or unsupported argument shape; callers should bubble up the unsupported
-// signal so the surrounding template/condition stubs out loudly rather than
-// silently evaluating to "".
+// EvalIntrinsic evaluates a static method/property call from a supported
+// namespace. Recognized prefixes (case-insensitive on the type name; method
+// name is also case-insensitive):
 //
-// Supported intrinsic names (case-insensitive):
+//   - [MSBuild]::F(args) — see msbuildIntrinsic
+//   - [System.IO.Path]::F(args) or [System.IO.Path]::Property — see pathIntrinsic
 //
-//   - VersionEquals(a, b)
-//   - VersionGreaterThan(a, b)
-//   - VersionGreaterThanOrEquals(a, b)
-//   - VersionLessThan(a, b)
-//   - VersionLessThanOrEquals(a, b)
-//   - IsOSPlatform(name)  / IsOsPlatform(name)
-//   - ValueOrDefault(value, default)
-//   - Escape(s)
-//
-// Other MSBuild intrinsics (MakeRelative, NormalizePath, EnsureTrailingSlash,
-// IsTargetFrameworkCompatible, …) deliberately return ok=false so the closed-
-// world classifier can stub them out and surface them for prioritization
-// rather than producing wrong-but-quiet builds.
+// Returns (value, ok). ok=false signals an unsupported intrinsic or argument
+// shape. The classifier mirrors this whitelist; new intrinsics must be added
+// in both places.
+func EvalIntrinsic(typeName, member, argsStr string, hasArgs bool, p PropertyBag) (string, bool) {
+	switch strings.ToLower(typeName) {
+	case "msbuild":
+		if !hasArgs {
+			return "", false
+		}
+		return msbuildIntrinsic(member, argsStr, p)
+	case "system.io.path":
+		return pathIntrinsic(member, argsStr, hasArgs, p)
+	}
+	return "", false
+}
+
+// EvalMSBuildIntrinsic preserves the older API for tests; new callers should
+// use EvalIntrinsic.
 func EvalMSBuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
+	return msbuildIntrinsic(name, argsStr, p)
+}
+
+func msbuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 	args, ok := splitIntrinsicArgs(argsStr, p)
 	if !ok {
 		return "", false
@@ -101,6 +108,120 @@ func EvalMSBuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 	return "", false
 }
 
+// pathIntrinsic handles [System.IO.Path]::* members.
+func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, bool) {
+	lower := strings.ToLower(name)
+	// Static properties (no parens).
+	if !hasArgs {
+		switch lower {
+		case "directoryseparatorchar":
+			return string(filepath.Separator), true
+		case "pathseparator":
+			return string(filepath.ListSeparator), true
+		case "altdirectoryseparatorchar":
+			// On Unix this matches DirectorySeparatorChar; on Windows it's '/'.
+			if runtime.GOOS == "windows" {
+				return "/", true
+			}
+			return string(filepath.Separator), true
+		}
+		return "", false
+	}
+	args, ok := splitIntrinsicArgs(argsStr, p)
+	if !ok {
+		return "", false
+	}
+	switch lower {
+	case "combine":
+		if len(args) == 0 {
+			return "", false
+		}
+		// Per .NET semantics, if any segment is rooted, earlier segments are
+		// discarded. filepath.Join doesn't do that automatically, so apply
+		// manually for closer fidelity.
+		start := 0
+		for i, a := range args {
+			if filepath.IsAbs(a) {
+				start = i
+			}
+		}
+		return filepath.Join(args[start:]...), true
+	case "getfullpath":
+		if len(args) != 1 {
+			return "", false
+		}
+		abs, err := filepath.Abs(args[0])
+		if err != nil {
+			return "", false
+		}
+		return abs, true
+	case "getfilename":
+		if len(args) != 1 {
+			return "", false
+		}
+		// .NET returns "" if the input ends with a separator; filepath.Base
+		// returns "." for empty input but "/" for "/". Be defensive.
+		if args[0] == "" {
+			return "", true
+		}
+		if strings.HasSuffix(args[0], string(filepath.Separator)) {
+			return "", true
+		}
+		return filepath.Base(args[0]), true
+	case "getfilenamewithoutextension":
+		if len(args) != 1 {
+			return "", false
+		}
+		if args[0] == "" {
+			return "", true
+		}
+		base := filepath.Base(args[0])
+		ext := filepath.Ext(base)
+		if ext == "" {
+			return base, true
+		}
+		return base[:len(base)-len(ext)], true
+	case "getextension":
+		if len(args) != 1 {
+			return "", false
+		}
+		return filepath.Ext(args[0]), true
+	case "getdirectoryname":
+		if len(args) != 1 {
+			return "", false
+		}
+		if args[0] == "" {
+			return "", true
+		}
+		dir := filepath.Dir(args[0])
+		// .NET returns "" (not ".") when there's no directory portion.
+		if dir == "." {
+			return "", true
+		}
+		return dir, true
+	case "ispathrooted":
+		if len(args) != 1 {
+			return "", false
+		}
+		return boolToMSBuild(filepath.IsAbs(args[0])), true
+	case "changeextension":
+		if len(args) != 2 {
+			return "", false
+		}
+		ext := args[1]
+		if ext != "" && !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+		base := args[0]
+		curExt := filepath.Ext(base)
+		if curExt == "" {
+			return base + ext, true
+		}
+		return base[:len(base)-len(curExt)] + ext, true
+	}
+	return "", false
+}
+
 // compareVersionArgs returns the result of comparing a and b as MSBuild
 // version strings, plus ok=false if either side is not a parseable version
 // (per the runtime's parseVersion: 2–4 dotted non-negative integers).
@@ -146,7 +267,6 @@ func msbuildEscape(s string) string {
 	if s == "" {
 		return ""
 	}
-	// MSBuild reserved set: % * ? @ $ ( ) ; '
 	var sb strings.Builder
 	sb.Grow(len(s))
 	for i := 0; i < len(s); i++ {
@@ -207,7 +327,7 @@ func splitIntrinsicArgs(s string, p PropertyBag) ([]string, bool) {
 			continue
 		}
 		switch ch {
-		case '\'', '"':
+		case '\'', '"', '`':
 			quote = ch
 		case '(':
 			depth++
@@ -239,7 +359,8 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 	if arg == "" {
 		return "", true
 	}
-	if (arg[0] == '\'' || arg[0] == '"') && len(arg) >= 2 && arg[len(arg)-1] == arg[0] {
+	// Accept backtick quoting (MSBuild allows it for callsite quoting).
+	if (arg[0] == '\'' || arg[0] == '"' || arg[0] == '`') && len(arg) >= 2 && arg[len(arg)-1] == arg[0] {
 		inner := arg[1 : len(arg)-1]
 		expanded, ok := Expand(inner, p, emptyItemBag{}, nil)
 		if !ok {
@@ -258,7 +379,7 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 }
 
 // tryEvalIntrinsic checks whether the inner of `$(...)` is the supported
-// `[MSBuild]::Name(args)` shape and, if so, dispatches to EvalMSBuildIntrinsic.
+// `[TypeName]::Member(args?)` shape and, if so, dispatches to EvalIntrinsic.
 // Returns:
 //   - handled=false → the inner isn't an intrinsic call; caller should fall
 //     through to its normal expression evaluator
@@ -268,29 +389,54 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 //   - handled=true, ok=true → value is the resolved intrinsic result
 func tryEvalIntrinsic(inner string, p PropertyBag) (string, bool, bool) {
 	trimmed := strings.TrimSpace(inner)
-	const prefix = "[MSBuild]::"
-	// Compare prefix case-insensitively (MSBuild allows `[msbuild]::Foo`).
-	if len(trimmed) < len(prefix) || !strings.EqualFold(trimmed[:len(prefix)], prefix) {
+	if len(trimmed) < 2 || trimmed[0] != '[' {
 		return "", false, false
 	}
-	rest := trimmed[len(prefix):]
-	// Name then `(args)`.
-	openParen := strings.IndexByte(rest, '(')
-	if openParen <= 0 {
+	closeBracket := strings.IndexByte(trimmed, ']')
+	if closeBracket <= 1 {
+		return "", false, false
+	}
+	typeName := strings.TrimSpace(trimmed[1:closeBracket])
+	rest := trimmed[closeBracket+1:]
+	if !strings.HasPrefix(rest, "::") {
+		return "", false, false
+	}
+	rest = rest[2:]
+	// Member name: identifier-like chars + '.' (for nested type members we don't
+	// model; reject those). Split into name and optional arg paren group.
+	nameEnd := 0
+	for nameEnd < len(rest) {
+		c := rest[nameEnd]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			nameEnd++
+			continue
+		}
+		break
+	}
+	if nameEnd == 0 {
 		return "", false, true
 	}
-	name := strings.TrimSpace(rest[:openParen])
-	closeParen := findMatchingParenQuoteAware(rest, openParen)
-	if closeParen < 0 {
+	member := rest[:nameEnd]
+	tail := rest[nameEnd:]
+	hasArgs := false
+	argsStr := ""
+	if len(tail) > 0 && tail[0] == '(' {
+		closeParen := findMatchingParenQuoteAware(tail, 0)
+		if closeParen < 0 {
+			return "", false, true
+		}
+		if strings.TrimSpace(tail[closeParen+1:]) != "" {
+			// Trailing chain or junk after the call paren — unsupported.
+			return "", false, true
+		}
+		hasArgs = true
+		argsStr = tail[1:closeParen]
+	} else if strings.TrimSpace(tail) != "" {
+		// Trailing junk after the member name (e.g. chained `.Method()`) —
+		// unsupported.
 		return "", false, true
 	}
-	// Nothing meaningful may follow the closing paren (no method chains on
-	// intrinsics in this subset).
-	if strings.TrimSpace(rest[closeParen+1:]) != "" {
-		return "", false, true
-	}
-	argsStr := rest[openParen+1 : closeParen]
-	value, ok := EvalMSBuildIntrinsic(name, argsStr, p)
+	value, ok := EvalIntrinsic(typeName, member, argsStr, hasArgs, p)
 	return value, ok, true
 }
 
@@ -299,5 +445,6 @@ func tryEvalIntrinsic(inner string, p PropertyBag) (string, bool, bool) {
 // not put `@()` inside intrinsic args).
 type emptyItemBag struct{}
 
-func (emptyItemBag) Get(string) []*Item              { return nil }
-func (emptyItemBag) AppendTo(string, []*Item)        {}
+func (emptyItemBag) Get(string) []*Item       { return nil }
+func (emptyItemBag) AppendTo(string, []*Item) {}
+

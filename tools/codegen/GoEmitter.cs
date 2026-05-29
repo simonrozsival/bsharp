@@ -2,6 +2,7 @@
 #nullable enable
 using Microsoft.Build.Construction;
 using Microsoft.Build.Execution;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 
@@ -719,51 +720,88 @@ internal static class GoEmitter {
 
     // IsSimpleExpressionInner accepts either a Phase A/B property expression
     // (bare identifier or whitelisted method chain on a property) OR a Phase G
-    // [MSBuild]::IntrinsicName(args) call with supported intrinsic + simple args.
+    // [TypeName]::Member(args?) call with supported type+member + simple args.
     // Mirrors what the Go runtime's Expand evaluator accepts inside `$(...)`.
     static bool IsSimpleExpressionInner(string inner) {
         var trimmed = inner.Trim();
-        const string prefix = "[MSBuild]::";
-        if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
-            return IsSimpleMSBuildIntrinsicCall(trimmed.Substring(prefix.Length));
+        if (trimmed.Length > 0 && trimmed[0] == '[') {
+            return IsSimpleIntrinsicCall(trimmed);
         }
-        // Anything else containing `[` or `:` is an unsupported intrinsic
-        // (e.g. [System.IO.Path]::Combine, [System.String]::IsNullOrEmpty, …)
-        // or an indexer construct we haven't modelled.
+        // Anything else containing `[` or `:` past the leading char is an
+        // unsupported intrinsic or indexer construct we haven't modelled.
         if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
         return IsSimplePropertyExpression(inner);
     }
 
-    // IsSimpleMSBuildIntrinsicCall validates the shape `Name(args)` after the
-    // [MSBuild]:: prefix has already been stripped. Intrinsic name must be one
-    // of the supported set; argument list must be a comma-separated list of
-    // resolvable arguments (quoted strings, simple property refs, or bare
-    // literals). The runtime intrinsics defined in msbuild_intrinsics.go are
-    // the source of truth — this helper mirrors that whitelist.
-    static bool IsSimpleMSBuildIntrinsicCall(string s) {
-        var openParen = s.IndexOf('(');
-        if (openParen <= 0) return false;
-        var name = s.Substring(0, openParen).Trim();
-        if (!SupportedMSBuildIntrinsicNames.Contains(name)) return false;
-        var close = FindMatchingParenQuoteAware(s, openParen);
+    // IsSimpleIntrinsicCall validates the shape `[TypeName]::Member(args?)`.
+    // Type+member must appear in IntrinsicMembers (mirrors the runtime
+    // dispatch in EvalIntrinsic). Member may be parameterless (static
+    // property like `[System.IO.Path]::DirectorySeparatorChar`).
+    static bool IsSimpleIntrinsicCall(string s) {
+        if (s.Length < 2 || s[0] != '[') return false;
+        var closeBracket = s.IndexOf(']');
+        if (closeBracket <= 1) return false;
+        var typeName = s.Substring(1, closeBracket - 1).Trim();
+        if (!IntrinsicMembers.ContainsKey(typeName)) return false;
+        var afterBracket = s.Substring(closeBracket + 1);
+        if (!afterBracket.StartsWith("::", StringComparison.Ordinal)) return false;
+        var rest = afterBracket.Substring(2);
+        int nameEnd = 0;
+        while (nameEnd < rest.Length && (char.IsLetterOrDigit(rest[nameEnd]) || rest[nameEnd] == '_')) nameEnd++;
+        if (nameEnd == 0) return false;
+        var member = rest.Substring(0, nameEnd);
+        var supportedMembers = IntrinsicMembers[typeName];
+        var memberSpec = supportedMembers.FirstOrDefault(m => m.Name.Equals(member, StringComparison.OrdinalIgnoreCase));
+        if (memberSpec.Name == null) return false;
+        var tail = rest.Substring(nameEnd);
+        if (tail.Length == 0) {
+            // Property-style access (no parens).
+            return !memberSpec.RequiresArgs;
+        }
+        if (tail[0] != '(') return false;
+        var close = FindMatchingParenQuoteAware(tail, 0);
         if (close < 0) return false;
-        // Nothing meaningful may follow the closing paren (no chains on intrinsics).
-        if (s.Substring(close + 1).Trim().Length != 0) return false;
-        var argsStr = s.Substring(openParen + 1, close - openParen - 1);
+        if (tail.Substring(close + 1).Trim().Length != 0) return false;
+        var argsStr = tail.Substring(1, close - 1);
         return AreSimpleMSBuildIntrinsicArgs(argsStr);
     }
 
-    static readonly HashSet<string> SupportedMSBuildIntrinsicNames = new(StringComparer.OrdinalIgnoreCase) {
-        "VersionEquals",
-        "VersionGreaterThan",
-        "VersionGreaterThanOrEquals",
-        "VersionLessThan",
-        "VersionLessThanOrEquals",
-        "IsOSPlatform",
-        "IsOsPlatform",
-        "ValueOrDefault",
-        "Escape",
-    };
+    readonly struct IntrinsicMember {
+        public string Name { get; init; }
+        public bool RequiresArgs { get; init; }
+    }
+
+    // IntrinsicMembers mirrors the runtime EvalIntrinsic dispatch (see
+    // msbuild_intrinsics.go). When adding a new member to the runtime,
+    // add it here too. Property-style members (no parens) have
+    // RequiresArgs=false.
+    static readonly Dictionary<string, IntrinsicMember[]> IntrinsicMembers =
+        new(StringComparer.OrdinalIgnoreCase) {
+            ["MSBuild"] = new IntrinsicMember[] {
+                new() { Name = "VersionEquals", RequiresArgs = true },
+                new() { Name = "VersionGreaterThan", RequiresArgs = true },
+                new() { Name = "VersionGreaterThanOrEquals", RequiresArgs = true },
+                new() { Name = "VersionLessThan", RequiresArgs = true },
+                new() { Name = "VersionLessThanOrEquals", RequiresArgs = true },
+                new() { Name = "IsOSPlatform", RequiresArgs = true },
+                new() { Name = "IsOsPlatform", RequiresArgs = true },
+                new() { Name = "ValueOrDefault", RequiresArgs = true },
+                new() { Name = "Escape", RequiresArgs = true },
+            },
+            ["System.IO.Path"] = new IntrinsicMember[] {
+                new() { Name = "Combine", RequiresArgs = true },
+                new() { Name = "GetFullPath", RequiresArgs = true },
+                new() { Name = "GetFileName", RequiresArgs = true },
+                new() { Name = "GetFileNameWithoutExtension", RequiresArgs = true },
+                new() { Name = "GetExtension", RequiresArgs = true },
+                new() { Name = "GetDirectoryName", RequiresArgs = true },
+                new() { Name = "IsPathRooted", RequiresArgs = true },
+                new() { Name = "ChangeExtension", RequiresArgs = true },
+                new() { Name = "DirectorySeparatorChar", RequiresArgs = false },
+                new() { Name = "PathSeparator", RequiresArgs = false },
+                new() { Name = "AltDirectorySeparatorChar", RequiresArgs = false },
+            },
+        };
 
     // AreSimpleMSBuildIntrinsicArgs splits `argsStr` on top-level commas and
     // checks each argument is either a quoted string (whose interior may

@@ -141,8 +141,10 @@ func TestExpandWithMSBuildIntrinsics(t *testing.T) {
 		{"prefix-$([MSBuild]::Escape('a;b'))-suffix", "prefix-a%3Bb-suffix", true},
 		// Unsupported intrinsics still propagate as ok=false.
 		{"$([MSBuild]::MakeRelative('a','b'))", "", false},
-		// Unsupported indexer syntax remains rejected.
-		{"$([System.IO.Path]::Combine('a','b'))", "", false},
+		// System.IO.Path::* is now supported (Phase G batch 2).
+		{"$([System.IO.Path]::Combine('a','b'))", "a/b", true},
+		// Unrelated System.* intrinsics remain rejected.
+		{"$([System.String]::IsNullOrEmpty('x'))", "", false},
 		// Lowercase `[msbuild]` should also work.
 		{"$([msbuild]::VersionEquals('1.0', '1.0'))", "True", true},
 	}
@@ -208,6 +210,52 @@ func TestEvalConditionWithMSBuildIntrinsic(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("EvalCondition(%q) = %v; want %v", tc.cond, got, tc.want)
+		}
+	}
+}
+
+func TestPathIntrinsics(t *testing.T) {
+	p := newProps("D", "/opt/work")
+	cases := []struct {
+		template string
+		want     string
+	}{
+		{"$([System.IO.Path]::Combine('a','b','c'))", "a/b/c"},
+		{"$([System.IO.Path]::Combine($(D),'src'))", "/opt/work/src"},
+		{"$([System.IO.Path]::Combine('/x','/abs'))", "/abs"}, // .NET semantics: rooted segment discards prior
+		{"$([System.IO.Path]::GetFileName('/foo/bar/baz.cs'))", "baz.cs"},
+		{"$([System.IO.Path]::GetFileNameWithoutExtension('/foo/bar/baz.cs'))", "baz"},
+		{"$([System.IO.Path]::GetExtension('/foo/bar/baz.cs'))", ".cs"},
+		{"$([System.IO.Path]::GetDirectoryName('/foo/bar/baz.cs'))", "/foo/bar"},
+		{"$([System.IO.Path]::GetDirectoryName('baz.cs'))", ""},
+		{"$([System.IO.Path]::IsPathRooted('/abs'))", "True"},
+		{"$([System.IO.Path]::IsPathRooted('rel'))", "False"},
+		{"$([System.IO.Path]::ChangeExtension('foo.txt','.md'))", "foo.md"},
+		{"$([System.IO.Path]::ChangeExtension('foo.txt','md'))", "foo.md"},
+		{"$([System.IO.Path]::DirectorySeparatorChar)", "/"},
+	}
+	for _, tc := range cases {
+		got, ok := Expand(tc.template, p, testItems{}, nil)
+		if !ok {
+			t.Errorf("Expand(%q) ok=false (got=%q)", tc.template, got)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("Expand(%q) = %q; want %q", tc.template, got, tc.want)
+		}
+	}
+}
+
+func TestPathIntrinsicsRejectUnsupported(t *testing.T) {
+	p := newProps()
+	// Unsupported Path::* members and unknown types remain ok=false.
+	for _, tmpl := range []string{
+		"$([System.IO.Path]::HasExtension('foo'))",   // not in whitelist
+		"$([System.IO.Directory]::GetFiles('/tmp'))", // not supported
+		"$([System.Guid]::NewGuid())",                // not supported
+	} {
+		if _, ok := Expand(tmpl, p, testItems{}, nil); ok {
+			t.Errorf("Expand(%q) should be ok=false", tmpl)
 		}
 	}
 }
