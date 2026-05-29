@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // EvalIntrinsic evaluates a static method/property call from a supported
@@ -12,6 +14,7 @@ import (
 //
 //   - [MSBuild]::F(args) — see msbuildIntrinsic
 //   - [System.IO.Path]::F(args) or [System.IO.Path]::Property — see pathIntrinsic
+//   - [System.Text.RegularExpressions.Regex]::F(args) — see regexIntrinsic
 //
 // Returns (value, ok). ok=false signals an unsupported intrinsic or argument
 // shape. The classifier mirrors this whitelist; new intrinsics must be added
@@ -25,6 +28,11 @@ func EvalIntrinsic(typeName, member, argsStr string, hasArgs bool, p PropertyBag
 		return msbuildIntrinsic(member, argsStr, p)
 	case "system.io.path":
 		return pathIntrinsic(member, argsStr, hasArgs, p)
+	case "system.text.regularexpressions.regex":
+		if !hasArgs {
+			return "", false
+		}
+		return regexIntrinsic(member, argsStr, p)
 	}
 	return "", false
 }
@@ -538,4 +546,67 @@ type emptyItemBag struct{}
 
 func (emptyItemBag) Get(string) []*Item       { return nil }
 func (emptyItemBag) AppendTo(string, []*Item) {}
+
+// regexCache memoizes compiled regular expressions across an entire build
+// run. MSBuild evaluates `Regex::Replace` once per target invocation; for
+// repeated targets the same pattern would otherwise be re-parsed. .NET regex
+// syntax and Go's RE2 differ in lookarounds/backreferences/named groups but
+// the patterns the SDK uses (`-(.)*`, `(\.0)*$`, simple literal escapes)
+// translate verbatim. If the pattern fails to compile, we return ok=false so
+// the runtime panics loudly rather than silently producing a wrong result.
+var (
+	regexCacheMu sync.Mutex
+	regexCache   = map[string]*regexp.Regexp{}
+)
+
+func compileRegex(pattern string) (*regexp.Regexp, bool) {
+	regexCacheMu.Lock()
+	defer regexCacheMu.Unlock()
+	if r, ok := regexCache[pattern]; ok {
+		return r, true
+	}
+	r, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, false
+	}
+	regexCache[pattern] = r
+	return r, true
+}
+
+// regexIntrinsic handles [System.Text.RegularExpressions.Regex]::* members.
+// Only the static methods are supported (no Regex object construction).
+//
+//	Replace(input, pattern, replacement) — returns input with every match of
+//	  pattern replaced by replacement. The replacement string uses Go's
+//	  expansion semantics (`$1`, `${1}`, `$$`). Compatible with most SDK
+//	  patterns; complex .NET-specific syntax is rejected via compile failure.
+//	IsMatch(input, pattern) — returns "True"/"False" depending on whether
+//	  pattern matches anywhere in input.
+func regexIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
+	args, ok := splitIntrinsicArgs(argsStr, p)
+	if !ok {
+		return "", false
+	}
+	switch strings.ToLower(name) {
+	case "replace":
+		if len(args) != 3 {
+			return "", false
+		}
+		re, ok := compileRegex(args[1])
+		if !ok {
+			return "", false
+		}
+		return re.ReplaceAllString(args[0], args[2]), true
+	case "ismatch":
+		if len(args) != 2 {
+			return "", false
+		}
+		re, ok := compileRegex(args[1])
+		if !ok {
+			return "", false
+		}
+		return boolToMSBuild(re.MatchString(args[0])), true
+	}
+	return "", false
+}
 

@@ -330,3 +330,57 @@ func TestMSBuildNormalizePath(t *testing.T) {
 		t.Errorf("NormalizeDirectory = %q; want /a/b/", dir)
 	}
 }
+
+func TestRegexReplace(t *testing.T) {
+	p := newProps("V", "8.0.0", "Pref", "latest")
+	cases := []struct {
+		in, want string
+	}{
+		// Strip everything after first `-` (the SDK uses this for analyzer prefixes).
+		{`$([System.Text.RegularExpressions.Regex]::Replace($(Pref), '-(.)*', ''))`, "latest"},
+		// Strip trailing `.0`s (the SDK uses this to compute analyzer versions).
+		{`$([System.Text.RegularExpressions.Regex]::Replace($(V), '(\.0)*$', ''))`, "8"},
+		// No-match passthrough.
+		{`$([System.Text.RegularExpressions.Regex]::Replace($(Pref), 'xyz', 'q'))`, "latest"},
+		// Replacement back-reference.
+		{`$([System.Text.RegularExpressions.Regex]::Replace('abc-123', '([a-z]+)-(\d+)', '$2.$1'))`, "123.abc"},
+	}
+	for _, c := range cases {
+		got, ok := Expand(c.in, p, testItems{}, nil)
+		if !ok {
+			t.Errorf("Expand(%q) ok=false", c.in)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("Expand(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestRegexIsMatch(t *testing.T) {
+	p := newProps("X", "abc-123")
+	for _, c := range []struct {
+		in, want string
+	}{
+		{`$([System.Text.RegularExpressions.Regex]::IsMatch($(X), '^[a-z]+'))`, "True"},
+		{`$([System.Text.RegularExpressions.Regex]::IsMatch($(X), '^[0-9]+'))`, "False"},
+	} {
+		got, ok := Expand(c.in, p, testItems{}, nil)
+		if !ok {
+			t.Errorf("Expand(%q) ok=false", c.in)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("Expand(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestRegexInvalidPatternIsRejected(t *testing.T) {
+	p := newProps()
+	// `(?<` is .NET named-group syntax that Go regexp doesn't accept.
+	_, ok := Expand(`$([System.Text.RegularExpressions.Regex]::Replace('abc', '(?<name>x', 'q'))`, p, testItems{}, nil)
+	if ok {
+		t.Errorf("expected unsupported regex pattern to return ok=false")
+	}
+}

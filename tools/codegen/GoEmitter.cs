@@ -923,6 +923,10 @@ internal static class GoEmitter {
                 new() { Name = "PathSeparator", RequiresArgs = false },
                 new() { Name = "AltDirectorySeparatorChar", RequiresArgs = false },
             },
+            ["System.Text.RegularExpressions.Regex"] = new IntrinsicMember[] {
+                new() { Name = "Replace", RequiresArgs = true },
+                new() { Name = "IsMatch", RequiresArgs = true },
+            },
         };
 
     // AreSimpleMSBuildIntrinsicArgs splits `argsStr` on top-level commas and
