@@ -198,14 +198,30 @@ public static class Program {
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
         var idleTask = MonitorIdleAsync(cts);
+        int consecutiveAcceptFailures = 0;
         try {
             while (!cts.IsCancellationRequested) {
                 Socket client;
                 try {
                     client = await listener.AcceptAsync(cts.Token);
+                    consecutiveAcceptFailures = 0;
                 } catch (OperationCanceledException) { break; }
                 catch (Exception ex) {
-                    Log.WriteLine($"accept failed: {ex.Message}");
+                    Log.WriteLine($"accept failed: {ex.GetType().Name}: {ex.Message}");
+                    // Hot-spinning the accept loop on persistent failure (broken
+                    // socket, missing file, EBADF) burns CPU and prevents any
+                    // build from connecting. Back off geometrically up to 1s,
+                    // and bail to idle-monitor shutdown after enough failures
+                    // so the daemon doesn't sit in a dead state forever.
+                    consecutiveAcceptFailures++;
+                    if (consecutiveAcceptFailures > 64) {
+                        Log.WriteLine("too many consecutive accept failures; exiting");
+                        cts.Cancel();
+                        break;
+                    }
+                    var delayMs = Math.Min(1000, 5 * (1 << Math.Min(consecutiveAcceptFailures, 8)));
+                    try { await Task.Delay(delayMs, cts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
                     continue;
                 }
                 Interlocked.Increment(ref _activeConnections);
