@@ -85,12 +85,11 @@ internal sealed class DaemonBuildEngine
     : IBuildEngine, IBuildEngine2, IBuildEngine3, IBuildEngine4, IBuildEngine5,
       IBuildEngine6, IBuildEngine7, IBuildEngine8, IBuildEngine9, IBuildEngine10
 {
-    [ThreadStatic] static DaemonBuildEngine? _current;
-    public static DaemonBuildEngine Current => _current ??= new();
+    static readonly DaemonBuildEngine _current = new();
+    public static DaemonBuildEngine Current => _current;
     public static void ResetForInvocation() {
         var inst = Current;
         inst._capturedErrors.Clear();
-        inst._taskObjs.Clear();
     }
 
     readonly List<string> _capturedErrors = new();

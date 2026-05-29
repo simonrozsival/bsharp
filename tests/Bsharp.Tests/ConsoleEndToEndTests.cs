@@ -147,6 +147,7 @@ public sealed class ConsoleEndToEndTests
             "if (I.PackageReference.Count != 0)",
             "Projects without PackageReference items should not pay task-server cost for CheckForImplicitPackageReferenceOverrides.");
 
+        TouchConsoleProgram(project);
         var fullGraph = RunBsharp(project, "run", "--no-restore", "-v:n");
         fullGraph.AssertSuccess("run without the fast no-op shortcut");
         AssertCumulativeTasksGreaterThanZero(fullGraph, "full graph should execute SDK tasks when --fast-noop is omitted");
@@ -157,6 +158,7 @@ public sealed class ConsoleEndToEndTests
         AssertCumulativeTasksEqualToZero(fastNoOp, "--fast-noop should return before target execution on an up-to-date build");
         StringAssert.Contains(fastNoOp.StandardOutput, ConsoleFixtureOutput);
 
+        TouchConsoleProgram(project);
         var afterFastNoOp = RunBsharp(project, "run", "--no-restore", "-v:n");
         afterFastNoOp.AssertSuccess("run again without --fast-noop");
         AssertCumulativeTasksGreaterThanZero(afterFastNoOp, "--fast-noop must not persist across invocations");
@@ -384,6 +386,9 @@ public sealed class ConsoleEndToEndTests
 
     private static void AssertCumulativeTasksGreaterThanZero(CommandResult result, string message) =>
         Assert.IsTrue(ReadCumulativeTasksMilliseconds(result) > 0, message + "\n\nstdout:\n" + result.StandardOutput);
+
+    private static void TouchConsoleProgram(TempProject project) =>
+        File.SetLastWriteTimeUtc(Path.Combine(project.DirectoryPath, "Program.cs"), DateTime.UtcNow);
 
     private static double ReadCumulativeTasksMilliseconds(CommandResult result)
     {

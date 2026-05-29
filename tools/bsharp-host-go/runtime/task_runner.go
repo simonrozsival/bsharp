@@ -55,11 +55,15 @@ func (r *TaskRunner) Init(daemonDir, cwd string) {
 // in an init function before the build starts.
 func (r *TaskRunner) Register(shortName, fullTypeName, assemblyPath string, outputNames []string) {
 	r.mu.Lock()
-	r.tasks[shortName] = TaskDescriptor{
+	desc := TaskDescriptor{
 		ShortName:    shortName,
 		FullTypeName: fullTypeName,
 		AssemblyPath: assemblyPath,
 		OutputNames:  outputNames,
+	}
+	r.tasks[shortName] = desc
+	if fullTypeName != "" && fullTypeName != shortName {
+		r.tasks[fullTypeName] = desc
 	}
 	r.mu.Unlock()
 }
@@ -190,6 +194,28 @@ func (t *TaskRequest) SetBool(name string, value bool) error {
 // SetItems sets an ITaskItem[]-typed parameter.
 func (t *TaskRequest) SetItems(name string, items []ItemSpec) error {
 	b, err := json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	t.props[name] = b
+	return nil
+}
+
+// SetItem sets an ITaskItem-typed parameter.
+func (t *TaskRequest) SetItem(name string, item ItemSpec) error {
+	b, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	t.props[name] = b
+	return nil
+}
+
+// SetStringSlice sets a string[]-typed parameter. The SDK side receives
+// a JSON array of strings; the daemon coerces to whatever string[]-shape
+// the destination property expects.
+func (t *TaskRequest) SetStringSlice(name string, values []string) error {
+	b, err := json.Marshal(values)
 	if err != nil {
 		return err
 	}

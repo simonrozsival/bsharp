@@ -7,6 +7,7 @@ internal static class BsharpTestEnvironment
 {
     private static readonly object ToolchainGate = new();
     private static bool s_codegenReady;
+    private static bool s_taskDaemonReady;
     private static bool s_toolchainReady;
 
     public static string RepoRoot { get; } = FindRepoRoot();
@@ -22,6 +23,13 @@ internal static class BsharpTestEnvironment
     public static string BsharpTaskdPath =>
         Path.Combine(RepoRoot, "tools", "bsharp", "bin", "Release", "net11.0",
             RuntimeInformation.RuntimeIdentifier, "publish", ExecutableName("bsharp-taskd"));
+
+    public static string BsharpTaskdPublishDirectory =>
+        Path.Combine(RepoRoot, "tools", "bsharp-taskd", "bin", "Release", "net11.0",
+            RuntimeInformation.RuntimeIdentifier, "publish");
+
+    public static string BsharpTaskdPublishPath =>
+        Path.Combine(BsharpTaskdPublishDirectory, ExecutableName("bsharp-taskd"));
 
     public static IReadOnlyDictionary<string, string> DotnetEnvironment { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -80,6 +88,7 @@ internal static class BsharpTestEnvironment
             Assert.IsTrue(File.Exists(CodegenPath), $"Expected codegen executable at {CodegenPath}");
             Assert.IsTrue(File.Exists(BsharpPath), $"Expected bsharp launcher at {BsharpPath}");
             Assert.IsTrue(File.Exists(BsharpTaskdPath), $"Expected bsharp-taskd at {BsharpTaskdPath}");
+            s_taskDaemonReady = true;
             s_toolchainReady = true;
         }
     }
@@ -89,6 +98,37 @@ internal static class BsharpTestEnvironment
         lock (ToolchainGate)
         {
             EnsureCodegenCore();
+        }
+    }
+
+    public static IReadOnlyDictionary<string, string> DotnetEnvironmentWithTaskDaemon()
+    {
+        EnsureTaskDaemon();
+        return new Dictionary<string, string>(DotnetEnvironment, StringComparer.Ordinal)
+        {
+            ["BSHARP_TASKD_PATH"] = BsharpTaskdPublishPath,
+        };
+    }
+
+    private static void EnsureTaskDaemon()
+    {
+        lock (ToolchainGate)
+        {
+            if (s_taskDaemonReady)
+                return;
+
+            CommandRunner
+                .Run("dotnet",
+                    ["publish", Path.Combine(RepoRoot, "tools", "bsharp-taskd", "BsharpTaskd.csproj"),
+                        "-c", "Release", "-r", RuntimeInformation.RuntimeIdentifier,
+                        "--no-self-contained", "-p:PublishReadyToRun=true", "--nologo", "-v:q"],
+                    RepoRoot,
+                    DotnetEnvironment,
+                    CommandTimeout)
+                .AssertSuccess("publish bsharp-taskd daemon");
+
+            Assert.IsTrue(File.Exists(BsharpTaskdPublishPath), $"Expected bsharp-taskd at {BsharpTaskdPublishPath}");
+            s_taskDaemonReady = true;
         }
     }
 

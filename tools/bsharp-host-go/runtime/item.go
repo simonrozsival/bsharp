@@ -171,6 +171,48 @@ func (i *Item) RemoveMetadata(name string) {
 	}
 }
 
+func (i *Item) clearMetadata() {
+	i.meta = nil
+	i.cachedFullPathOK = false
+	i.cachedDirectoryOK = false
+	i.cachedRelDirOK = false
+}
+
+func (i *Item) KeepOnlyMetadata(names []string) {
+	if len(names) == 0 {
+		i.clearMetadata()
+		return
+	}
+	keep := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			keep[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	if len(keep) == 0 {
+		i.clearMetadata()
+		return
+	}
+	for key := range i.meta {
+		if _, ok := keep[key]; !ok {
+			i.RemoveMetadata(key)
+		}
+	}
+}
+
+func CopySelectedMetadata(src, dst *Item, names []string) {
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		dst.SetMetadata(name, src.GetMetadata(name))
+	}
+}
+
+func ItemDedupeKey(it *Item) string { return dedupeKey(it) }
+
 // CopyMetadataTo copies all metadata from src to dst. Existing keys in dst
 // are overwritten (matches the C# CopyMetadataTo behavior).
 func (i *Item) CopyMetadataTo(dst *Item) {

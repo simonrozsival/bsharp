@@ -57,6 +57,18 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 			if strings.ContainsAny(inner, "[:") {
 				return sb.String(), false
 			}
+			if strings.Contains(inner, "%(") {
+				if batchMeta == nil {
+					return sb.String(), false
+				}
+				name, ok := Expand(inner, p, i, batchMeta)
+				if !ok {
+					return sb.String(), false
+				}
+				sb.WriteString(p.Get(name))
+				j = end
+				continue
+			}
 			value, ok := evalPropertyExpression(inner, p)
 			if !ok {
 				return sb.String(), false
@@ -222,11 +234,12 @@ func isSimpleIdentifier(s string) bool {
 
 // evalItemFunc evaluates `ItemName -> FuncName(args)` inside an @(...)
 // expansion. Currently supported functions:
-//   - Count()                                       -> integer count as string
-//   - AnyHaveMetadataValue('MetaName', 'Value')     -> "True"/"False"
+//   - Count()                                                   -> integer count as string
+//   - AnyHaveMetadataValue('MetaName', 'Value')                 -> "True"/"False"
+//   - WithMetadataValue('MetaName', 'Value')->...->Count()      -> filtered count
 //
 // Returns ok=false for any other shape so unsupported transforms (e.g.
-// @(X->'%(Identity)'), @(X->WithMetadataValue(...)), chained calls)
+// @(X->'%(Identity)'), non-scalar item-function chains)
 // panic loudly via MustExpand instead of silently returning the wrong
 // value.
 func evalItemFunc(inner string, items ItemBag, p PropertyBag) (string, bool) {
@@ -239,32 +252,62 @@ func evalItemFunc(inner string, items ItemBag, p PropertyBag) (string, bool) {
 	if !isSimpleIdentifier(name) {
 		return "", false
 	}
-	openIdx := strings.IndexByte(rhs, '(')
-	if openIdx < 0 || !strings.HasSuffix(rhs, ")") {
+	current := items.Get(name)
+	for {
+		rhs = strings.TrimSpace(rhs)
+		openIdx := strings.IndexByte(rhs, '(')
+		if openIdx < 0 {
+			return "", false
+		}
+		fn := strings.TrimSpace(rhs[:openIdx])
+		closeIdx := findMatchingParenQuoteAware(rhs, openIdx)
+		if closeIdx < 0 {
+			return "", false
+		}
+		argsSrc := rhs[openIdx+1 : closeIdx]
+		rest := strings.TrimSpace(rhs[closeIdx+1:])
+		switch strings.ToLower(fn) {
+		case "count":
+			if strings.TrimSpace(argsSrc) != "" || rest != "" {
+				return "", false
+			}
+			return fmt.Sprintf("%d", len(current)), true
+		case "anyhavemetadatavalue":
+			if rest != "" {
+				return "", false
+			}
+			args, ok := parseItemFuncArgs(argsSrc, p, items)
+			if !ok || len(args) != 2 {
+				return "", false
+			}
+			metaName, metaValue := args[0], args[1]
+			for _, it := range current {
+				if strings.EqualFold(it.GetMetadata(metaName), metaValue) {
+					return "True", true
+				}
+			}
+			return "False", true
+		case "withmetadatavalue":
+			args, ok := parseItemFuncArgs(argsSrc, p, items)
+			if !ok || len(args) != 2 {
+				return "", false
+			}
+			metaName, metaValue := args[0], args[1]
+			filtered := make([]*Item, 0, len(current))
+			for _, it := range current {
+				if strings.EqualFold(it.GetMetadata(metaName), metaValue) {
+					filtered = append(filtered, it)
+				}
+			}
+			current = filtered
+			if !strings.HasPrefix(rest, "->") {
+				return "", false
+			}
+			rhs = rest[2:]
+			continue
+		}
 		return "", false
 	}
-	fn := strings.TrimSpace(rhs[:openIdx])
-	argsSrc := rhs[openIdx+1 : len(rhs)-1]
-	switch strings.ToLower(fn) {
-	case "count":
-		if strings.TrimSpace(argsSrc) != "" {
-			return "", false
-		}
-		return fmt.Sprintf("%d", len(items.Get(name))), true
-	case "anyhavemetadatavalue":
-		args, ok := parseItemFuncArgs(argsSrc, p, items)
-		if !ok || len(args) != 2 {
-			return "", false
-		}
-		metaName, metaValue := args[0], args[1]
-		for _, it := range items.Get(name) {
-			if strings.EqualFold(it.GetMetadata(metaName), metaValue) {
-				return "True", true
-			}
-		}
-		return "False", true
-	}
-	return "", false
 }
 
 // transformMethodCall represents one `-> Method(args)` step in a chained
@@ -841,6 +884,11 @@ func applyPropertyFunction(value, method string, args []string, hasArgs bool) (s
 			return "", false
 		}
 		return boolToMSBuild(strings.Contains(value, args[0])), true
+	case "equals":
+		if len(args) != 1 {
+			return "", false
+		}
+		return boolToMSBuild(value == args[0]), true
 	case "indexof":
 		if len(args) != 1 {
 			return "", false

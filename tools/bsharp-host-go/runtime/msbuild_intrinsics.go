@@ -129,6 +129,11 @@ func msbuildIntrinsic(name, argsStr string, p PropertyBag, meta map[string]strin
 			return "", false
 		}
 		return msbuildEscape(args[0]), true
+	case "unescape":
+		if len(args) != 1 {
+			return "", false
+		}
+		return msbuildUnescape(args[0]), true
 	case "ensuretrailingslash":
 		if len(args) != 1 {
 			return "", false
@@ -157,6 +162,10 @@ func msbuildIntrinsic(name, argsStr string, p PropertyBag, meta map[string]strin
 		// is "available". Returning True unconditionally matches the
 		// semantics the SDK conditions are gating on (they use this to
 		// avoid emitting fallback warnings when the task host exists).
+		return "True", true
+	case "arefeaturesenabled":
+		// Match the C# emitter's optimistic closed-world assumption: SDK
+		// change-wave probes are treated as enabled.
 		return "True", true
 	case "istargetframeworkcompatible":
 		// `$([MSBuild]::IsTargetFrameworkCompatible(currentTfm, targetTfm))`
@@ -450,6 +459,40 @@ func msbuildEscape(s string) string {
 		}
 	}
 	return sb.String()
+}
+
+func msbuildUnescape(s string) string {
+	if s == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) {
+			if hi, ok1 := fromHex(s[i+1]); ok1 {
+				if lo, ok2 := fromHex(s[i+2]); ok2 {
+					sb.WriteByte(hi<<4 | lo)
+					i += 2
+					continue
+				}
+			}
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
+}
+
+func fromHex(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 // splitIntrinsicArgs splits a comma-separated argument list (no outer parens)

@@ -217,8 +217,8 @@ func spawnDaemon(daemonExe, sdkFingerprint, sock string) error {
 	// Match the C# launcher: detach via setsid + sh background. Stdin/out/err
 	// are redirected to logfile so the daemon survives the spawning process.
 	shell := fmt.Sprintf(
-		`exec %s --sdk-fingerprint %s --socket %s </dev/null >>%s 2>>%s &`,
-		shellQuote(daemonExe), shellQuote(sdkFingerprint), shellQuote(sock),
+		`exec %s --sdk-fingerprint %s </dev/null >>%s 2>>%s &`,
+		shellQuote(daemonExe), shellQuote(sdkFingerprint),
 		shellQuote(logPath), shellQuote(logPath))
 	cmd := exec.Command("/bin/sh", "-c", shell)
 	cmd.SysProcAttr = sysProcAttrDetach()

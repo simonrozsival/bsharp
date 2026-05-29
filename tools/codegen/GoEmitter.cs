@@ -20,15 +20,30 @@ namespace Bsharp.Codegen;
 /// emission piece-by-piece without ever producing silently-wrong Go.
 /// </summary>
 internal static class GoEmitter {
+    // Task metadata index supplied by Program.cs::EmitGoInner. Used by the
+    // SDK-task dispatch path (ClassifyAsSdkTask / EmitSdkTaskCall) so generated
+    // task calls can target the daemon directly when local-task whitelist misses.
+    // Null only when no metadata was loaded — codegen-time dispatch then falls
+    // back to local-task or stub-with-reason behavior.
+    static TaskMetadataLoader.MetadataIndex? _taskMetadata;
+    // SDK fingerprint baked into main.go at emit time. Same algorithm as the C#
+    // host's TaskRunner.ComputeSdkFingerprint: sorted set of task-DLL directories,
+    // SHA-256, hex of first 6 bytes. Generated host hands this string to the Go
+    // taskd client which uses it as part of the socket name.
+    static string _sdkFingerprint = "";
+
     public static int Emit(
         ProjectInstance instance,
         string outDir,
         IReadOnlyList<string>? requestedTargets,
         Dictionary<string, string> globalProps,
-        string runtimeReplacePath
+        string runtimeReplacePath,
+        TaskMetadataLoader.MetadataIndex? taskMetadata = null
     ) {
         Directory.CreateDirectory(outDir);
         var report = new EmitReport();
+        _taskMetadata = taskMetadata;
+        _sdkFingerprint = ComputeSdkFingerprint(taskMetadata);
 
         var mainGo = BuildMainGo(instance, requestedTargets, report);
         var goMod = BuildGoMod(runtimeReplacePath);
@@ -38,10 +53,45 @@ internal static class GoEmitter {
         File.WriteAllText(Path.Combine(outDir, "emit-report.json"),
             JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
+        // Diagnostic dump: list every task name registered in metadata so we can
+        // explain "task:X" stub rejections at a glance.
+        if (taskMetadata != null) {
+            using var w = new StreamWriter(Path.Combine(outDir, "task-metadata.txt"));
+            w.WriteLine($"# {taskMetadata.ByTaskName.Count} tasks loaded, {taskMetadata.LoadErrors.Count} load errors");
+            foreach (var kv in taskMetadata.ByTaskName.OrderBy(k => k.Key, StringComparer.Ordinal)) {
+                w.WriteLine($"{kv.Key}\t{kv.Value.AssemblyPath}\t{kv.Value.FullTypeName}");
+            }
+            w.WriteLine();
+            w.WriteLine("# load errors");
+            foreach (var e in taskMetadata.LoadErrors) w.WriteLine(e);
+        }
+        // Diagnostic dump: registry of UsingTask entries.
+        if (Environment.GetEnvironmentVariable("BSHARP_DEBUG_REGISTRY") is { Length: > 0 } regDump
+            && _taskMetadata != null) {
+            // _taskMetadata isn't the registry, but the loader filtered on IsUsed; for
+            // debugging that filter we want the original registry. The caller is expected
+            // to pass a separate dump path when probing this.
+        }
+
         Console.Error.WriteLine($"codegen: --emit-go wrote main.go ({mainGo.Length} chars), go.mod, emit-report.json to {outDir}");
         Console.Error.WriteLine($"codegen: --emit-go status: {report.Targets.Total} targets ({report.Targets.RealBody} real-body, {report.Targets.StubBody} stub)");
         Console.Error.WriteLine($"codegen: --emit-go Phase A: complex targets still panic; see emit-report.json for per-reason counts.");
         return 0;
+    }
+
+    static string ComputeSdkFingerprint(TaskMetadataLoader.MetadataIndex? meta) {
+        if (meta is null || meta.ByTaskName.Count == 0) return "nosdkemit";
+        var dirs = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in meta.ByTaskName.Values) {
+            var d = Path.GetDirectoryName(t.AssemblyPath);
+            if (!string.IsNullOrEmpty(d)) dirs.Add(d);
+        }
+        var joined = string.Join("|", dirs);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(joined);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        var sb = new StringBuilder(12);
+        for (var i = 0; i < 6; i++) sb.Append(hash[i].ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+        return sb.ToString();
     }
 
     static string BuildMainGo(ProjectInstance instance, IReadOnlyList<string>? requestedTargets, EmitReport report) {
@@ -54,6 +104,7 @@ internal static class GoEmitter {
         sb.AppendLine("package main");
         sb.AppendLine();
         sb.AppendLine("import (");
+        sb.AppendLine("\t\"encoding/json\"");
         sb.AppendLine("\t\"fmt\"");
         sb.AppendLine("\t\"os\"");
         sb.AppendLine("\t\"strings\"");
@@ -61,10 +112,15 @@ internal static class GoEmitter {
         sb.AppendLine("\trt \"github.com/simonrozsival/bsharp-host-go/runtime\"");
         sb.AppendLine(")");
         sb.AppendLine();
+        sb.AppendLine("// Tasks is the process-wide bsharp-taskd connection used by every SDK-task");
+        sb.AppendLine("// dispatch site. nil when no SDK-task fingerprint was baked in at emit time.");
+        sb.AppendLine("var Tasks *rt.TaskRunner");
+        sb.AppendLine();
 
         EmitProperties(sb, instance, report);
         EmitItems(sb, instance, report);
         EmitTargetStubs(sb, instance, report);
+        EmitTaskRegistry(sb, instance);
         EmitMain(sb, instance, requestedTargets);
 
         return sb.ToString();
@@ -125,6 +181,18 @@ internal static class GoEmitter {
         sb.AppendLine("\tk := strings.ToLower(name)");
         sb.AppendLine("\tit.lists[k] = append(it.lists[k], more...)");
         sb.AppendLine("}");
+        sb.AppendLine("func (it *items) AppendToMaybeDedup(name string, more []*rt.Item, keepDuplicates bool) {");
+        sb.AppendLine("\tif keepDuplicates { it.AppendTo(name, more); return }");
+        sb.AppendLine("\tk := strings.ToLower(name)");
+        sb.AppendLine("\tseen := make(map[string]struct{}, len(it.lists[k])+len(more))");
+        sb.AppendLine("\tfor _, item := range it.lists[k] { seen[rt.ItemDedupeKey(item)] = struct{}{} }");
+        sb.AppendLine("\tfor _, item := range more {");
+        sb.AppendLine("\t\tkey := rt.ItemDedupeKey(item)");
+        sb.AppendLine("\t\tif _, ok := seen[key]; ok { continue }");
+        sb.AppendLine("\t\tseen[key] = struct{}{}");
+        sb.AppendLine("\t\tit.lists[k] = append(it.lists[k], item)");
+        sb.AppendLine("\t}");
+        sb.AppendLine("}");
         sb.AppendLine("// RemoveByIdentity removes every item from list `name` whose Identity");
         sb.AppendLine("// matches identity. Used by emitted <ItemGroup><X Remove=\"...\"/></ItemGroup>.");
         sb.AppendLine("func (it *items) RemoveByIdentity(name, identity string) {");
@@ -134,6 +202,16 @@ internal static class GoEmitter {
         sb.AppendLine("\tkeep := list[:0]");
         sb.AppendLine("\tfor _, item := range list {");
         sb.AppendLine("\t\tif item.Identity != identity { keep = append(keep, item) }");
+        sb.AppendLine("\t}");
+        sb.AppendLine("\tit.lists[k] = keep");
+        sb.AppendLine("}");
+        sb.AppendLine("func (it *items) RemoveByMetadata(name, metadataName, metadataValue string) {");
+        sb.AppendLine("\tk := strings.ToLower(name)");
+        sb.AppendLine("\tlist := it.lists[k]");
+        sb.AppendLine("\tif len(list) == 0 { return }");
+        sb.AppendLine("\tkeep := list[:0]");
+        sb.AppendLine("\tfor _, item := range list {");
+        sb.AppendLine("\t\tif !strings.EqualFold(item.GetMetadata(metadataName), metadataValue) { keep = append(keep, item) }");
         sb.AppendLine("\t}");
         sb.AppendLine("\tit.lists[k] = keep");
         sb.AppendLine("}");
@@ -147,7 +225,7 @@ internal static class GoEmitter {
             var any = false;
             foreach (var item in group) {
                 if (any) sb.Append(", ");
-                sb.Append("rt.NewItem(").Append(GoStringLiteral(item.EvaluatedInclude)).Append(")");
+                EmitInitialItem(sb, item);
                 any = true;
                 report.Items.SupportedLiteral++;
             }
@@ -156,6 +234,25 @@ internal static class GoEmitter {
         sb.AppendLine("\treturn it");
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    static void EmitInitialItem(StringBuilder sb, ProjectItemInstance item) {
+        var metadata = item.Metadata
+            .Where(m => !string.Equals(m.Name, "Identity", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (metadata.Length == 0) {
+            sb.Append("rt.NewItem(").Append(GoStringLiteral(item.EvaluatedInclude)).Append(")");
+            return;
+        }
+        sb.Append("rt.NewItemWithMetadata(").Append(GoStringLiteral(item.EvaluatedInclude)).Append(", map[string]string{");
+        var first = true;
+        foreach (var m in metadata) {
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append(GoStringLiteral(m.Name)).Append(": ").Append(GoStringLiteral(m.EvaluatedValue));
+        }
+        sb.Append("})");
     }
 
     static void EmitTargetStubs(StringBuilder sb, ProjectInstance instance, EmitReport report) {
@@ -226,6 +323,11 @@ internal static class GoEmitter {
     static void EmitStubTargetBody(StringBuilder sb, ProjectTargetInstance target, string ident, string reason) {
         sb.Append("// ").Append(target.Name).Append(": stub — ").AppendLine(reason);
         sb.Append("func ").Append(ident).AppendLine("() {");
+        sb.Append("\tts := rt.GetTargetState(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        sb.AppendLine("\tif !ts.TryEnter() { return }");
+        if (!string.IsNullOrWhiteSpace(target.Condition) && IsSimpleConditionTemplate(target.Condition)) {
+            sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
+        }
         sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name)).AppendLine(")");
         sb.AppendLine("\tpanic(\"target body not yet emitted: " + EscapeForGo(target.Name) + " — " + EscapeForGo(reason) + "\")");
         sb.AppendLine("}");
@@ -248,6 +350,9 @@ internal static class GoEmitter {
         sb.Append("func ").Append(ident).AppendLine("() {");
         sb.Append("\tts := rt.GetTargetState(").Append(GoStringLiteral(target.Name)).AppendLine(")");
         sb.AppendLine("\tif !ts.TryEnter() { return }");
+        if (hasCond) {
+            sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
+        }
 
         if (!string.IsNullOrWhiteSpace(target.DependsOnTargets)) {
             var dot = target.DependsOnTargets;
@@ -276,8 +381,8 @@ internal static class GoEmitter {
         }
 
         // Phase E: before-extenders (literal only — dynamic extender attrs are
-        // rejected by ClassifyTarget). They run unconditionally after the
-        // depends-on chain, regardless of this target's condition.
+        // rejected by ClassifyTarget). They run after the target condition and
+        // depends-on chain.
         if (hasBefores) {
             foreach (var be in befores!) {
                 if (targetIndex.TryGetValue(be, out var beIdent)) {
@@ -288,9 +393,6 @@ internal static class GoEmitter {
 
         if (!hasBefores && !hasAfters) {
             // Fast path: no extenders, keep the existing early-return shape.
-            if (hasCond) {
-                sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
-            }
             EmitTargetBodyOrIncremental(sb, target, hasIO);
             sb.AppendLine("\tts.MarkDone()");
         } else {
@@ -299,27 +401,17 @@ internal static class GoEmitter {
             // state to pending and allow an after-extender's DependsOnTargets to
             // immediately re-enter the same target, producing recursion that
             // MSBuild avoids.
-            if (hasCond) {
-                sb.Append("\tcondOk := rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I)");
-                sb.AppendLine("\tif condOk {");
-            }
             // Body emitted at \t (child emitters hardcode \t indent). When the
             // condition wraps the body, the resulting code is visually
             // mis-indented but valid Go.
             EmitTargetBodyOrIncremental(sb, target, hasIO);
             sb.AppendLine("\tts.MarkDone()");
-            if (hasCond) {
-                sb.AppendLine("\t}");
-            }
             if (hasAfters) {
                 foreach (var ae in afters!) {
                     if (targetIndex.TryGetValue(ae, out var aeIdent)) {
                         sb.Append("\t").Append(aeIdent).AppendLine("()");
                     }
                 }
-            }
-            if (hasCond) {
-                sb.AppendLine("\tif !condOk { ts.MarkSkipped() }");
             }
         }
 
@@ -441,7 +533,12 @@ internal static class GoEmitter {
         // ItemType when both are empty, or a single qualifier extracted
         // from the cond/metadata refs).
         if (ItemNeedsBatchedEmission(item)) {
-            EmitBatchedItemGroupChild(sb, item, indent);
+            var srcLists = ComputeBatchSrcLists(item);
+            if (srcLists is { Length: > 1 } && TryGetItemListCopySources(item.Include) is { Length: > 1 } includeSources) {
+                EmitMultiSourceBatchedItemGroupChild(sb, item, indent, includeSources);
+            } else {
+                EmitBatchedItemGroupChild(sb, item, indent);
+            }
             return;
         }
         var bodyIndent = indent;
@@ -454,6 +551,7 @@ internal static class GoEmitter {
         var remove = item.Remove ?? "";
         var exclude = item.Exclude ?? "";
         var itemType = item.ItemType;
+        var matchOnMetadata = item.MatchOnMetadata?.Trim() ?? "";
 
         if (include.Length > 0) {
             // If Exclude is present, build a string-set of excluded identities
@@ -479,15 +577,29 @@ internal static class GoEmitter {
                 sb.Append(bodyIndent).AppendLine("}");
             }
             var kind = ClassifyItemIncludeSpec(include);
-            if (kind == ItemIncludeKind.ItemListCopy) {
+            var copySources = TryGetItemListCopySources(include);
+            if (copySources is { Length: > 1 }) {
+                foreach (var sourceType in copySources) {
+                    sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(sourceType)).AppendLine(") {");
+                    if (hasExclude) {
+                        sb.Append(bodyIndent).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+                    }
+                    sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
+                    EmitKeepOnlyMetadata(sb, item, bodyIndent + "\t", "item", batchMetaVar: null);
+                    EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
+                    EmitAppendItems(sb, item, bodyIndent + "\t", itemType, "[]*rt.Item{item}");
+                    sb.Append(bodyIndent).AppendLine("}");
+                }
+            } else if (kind == ItemIncludeKind.ItemListCopy) {
                 var sourceType = include.Trim().Substring(2, include.Trim().Length - 3).Trim();
                 sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(sourceType)).AppendLine(") {");
                 if (hasExclude) {
                     sb.Append(bodyIndent).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
                 }
                 sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
+                EmitKeepOnlyMetadata(sb, item, bodyIndent + "\t", "item", batchMetaVar: null);
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
-                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                EmitAppendItems(sb, item, bodyIndent + "\t", itemType, "[]*rt.Item{item}");
                 sb.Append(bodyIndent).AppendLine("}");
             } else if (kind == ItemIncludeKind.ItemListFilter) {
                 var trimmed = include.Trim();
@@ -509,8 +621,9 @@ internal static class GoEmitter {
                   .Append(GoStringLiteral(spec.MetaName)).Append("), rt.MustExpand(")
                   .Append(GoStringLiteral(spec.ValueTemplate)).AppendLine(", P, I, nil)) { continue }");
                 sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
+                EmitKeepOnlyMetadata(sb, item, bodyIndent + "\t", "item", batchMetaVar: null);
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
-                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                EmitAppendItems(sb, item, bodyIndent + "\t", itemType, "[]*rt.Item{item}");
                 sb.Append(bodyIndent).AppendLine("}");
             } else {
                 // Literal/expansion path: expand, split, create items with metadata.
@@ -521,7 +634,7 @@ internal static class GoEmitter {
                 }
                 sb.Append(bodyIndent).AppendLine("\titem := rt.NewItem(id)");
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
-                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                EmitAppendItems(sb, item, bodyIndent + "\t", itemType, "[]*rt.Item{item}");
                 sb.Append(bodyIndent).AppendLine("}");
             }
             if (hasExclude) {
@@ -529,10 +642,18 @@ internal static class GoEmitter {
                 sb.Append(bodyIndent).AppendLine("}");
             }
         } else if (remove.Length > 0) {
-            sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
-              .Append(GoStringLiteral(remove)).AppendLine(", P, I, nil)) {");
-            sb.Append(bodyIndent).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
-            sb.Append(bodyIndent).AppendLine("}");
+            if (matchOnMetadata.Length > 0 && ClassifyItemIncludeSpec(remove) == ItemIncludeKind.ItemListCopy) {
+                var sourceType = remove.Trim().Substring(2, remove.Trim().Length - 3).Trim();
+                sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(sourceType)).AppendLine(") {");
+                sb.Append(bodyIndent).Append("\tI.RemoveByMetadata(").Append(GoStringLiteral(itemType)).Append(", ")
+                  .Append(GoStringLiteral(matchOnMetadata)).Append(", src.GetMetadata(").Append(GoStringLiteral(matchOnMetadata)).AppendLine("))");
+                sb.Append(bodyIndent).AppendLine("}");
+            } else {
+                sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
+                  .Append(GoStringLiteral(remove)).AppendLine(", P, I, nil)) {");
+                sb.Append(bodyIndent).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
+                sb.Append(bodyIndent).AppendLine("}");
+            }
         } else if (item.Metadata.Count > 0) {
             // Modify-metadata path: <ItemGroup><X><Meta>v</Meta></X></ItemGroup>
             // with no Include/Remove updates metadata on EVERY existing item
@@ -552,6 +673,8 @@ internal static class GoEmitter {
     // on genuine batching refs.
     static bool ItemNeedsBatchedEmission(ProjectItemGroupTaskItemInstance item) {
         if (ContainsBatching(item.Condition)) return true;
+        if (TryGetDynamicItemListTemplate(item.Include) != null) return true;
+        if (TryGetDynamicItemListTemplate(item.Remove) != null) return true;
         if (ContainsBatching(item.Include)) return true;
         if (ContainsBatching(item.Remove)) return true;
         foreach (var m in item.Metadata) {
@@ -599,6 +722,16 @@ internal static class GoEmitter {
         return fromSpec;
     }
 
+    static string[]? ComputeBatchSrcLists(ProjectItemGroupTaskItemInstance item) {
+        var rawInc = item.Include ?? "";
+        var rawRem = item.Remove ?? "";
+        var multi = rawInc.Length > 0 ? TryGetItemListCopySources(rawInc) : null;
+        multi ??= rawInc.Length == 0 && rawRem.Length > 0 ? TryGetItemListCopySources(rawRem) : null;
+        if (multi is { Length: > 1 }) return multi;
+        var single = ComputeBatchSrcList(item);
+        return single == null ? null : new[] { single };
+    }
+
     // ComputeTaskBatchSrcList resolves the single source-list qualifier for
     // a task whose condition or any parameter value contains `%(...)`. The
     // result is the item-type name to iterate over at runtime; condition
@@ -613,6 +746,10 @@ internal static class GoEmitter {
     // implicit-source resolution from the surrounding target context, which
     // we don't model.
     static string? ComputeTaskBatchSrcList(ProjectTaskInstance task) {
+        var hasBatching = ContainsBatching(task.Condition)
+            || task.Parameters.Any(p => ContainsBatching(p.Value));
+        if (!hasBatching) return null;
+
         var fromCond = ExtractSingleBatchQualifier(task.Condition ?? "");
         string? found = fromCond;
         foreach (var p in task.Parameters) {
@@ -622,6 +759,17 @@ internal static class GoEmitter {
                 found = q;
             } else if (!string.Equals(found, q, StringComparison.OrdinalIgnoreCase)) {
                 return null;
+            }
+        }
+        if (found == null) {
+            foreach (var p in task.Parameters) {
+                var direct = TryGetSimpleItemListRef(p.Value);
+                if (direct == null) continue;
+                if (found == null) {
+                    found = direct;
+                } else if (!string.Equals(found, direct, StringComparison.OrdinalIgnoreCase)) {
+                    return null;
+                }
             }
         }
         return found;
@@ -643,6 +791,39 @@ internal static class GoEmitter {
     //
     // The whole emission lives in a Go block so the `excluded` / `meta` /
     // `item` locals don't collide with sibling ItemGroup children.
+    static void EmitMultiSourceBatchedItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string[] sources) {
+        var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
+        var hasExclude = !string.IsNullOrEmpty(item.Exclude);
+        var itemType = item.ItemType;
+
+        sb.Append(indent).AppendLine("{");
+        var bi = indent + "\t";
+        if (hasExclude) {
+            sb.Append(bi).AppendLine("excluded := make(map[string]struct{})");
+            sb.Append(bi).Append("for _, ex := range rt.SplitSemicolon(rt.MustExpand(")
+              .Append(GoStringLiteral(item.Exclude)).AppendLine(", P, I, nil)) {");
+            sb.Append(bi).AppendLine("\tif ex != \"\" { excluded[ex] = struct{}{} }");
+            sb.Append(bi).AppendLine("}");
+        }
+        foreach (var source in sources) {
+            sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(source)).AppendLine(") {");
+            sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
+            if (hasCond) {
+                sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+                  .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+            }
+            if (hasExclude) {
+                sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+            }
+            sb.Append(bi).AppendLine("\titem := src.Clone()");
+            EmitKeepOnlyMetadata(sb, item, bi + "\t", "item", "meta");
+            EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
+            EmitAppendItems(sb, item, bi + "\t", itemType, "[]*rt.Item{item}");
+            sb.Append(bi).AppendLine("}");
+        }
+        sb.Append(indent).AppendLine("}");
+    }
+
     static void EmitBatchedItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
         var include = item.Include ?? "";
         var remove = item.Remove ?? "";
@@ -653,6 +834,7 @@ internal static class GoEmitter {
         var isRemove = !isInclude && remove.Length > 0;
         var isModifyMeta = !isInclude && !isRemove;
         var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
+        var matchOnMetadata = item.MatchOnMetadata?.Trim() ?? "";
 
         var srcList = ComputeBatchSrcList(item)
             ?? throw new InvalidOperationException(
@@ -661,9 +843,11 @@ internal static class GoEmitter {
         // Is the Include literal-shaped (not @(SrcList))? Only meaningful when
         // isInclude. Detected by checking the classified include kind.
         var includeKind = isInclude ? ClassifyItemIncludeSpec(include) : ItemIncludeKind.Unsupported;
+        var dynamicItemListTemplate = isInclude ? TryGetDynamicItemListTemplate(include) : null;
+        var includeIsDynamicItemList = dynamicItemListTemplate != null;
         var includeIsTransform = isInclude && includeKind != ItemIncludeKind.ItemListCopy
-            && TryGetTransformIncludeSrcList(include) != null;
-        var includeIsLiteral = isInclude && includeKind != ItemIncludeKind.ItemListCopy && !includeIsTransform;
+            && !includeIsDynamicItemList && TryGetTransformIncludeSrcList(include) != null;
+        var includeIsLiteral = isInclude && includeKind != ItemIncludeKind.ItemListCopy && !includeIsTransform && !includeIsDynamicItemList;
 
         sb.Append(indent).AppendLine("{");
         var bi = indent + "\t";
@@ -680,6 +864,28 @@ internal static class GoEmitter {
             //   Remove="%(X.Y)" (batched)→ enumerate X, expand Remove per iteration
             //                              to get the identity to remove.
             var removeIsItemListCopy = ClassifyItemIncludeSpec(remove) == ItemIncludeKind.ItemListCopy;
+            if (matchOnMetadata.Length > 0 && removeIsItemListCopy) {
+                sb.Append(bi).AppendLine("var toRemove []string");
+                sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
+                sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
+                if (hasCond) {
+                    sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+                      .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+                } else {
+                    sb.Append(bi).AppendLine("\t_ = meta");
+                }
+                if (hasExclude) {
+                    sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+                }
+                sb.Append(bi).Append("\ttoRemove = append(toRemove, src.GetMetadata(").Append(GoStringLiteral(matchOnMetadata)).AppendLine("))");
+                sb.Append(bi).AppendLine("}");
+                sb.Append(bi).AppendLine("for _, v := range toRemove {");
+                sb.Append(bi).Append("\tI.RemoveByMetadata(").Append(GoStringLiteral(itemType)).Append(", ")
+                  .Append(GoStringLiteral(matchOnMetadata)).AppendLine(", v)");
+                sb.Append(bi).AppendLine("}");
+                sb.Append(indent).AppendLine("}");
+                return;
+            }
             sb.Append(bi).AppendLine("var toRemove []string");
             sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
             sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
@@ -722,6 +928,17 @@ internal static class GoEmitter {
         if (isModifyMeta) {
             sb.Append(bi).AppendLine("\titem := src");
             EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
+        } else if (includeIsDynamicItemList) {
+            sb.Append(bi).Append("\tfor _, dynSrc := range I.Get(rt.MustExpand(")
+              .Append(GoStringLiteral(dynamicItemListTemplate!)).AppendLine(", P, I, meta)) {");
+            if (hasExclude) {
+                sb.Append(bi).AppendLine("\t\tif _, skip := excluded[dynSrc.Identity]; skip { continue }");
+            }
+            sb.Append(bi).AppendLine("\t\titem := dynSrc.Clone()");
+            EmitKeepOnlyMetadata(sb, item, bi + "\t\t", "item", "meta");
+            EmitItemMetadata(sb, item, bi + "\t\t", "item", "meta");
+            EmitAppendItems(sb, item, bi + "\t\t", itemType, "[]*rt.Item{item}");
+            sb.Append(bi).AppendLine("\t}");
         } else if (includeIsTransform) {
             // Include="@(SrcList->'tpl')" — evaluate the template alone
             // against src's meta to produce the identity string (matches
@@ -736,8 +953,9 @@ internal static class GoEmitter {
               .Append(GoStringLiteral(tpl)).AppendLine(", P, I, meta)) {");
             sb.Append(bi).AppendLine("\t\tif id == \"\" { continue }");
             sb.Append(bi).AppendLine("\t\titem := rt.NewItem(id)");
+            EmitCopySelectedMetadata(sb, item, bi + "\t\t", "src", "item", "meta");
             EmitItemMetadata(sb, item, bi + "\t\t", "item", "meta");
-            sb.Append(bi).Append("\t\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+            EmitAppendItems(sb, item, bi + "\t\t", itemType, "[]*rt.Item{item}");
             sb.Append(bi).AppendLine("\t}");
         } else if (includeIsLiteral) {
             // Expand the Include per source item, splitting on ';' to support
@@ -747,13 +965,14 @@ internal static class GoEmitter {
             sb.Append(bi).AppendLine("\t\tif id == \"\" { continue }");
             sb.Append(bi).AppendLine("\t\titem := rt.NewItem(id)");
             EmitItemMetadata(sb, item, bi + "\t\t", "item", "meta");
-            sb.Append(bi).Append("\t\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+            EmitAppendItems(sb, item, bi + "\t\t", itemType, "[]*rt.Item{item}");
             sb.Append(bi).AppendLine("\t}");
         } else {
             // Include="@(SrcList)" — clone the source item per iteration.
             sb.Append(bi).AppendLine("\titem := src.Clone()");
+            EmitKeepOnlyMetadata(sb, item, bi + "\t", "item", "meta");
             EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
-            sb.Append(bi).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+            EmitAppendItems(sb, item, bi + "\t", itemType, "[]*rt.Item{item}");
         }
         if (!hasCond && !hasExclude && isModifyMeta && item.Metadata.Count == 0) {
             // Pathological — shouldn't reach here, but suppress unused.
@@ -765,6 +984,31 @@ internal static class GoEmitter {
 
     static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar)
         => EmitItemMetadata(sb, item, indent, itemVar, batchMetaVar: null);
+
+    static void EmitAppendItems(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemType, string itemsExpr) {
+        if (!string.IsNullOrWhiteSpace(item.KeepDuplicates)) {
+            sb.Append(indent).Append("I.AppendToMaybeDedup(").Append(GoStringLiteral(itemType)).Append(", ")
+              .Append(itemsExpr).Append(", rt.MustEvalCondition(").Append(GoStringLiteral(item.KeepDuplicates))
+              .AppendLine(", P, I))");
+        } else {
+            sb.Append(indent).Append("I.AppendTo(").Append(GoStringLiteral(itemType)).Append(", ")
+              .Append(itemsExpr).AppendLine(")");
+        }
+    }
+
+    static void EmitKeepOnlyMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar, string? batchMetaVar) {
+        if (string.IsNullOrWhiteSpace(item.KeepMetadata)) return;
+        sb.Append(indent).Append(itemVar).Append(".KeepOnlyMetadata(rt.SplitSemicolon(rt.MustExpand(")
+          .Append(GoStringLiteral(item.KeepMetadata)).Append(", P, I, ")
+          .Append(batchMetaVar ?? "nil").AppendLine(")))");
+    }
+
+    static void EmitCopySelectedMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string srcVar, string itemVar, string? batchMetaVar) {
+        if (string.IsNullOrWhiteSpace(item.KeepMetadata)) return;
+        sb.Append(indent).Append("rt.CopySelectedMetadata(").Append(srcVar).Append(", ").Append(itemVar)
+          .Append(", rt.SplitSemicolon(rt.MustExpand(").Append(GoStringLiteral(item.KeepMetadata))
+          .Append(", P, I, ").Append(batchMetaVar ?? "nil").AppendLine(")))");
+    }
 
     // EmitItemMetadata emits the per-metadata SetMetadata calls. When
     // `batchMetaVar` is non-null, metadata Conditions and Values are
@@ -813,7 +1057,13 @@ internal static class GoEmitter {
 
         var fn = LocalTaskGoFunc(task.Name);
         if (fn == null) {
-            sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name + ":" + task.Name)).AppendLine(")");
+            // SDK task — dispatch through bsharp-taskd.
+            var sdkReason = ClassifyAsSdkTask(task);
+            if (sdkReason != null) {
+                EmitGuardedUnsupportedTaskCall(sb, target, task, sdkReason);
+                return;
+            }
+            EmitSdkTaskCall(sb, target, task);
             return;
         }
 
@@ -857,14 +1107,55 @@ internal static class GoEmitter {
         }
     }
 
+    static bool CanEmitGuardedUnsupportedTask(ProjectTaskInstance task) {
+        if (string.IsNullOrWhiteSpace(task.Condition)) return false;
+        var taskSrcList = ComputeTaskBatchSrcList(task);
+        return IsSimpleConditionTemplate(task.Condition, taskSrcList);
+    }
+
+    static void EmitGuardedUnsupportedTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task, string reason) {
+        var label = target.Name + ":" + task.Name;
+        var taskSrcList = ComputeTaskBatchSrcList(task);
+
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            if (taskSrcList != null && IsSimpleConditionTemplate(task.Condition, taskSrcList)) {
+                sb.Append("\t{").AppendLine();
+                sb.Append("\t\tfor _, src := range I.Get(").Append(GoStringLiteral(taskSrcList)).AppendLine(") {");
+                sb.AppendLine("\t\t\tmeta := rt.ItemBatchMeta(src)");
+                sb.Append("\t\t\tif rt.MustEvalConditionWithMeta(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I, meta) {");
+                sb.Append("\t\t\t\trt.NotImplemented(").Append(GoStringLiteral(label)).AppendLine(")");
+                sb.AppendLine("\t\t\t\tpanic(\"task body not yet emitted: " + EscapeForGo(label) + " — " + EscapeForGo(reason) + "\")");
+                sb.AppendLine("\t\t\t}");
+                sb.AppendLine("\t\t}");
+                sb.AppendLine("\t}");
+                return;
+            }
+            if (IsSimpleConditionTemplate(task.Condition)) {
+                sb.Append("\tif rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
+                sb.Append("\t\trt.NotImplemented(").Append(GoStringLiteral(label)).AppendLine(")");
+                sb.AppendLine("\t\tpanic(\"task body not yet emitted: " + EscapeForGo(label) + " — " + EscapeForGo(reason) + "\")");
+                sb.AppendLine("\t}");
+                return;
+            }
+        }
+
+        sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(label)).AppendLine(")");
+        sb.AppendLine("\tpanic(\"task body not yet emitted: " + EscapeForGo(label) + " — " + EscapeForGo(reason) + "\")");
+    }
+
     // EmitBatchedLocalTaskCall emits the per-source-item loop variant of a
     // local-task call. The classifier guaranteed that no <Output/> bindings
     // exist (per-iter accumulation isn't modelled) and that taskSrcList is
     // the single qualifier shared by every batched ref in the condition or
     // any parameter value.
     static void EmitBatchedLocalTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task, string fn, string srcList) {
+        var allowEmptyBatch = !task.Parameters.Any(p => string.Equals(TryGetSimpleItemListRef(p.Value), srcList, StringComparison.OrdinalIgnoreCase));
         sb.Append("\t{").AppendLine();
-        sb.Append("\t\tfor _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
+        sb.Append("\t\t__batch := I.Get(").Append(GoStringLiteral(srcList)).AppendLine(")");
+        if (allowEmptyBatch) {
+            sb.AppendLine("\t\tif len(__batch) == 0 { __batch = []*rt.Item{rt.NewItem(\"\")} }");
+        }
+        sb.AppendLine("\t\tfor _, src := range __batch {");
         sb.Append("\t\t\tmeta := rt.ItemBatchMeta(src)").AppendLine();
         sb.AppendLine("\t\t\t_ = meta // may be unused if every ref is qualified-only");
         var bodyIndent = "\t\t\t";
@@ -912,15 +1203,269 @@ internal static class GoEmitter {
                       .Append("}");
                     break;
                 default:
-                    // Unknown output binding type — emit a dummy entry so the
-                    // generated source still compiles but the runtime will
-                    // ignore it.
                     sb.Append("rt.Output{}");
                     break;
             }
         }
         sb.Append(")");
         return sb.ToString();
+    }
+
+    // EmitSdkTaskCall emits a typed bsharp-taskd invocation for `task`. The
+    // emitted Go opens a block, builds a TaskRequest with one Set call per
+    // metadata-known parameter, runs the invocation, and binds outputs back
+    // to item/property state. The block boundary keeps locals (`__req`,
+    // `__result`) from colliding with sibling task emissions.
+    static void EmitSdkTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
+        var meta = GetGoTaskMeta(task.Name);
+        if (meta == null) {
+            sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name + ":" + task.Name)).AppendLine(")");
+            return;
+        }
+        var propMap = new Dictionary<string, TaskMetadataLoader.PropertyMeta>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in meta.Properties) propMap[p.Name] = p;
+
+        var taskSrcList = ComputeTaskBatchSrcList(task);
+        if (taskSrcList != null) {
+            EmitBatchedSdkTaskCall(sb, target, task, propMap, taskSrcList);
+            return;
+        }
+
+        var ind = "\t";
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.Append(ind).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
+            ind += "\t";
+        }
+        sb.Append(ind).AppendLine("{");
+        var bi = ind + "\t";
+
+        // BeginTask gives us a typed request bound to the resolved descriptor.
+        sb.Append(bi).Append("__req, __err := Tasks.BeginTask(").Append(GoStringLiteral(task.Name)).AppendLine(")");
+        sb.Append(bi).Append("if __err != nil { panic(fmt.Sprintf(\"BeginTask %q: %v\", ").Append(GoStringLiteral(task.Name)).AppendLine(", __err)) }");
+
+        // Parameter setters: route by CLR type.
+        foreach (var p in task.Parameters) {
+            if (!propMap.TryGetValue(p.Key, out var pm)) continue; // unknown — skip silently (matches C#)
+            if (!pm.CanWrite) continue;
+            EmitSdkTaskSetParam(sb, bi, p.Key, p.Value ?? "", pm);
+        }
+
+        // ExpectOutput(s) so the daemon serializes them back.
+        var outputBindings = new List<(ProjectTaskInstanceChild Output, TaskMetadataLoader.PropertyMeta PropMeta)>();
+        foreach (var o in task.Outputs) {
+            string outName = o switch {
+                ProjectTaskOutputItemInstance oi => oi.TaskParameter,
+                ProjectTaskOutputPropertyInstance op => op.TaskParameter,
+                _ => "",
+            };
+            if (!propMap.TryGetValue(outName, out var opm)) continue;
+            sb.Append(bi).Append("__req.ExpectOutput(").Append(GoStringLiteral(opm.Name)).AppendLine(")");
+            outputBindings.Add((o, opm));
+        }
+
+        // Invoke: failures become errors in the global ErrorList.
+        sb.Append(bi).Append("__result, __err := Tasks.Invoke(__req, ").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        sb.Append(bi).Append("if __err != nil { rt.GetErrorList().Add(").Append(GoStringLiteral(target.Name)).AppendLine(", __err) }");
+        sb.Append(bi).Append("if __result != nil && !__result.Success { rt.GetErrorList().Add(").Append(GoStringLiteral(target.Name))
+          .Append(", fmt.Errorf(\"task %q failed: %s\", ").Append(GoStringLiteral(task.Name)).AppendLine(", __result.Error)) }");
+
+        // Output binding: for each registered output, deserialize the daemon's
+        // response into the appropriate item-list or property assignment.
+        sb.Append(bi).AppendLine("if __result != nil {");
+        foreach (var (o, opm) in outputBindings) {
+            EmitSdkTaskOutputBinding(sb, bi + "\t", o, opm);
+        }
+        sb.Append(bi).AppendLine("}");
+
+        sb.Append(ind).AppendLine("}");
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.AppendLine("\t}");
+        }
+    }
+
+    static void EmitBatchedSdkTaskCall(
+        StringBuilder sb,
+        ProjectTargetInstance target,
+        ProjectTaskInstance task,
+        Dictionary<string, TaskMetadataLoader.PropertyMeta> propMap,
+        string srcList) {
+        var allowEmptyBatch = !task.Parameters.Any(p => string.Equals(TryGetSimpleItemListRef(p.Value), srcList, StringComparison.OrdinalIgnoreCase));
+        sb.Append("\t{").AppendLine();
+        sb.Append("\t\t__batch := I.Get(").Append(GoStringLiteral(srcList)).AppendLine(")");
+        if (allowEmptyBatch) {
+            sb.AppendLine("\t\tif len(__batch) == 0 { __batch = []*rt.Item{rt.NewItem(\"\")} }");
+        }
+        sb.AppendLine("\t\tfor _, src := range __batch {");
+        sb.Append("\t\t\tmeta := rt.ItemBatchMeta(src)").AppendLine();
+        sb.AppendLine("\t\t\t_ = meta // may be unused when batching is carried only by direct item parameters");
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.Append("\t\t\tif !rt.MustEvalConditionWithMeta(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I, meta) { continue }");
+        }
+        sb.AppendLine("\t\t\t{");
+        var bi = "\t\t\t\t";
+
+        sb.Append(bi).Append("__req, __err := Tasks.BeginTask(").Append(GoStringLiteral(task.Name)).AppendLine(")");
+        sb.Append(bi).Append("if __err != nil { panic(fmt.Sprintf(\"BeginTask %q: %v\", ").Append(GoStringLiteral(task.Name)).AppendLine(", __err)) }");
+
+        foreach (var p in task.Parameters) {
+            if (!propMap.TryGetValue(p.Key, out var pm)) continue;
+            if (!pm.CanWrite) continue;
+            EmitSdkTaskSetParam(sb, bi, p.Key, p.Value ?? "", pm, "meta", "src", srcList);
+        }
+
+        var outputBindings = new List<(ProjectTaskInstanceChild Output, TaskMetadataLoader.PropertyMeta PropMeta)>();
+        foreach (var o in task.Outputs) {
+            string outName = o switch {
+                ProjectTaskOutputItemInstance oi => oi.TaskParameter,
+                ProjectTaskOutputPropertyInstance op => op.TaskParameter,
+                _ => "",
+            };
+            if (!propMap.TryGetValue(outName, out var opm)) continue;
+            sb.Append(bi).Append("__req.ExpectOutput(").Append(GoStringLiteral(opm.Name)).AppendLine(")");
+            outputBindings.Add((o, opm));
+        }
+
+        sb.Append(bi).Append("__result, __err := Tasks.Invoke(__req, ").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        sb.Append(bi).Append("if __err != nil { rt.GetErrorList().Add(").Append(GoStringLiteral(target.Name)).AppendLine(", __err) }");
+        sb.Append(bi).Append("if __result != nil && !__result.Success { rt.GetErrorList().Add(").Append(GoStringLiteral(target.Name))
+          .Append(", fmt.Errorf(\"task %q failed: %s\", ").Append(GoStringLiteral(task.Name)).AppendLine(", __result.Error)) }");
+        sb.Append(bi).AppendLine("if __result != nil {");
+        foreach (var (o, opm) in outputBindings) {
+            EmitSdkTaskOutputBinding(sb, bi + "\t", o, opm);
+        }
+        sb.Append(bi).AppendLine("}");
+
+        sb.AppendLine("\t\t\t}");
+        sb.AppendLine("\t\t}");
+        sb.AppendLine("\t}");
+    }
+
+    static void EmitSdkTaskSetParam(
+        StringBuilder sb,
+        string ind,
+        string xmlName,
+        string rawValue,
+        TaskMetadataLoader.PropertyMeta pm,
+        string? batchMetaVar = null,
+        string? batchItemVar = null,
+        string? batchSrcList = null) {
+        var key = GoStringLiteral(pm.Name);
+        var metaArg = batchMetaVar ?? "nil";
+        // Detect direct @(SimpleIdent) item references; for ITaskItem/[] this
+        // avoids a string round-trip and preserves metadata.
+        var directItem = TryGetSimpleItemListRef(rawValue);
+        var directCurrentBatchItem = directItem != null
+            && batchItemVar != null
+            && batchSrcList != null
+            && string.Equals(directItem, batchSrcList, StringComparison.OrdinalIgnoreCase);
+        switch (pm.PropertyTypeShort) {
+            case "string":
+            case "int":
+            case "int?":
+            case "long":
+            case "long?":
+            case "double":
+            case "double?":
+            case "bool":
+            case "ProjectStyle":
+                // The daemon coerces by destination CLR type, so a string value
+                // works for all of these. Skip empty strings to preserve the
+                // SDK's "missing parameter" semantics.
+                sb.Append(ind).Append("{ __v := rt.MustExpand(").Append(GoStringLiteral(rawValue)).Append(", P, I, ").Append(metaArg).AppendLine(")");
+                sb.Append(ind).Append("\tif __v != \"\" { __req.SetString(").Append(key).AppendLine(", __v) } }");
+                return;
+            case "string[]":
+                // string[] is sent as a JSON array; build it from the
+                // ;-separated expansion so the daemon sees a real list rather
+                // than a single semicolon-joined string.
+                sb.Append(ind).Append("{ __raw := rt.MustExpand(").Append(GoStringLiteral(rawValue)).Append(", P, I, ").Append(metaArg).AppendLine(")");
+                sb.Append(ind).Append("\tif __raw != \"\" { __req.SetStringSlice(").Append(key).AppendLine(", rt.SplitSemicolon(__raw)) } }");
+                return;
+            case "ITaskItem[]":
+                if (directCurrentBatchItem) {
+                    sb.Append(ind).Append("__req.SetItems(").Append(key).Append(", []rt.ItemSpec{rt.OneItemSpec(").Append(batchItemVar).AppendLine(")})");
+                } else if (directItem != null) {
+                    sb.Append(ind).Append("__req.SetItems(").Append(key).Append(", rt.ItemsToSpecs(I.Get(").Append(GoStringLiteral(directItem)).AppendLine(")))");
+                } else {
+                    sb.Append(ind).Append("{ __raw := rt.MustExpand(").Append(GoStringLiteral(rawValue)).Append(", P, I, ").Append(metaArg).AppendLine(")");
+                    sb.Append(ind).Append("\tif __raw != \"\" { __req.SetItems(").Append(key).AppendLine(", rt.SpecsFromScalar(__raw)) } }");
+                }
+                return;
+            case "ITaskItem":
+                if (directCurrentBatchItem) {
+                    sb.Append(ind).Append("__req.SetItem(").Append(key).Append(", rt.OneItemSpec(").Append(batchItemVar).AppendLine("))");
+                } else if (directItem != null) {
+                    sb.Append(ind).Append("{ __src := I.Get(").Append(GoStringLiteral(directItem)).AppendLine(")");
+                    sb.Append(ind).Append("\tif len(__src) > 0 { __req.SetItem(").Append(key).AppendLine(", rt.OneItemSpec(__src[0])) } }");
+                } else {
+                    sb.Append(ind).Append("{ __raw := rt.MustExpand(").Append(GoStringLiteral(rawValue)).Append(", P, I, ").Append(metaArg).AppendLine(")");
+                    sb.Append(ind).Append("\tif __raw != \"\" { __req.SetItem(").Append(key).AppendLine(", rt.ItemSpec{Identity: __raw}) } }");
+                }
+                return;
+            default:
+                // ClassifyAsSdkTask rejected this; defensive.
+                sb.Append(ind).AppendLine("// unsupported parameter type for " + pm.PropertyTypeShort + " (" + pm.Name + ")");
+                return;
+        }
+    }
+
+    static void EmitSdkTaskOutputBinding(StringBuilder sb, string ind, ProjectTaskInstanceChild output, TaskMetadataLoader.PropertyMeta pm) {
+        var key = GoStringLiteral(pm.Name);
+        if (output is ProjectTaskOutputItemInstance oi) {
+            var itemName = GoStringLiteral(oi.ItemType);
+            switch (pm.PropertyTypeShort) {
+                case "ITaskItem":
+                case "ITaskItem[]":
+                    sb.Append(ind).Append("if __raw, ok := __result.Outputs[").Append(key).AppendLine("]; ok {");
+                    sb.Append(ind).AppendLine("\tvar __specs []rt.ItemSpec");
+                    sb.Append(ind).AppendLine("\tif json.Unmarshal(__raw, &__specs) == nil {");
+                    sb.Append(ind).Append("\t\tI.AppendTo(").Append(itemName).AppendLine(", rt.ItemsFromSpecs(__specs))");
+                    sb.Append(ind).AppendLine("\t}");
+                    sb.Append(ind).AppendLine("}");
+                    return;
+                case "string":
+                    sb.Append(ind).Append("if __raw, ok := __result.Outputs[").Append(key).AppendLine("]; ok {");
+                    sb.Append(ind).AppendLine("\tvar __s string");
+                    sb.Append(ind).AppendLine("\tif json.Unmarshal(__raw, &__s) == nil && __s != \"\" {");
+                    sb.Append(ind).Append("\t\tI.AppendTo(").Append(itemName).AppendLine(", []*rt.Item{rt.NewItem(rt.EscapeItemIdentity(__s))})");
+                    sb.Append(ind).AppendLine("\t}");
+                    sb.Append(ind).AppendLine("}");
+                    return;
+                case "string[]":
+                    sb.Append(ind).Append("if __raw, ok := __result.Outputs[").Append(key).AppendLine("]; ok {");
+                    sb.Append(ind).AppendLine("\tvar __ss []string");
+                    sb.Append(ind).AppendLine("\tif json.Unmarshal(__raw, &__ss) == nil {");
+                    sb.Append(ind).AppendLine("\t\tfor _, __v := range __ss { if __v != \"\" {");
+                    sb.Append(ind).Append("\t\t\tI.AppendTo(").Append(itemName).AppendLine(", []*rt.Item{rt.NewItem(rt.EscapeItemIdentity(__v))})");
+                    sb.Append(ind).AppendLine("\t\t} }");
+                    sb.Append(ind).AppendLine("\t}");
+                    sb.Append(ind).AppendLine("}");
+                    return;
+            }
+        } else if (output is ProjectTaskOutputPropertyInstance op) {
+            var propName = op.PropertyName.ToLowerInvariant();
+            sb.Append(ind).Append("if __raw, ok := __result.Outputs[").Append(key).AppendLine("]; ok {");
+            switch (pm.PropertyTypeShort) {
+                case "ITaskItem":
+                case "ITaskItem[]":
+                    sb.Append(ind).AppendLine("\tvar __specs []rt.ItemSpec");
+                    sb.Append(ind).AppendLine("\tif json.Unmarshal(__raw, &__specs) == nil {");
+                    sb.Append(ind).AppendLine("\t\tvar __sb strings.Builder");
+                    sb.Append(ind).AppendLine("\t\tfor i, s := range __specs { if i > 0 { __sb.WriteByte(';') }; __sb.WriteString(s.Identity) }");
+                    sb.Append(ind).Append("\t\tP.Set(").Append(GoStringLiteral(propName)).AppendLine(", __sb.String())");
+                    sb.Append(ind).AppendLine("\t}");
+                    break;
+                case "string[]":
+                    sb.Append(ind).AppendLine("\tvar __ss []string");
+                    sb.Append(ind).Append("\tif json.Unmarshal(__raw, &__ss) == nil { P.Set(").Append(GoStringLiteral(propName)).AppendLine(", strings.Join(__ss, \";\")) }");
+                    break;
+                default:
+                    sb.Append(ind).AppendLine("\tvar __s string");
+                    sb.Append(ind).Append("\tif json.Unmarshal(__raw, &__s) == nil { P.Set(").Append(GoStringLiteral(propName)).AppendLine(", __s) }");
+                    break;
+            }
+            sb.Append(ind).AppendLine("}");
+        }
     }
 
     // EmitCallTargetTask emits a `<CallTarget Targets="..." />` task as a
@@ -1069,6 +1614,29 @@ internal static class GoEmitter {
         return IsSimpleIdentifierName(inner) ? inner : null;
     }
 
+    static string? TryGetDynamicItemListTemplate(string? val) {
+        if (string.IsNullOrWhiteSpace(val)) return null;
+        var s = val.Trim();
+        if (s.Length < 6 || s[0] != '@' || s[1] != '(' || s[s.Length - 1] != ')') return null;
+        var inner = s.Substring(2, s.Length - 3).Trim();
+        if (inner.Length < 4 || inner[0] != '%' || inner[1] != '(' || inner[inner.Length - 1] != ')') return null;
+        var end = FindMatchingParenQuoteAware(inner, 1);
+        return end == inner.Length - 1 ? inner : null;
+    }
+
+    static string[]? TryGetItemListCopySources(string? val) {
+        if (string.IsNullOrWhiteSpace(val)) return null;
+        var parts = val.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return null;
+        var sources = new string[parts.Length];
+        for (var i = 0; i < parts.Length; i++) {
+            var src = TryGetSimpleItemListRef(parts[i]);
+            if (src == null) return null;
+            sources[i] = src;
+        }
+        return sources;
+    }
+
     // ClassifyTarget returns null if the target can be emitted with a real
     // body, or a short reason string otherwise.
     static string? ClassifyTarget(ProjectTargetInstance target) {
@@ -1113,7 +1681,15 @@ internal static class GoEmitter {
                         if (jiReason != null) return jiReason;
                         break;
                     }
-                    if (LocalTaskGoFunc(task.Name) == null) return "task:" + task.Name;
+                    if (LocalTaskGoFunc(task.Name) == null) {
+                        // SDK-task dispatch path: when we have UsingTask metadata
+                        // for this task, accept it (subject to parameter/output
+                        // shape) and route it through bsharp-taskd at runtime
+                        // instead of returning "task:Name".
+                        var sdkReason = ClassifyAsSdkTask(task);
+                        if (sdkReason != null && !CanEmitGuardedUnsupportedTask(task)) return sdkReason;
+                        break;
+                    }
                     if (task.Outputs.Count > 0) {
                         // Both item-list and property outputs are wired
                         // through OutputList in the runtime helpers. Reject
@@ -1246,24 +1822,26 @@ internal static class GoEmitter {
             //   3. Fall back to a single qualifier extracted from the
             //      condition or metadata (literal Include with batched
             //      `%(L.M)` references, e.g. AssemblyAttribute / InternalsVisibleTo).
-            string? srcList = null;
-            if (rawInc.Length > 0 && ClassifyItemIncludeSpec(rawInc) == ItemIncludeKind.ItemListCopy) {
+            string[]? srcLists = rawInc.Length > 0 ? TryGetItemListCopySources(rawInc) : null;
+            srcLists ??= rawInc.Length == 0 && rawRem.Length > 0 ? TryGetItemListCopySources(rawRem) : null;
+            string? srcList = srcLists is { Length: 1 } ? srcLists[0] : null;
+            if (srcLists is not { Length: > 1 } && rawInc.Length > 0 && ClassifyItemIncludeSpec(rawInc) == ItemIncludeKind.ItemListCopy) {
                 var trimmed = rawInc.Trim();
                 var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
                 if (IsSimpleIdentifierName(ident)) srcList = ident;
-            } else if (rawInc.Length == 0 && rawRem.Length > 0
+            } else if (srcLists is not { Length: > 1 } && rawInc.Length == 0 && rawRem.Length > 0
                        && ClassifyItemIncludeSpec(rawRem) == ItemIncludeKind.ItemListCopy) {
                 var trimmed = rawRem.Trim();
                 var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
                 if (IsSimpleIdentifierName(ident)) srcList = ident;
-            } else if (rawInc.Length == 0 && rawRem.Length == 0) {
+            } else if (srcLists is not { Length: > 1 } && rawInc.Length == 0 && rawRem.Length == 0) {
                 srcList = item.ItemType;
-            } else if (rawInc.Length > 0) {
+            } else if (srcLists is not { Length: > 1 } && rawInc.Length > 0) {
                 // Transform include `@(SrcList->'tpl')` — SrcList drives the
                 // per-item batched iteration when cond/meta reference `%()`.
                 srcList = TryGetTransformIncludeSrcList(rawInc);
             }
-            if (srcList == null) {
+            if (srcList == null && srcLists is not { Length: > 1 }) {
                 var fromCond = ExtractSingleBatchQualifier(item.Condition ?? "");
                 string? fromMeta = null;
                 foreach (var meta in item.Metadata) {
@@ -1286,11 +1864,12 @@ internal static class GoEmitter {
                 }
                 srcList = picked;
             }
+            if (srcLists == null && srcList != null) srcLists = new[] { srcList };
 
             // Validate item condition. Without a srcList, %()-bearing conditions
             // fall through as ig-complex-item-condition; with one, batched
             // operands are allowed.
-            if (!IsSimpleConditionTemplate(item.Condition, srcList)) return "ig-complex-item-condition";
+            if (!IsSimpleConditionTemplateForSources(item.Condition, srcLists)) return "ig-complex-item-condition";
 
             // Reject advanced item attributes that we don't model.
             if (!string.IsNullOrEmpty(item.Exclude)) {
@@ -1305,13 +1884,24 @@ internal static class GoEmitter {
                 // no-ops don't slip through.
                 if (string.IsNullOrEmpty(item.Include)) return "ig-exclude-without-include";
             }
-            if (!string.IsNullOrEmpty(item.KeepDuplicates)) return "ig-keep-duplicates-not-supported";
-            if (!string.IsNullOrEmpty(item.KeepMetadata)) return "ig-keep-metadata-not-supported";
+            if (!string.IsNullOrEmpty(item.KeepDuplicates)) {
+                if (ContainsBatching(item.KeepDuplicates) || !IsSimpleConditionTemplate(item.KeepDuplicates))
+                    return "ig-keep-duplicates-not-supported";
+            }
+            if (!string.IsNullOrEmpty(item.KeepMetadata)) {
+                if (ContainsBatching(item.KeepMetadata) || !IsSimpleExpressionTemplate(item.KeepMetadata))
+                    return "ig-keep-metadata-not-supported";
+            }
             if (!string.IsNullOrEmpty(item.RemoveMetadata)) return "ig-remove-metadata-not-supported";
-            if (!string.IsNullOrEmpty(item.MatchOnMetadata)) return "ig-match-metadata-not-supported";
 
             var include = item.Include ?? "";
             var remove = item.Remove ?? "";
+            if (!string.IsNullOrEmpty(item.MatchOnMetadata)) {
+                var matchOnMetadata = item.MatchOnMetadata.Trim();
+                if (!IsSimpleIdentifierName(matchOnMetadata)) return "ig-match-metadata-not-supported";
+                if (include.Length > 0 || remove.Length == 0) return "ig-match-metadata-not-supported";
+                if (ClassifyItemIncludeSpec(remove) != ItemIncludeKind.ItemListCopy) return "ig-match-metadata-not-supported";
+            }
             if (include.Length > 0 && remove.Length > 0) return "ig-include-and-remove";
             if (include.Length == 0 && remove.Length == 0) {
                 // <ItemGroup><X><Meta>v</Meta></X></ItemGroup> with no
@@ -1342,9 +1932,14 @@ internal static class GoEmitter {
                     // and let EmitBatchedItemGroupChild route between
                     // ItemListCopy / transform-include / batched-literal
                     // via its own dispatch.
+                    if (srcLists is { Length: > 1 } && TryGetItemListCopySources(include) == null) return "ig-include-complex";
                     if (!specIsBatched) {
                         var includeKind = ClassifyItemIncludeSpec(include);
-                        if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+                        if (includeKind == ItemIncludeKind.Unsupported) {
+                            var dynamicTemplate = TryGetDynamicItemListTemplate(include);
+                            if (dynamicTemplate == null || srcLists == null) return "ig-include-complex";
+                            if (!IsSimpleExpressionTemplateForSources(dynamicTemplate, srcLists)) return "ig-include-complex";
+                        }
                     }
                 } else {
                     // Remove="..." path: any expression that IsSimpleExpression
@@ -1358,13 +1953,12 @@ internal static class GoEmitter {
 
             foreach (var meta in item.Metadata) {
                 if (ContainsBatching(meta.Value)) {
-                    if (srcList == null) return "ig-meta-batching";
-                    if (!IsSimpleExpressionTemplate(meta.Value, srcList)) return "ig-complex-meta-value";
-                    if (!ValidateBatchMetaRefsInString(meta.Value, srcList)) return "ig-meta-batching";
+                    if (srcLists == null) return "ig-meta-batching";
+                    if (!IsSimpleExpressionTemplateForSources(meta.Value, srcLists)) return "ig-complex-meta-value";
                 } else if (!IsSimpleExpressionTemplate(meta.Value)) {
                     return "ig-complex-meta-value";
                 }
-                if (!IsSimpleConditionTemplate(meta.Condition, srcList)) return "ig-complex-meta-condition";
+                if (!IsSimpleConditionTemplateForSources(meta.Condition, srcLists)) return "ig-complex-meta-condition";
                 if (!IsSimpleIdentifierName(meta.Name)) return "ig-complex-meta-name";
             }
         }
@@ -1576,30 +2170,52 @@ internal static class GoEmitter {
         if (rhs.Length > 0 && (rhs[0] == '\'' || rhs[0] == '"')) {
             return IsSimpleTransformRhs(rhs);
         }
-        // Count() — no args.
-        if (string.Equals(rhs, "Count()", StringComparison.OrdinalIgnoreCase)) return true;
-        // AnyHaveMetadataValue('MetaName', 'MetaValue') — two quoted args. The
-        // arg values may contain $() expansions which the runtime expands; we
-        // only validate the surface shape (quote balance + no nested @() /
-        // %() / chained calls).
-        const string anyPrefix = "AnyHaveMetadataValue(";
-        if (rhs.StartsWith(anyPrefix, StringComparison.OrdinalIgnoreCase) && rhs.EndsWith(")", StringComparison.Ordinal)) {
-            var argsSrc = rhs.Substring(anyPrefix.Length, rhs.Length - anyPrefix.Length - 1);
-            if (argsSrc.Contains("@(", StringComparison.Ordinal)) return false;
-            if (argsSrc.Contains("%(", StringComparison.Ordinal)) return false;
-            // The args themselves must be exactly two quoted strings separated
-            // by a comma (with optional whitespace). Anything else is rejected.
-            var argParts = SplitArgsQuoteAware(argsSrc);
-            if (argParts.Length != 2) return false;
-            foreach (var ap in argParts) {
-                var s = ap.Trim();
-                if (s.Length < 2) return false;
-                var q = s[0];
-                if ((q != '\'' && q != '"') || s[s.Length - 1] != q) return false;
+        return IsSimpleItemFunctionChain(rhs);
+    }
+
+    static bool IsSimpleItemFunctionChain(string rhs) {
+        var rest = rhs.Trim();
+        var sawFilter = false;
+        while (rest.Length > 0) {
+            var open = rest.IndexOf('(');
+            if (open <= 0) return false;
+            var fn = rest.Substring(0, open).Trim();
+            if (!IsSimpleIdentifierName(fn)) return false;
+            var close = FindMatchingParenQuoteAware(rest, open);
+            if (close < 0) return false;
+            var argsSrc = rest.Substring(open + 1, close - open - 1);
+            var tail = rest.Substring(close + 1).Trim();
+
+            if (string.Equals(fn, "Count", StringComparison.OrdinalIgnoreCase)) {
+                return argsSrc.Trim().Length == 0 && tail.Length == 0;
             }
-            return true;
+            if (string.Equals(fn, "AnyHaveMetadataValue", StringComparison.OrdinalIgnoreCase)) {
+                return !sawFilter && tail.Length == 0 && AreSimpleQuotedItemFuncArgs(argsSrc, 2);
+            }
+            if (string.Equals(fn, "WithMetadataValue", StringComparison.OrdinalIgnoreCase)) {
+                if (!AreSimpleQuotedItemFuncArgs(argsSrc, 2)) return false;
+                if (!tail.StartsWith("->", StringComparison.Ordinal)) return false;
+                sawFilter = true;
+                rest = tail.Substring(2).TrimStart();
+                continue;
+            }
+            return false;
         }
         return false;
+    }
+
+    static bool AreSimpleQuotedItemFuncArgs(string argsSrc, int expectedCount) {
+        if (argsSrc.Contains("@(", StringComparison.Ordinal)) return false;
+        if (argsSrc.Contains("%(", StringComparison.Ordinal)) return false;
+        var argParts = SplitArgsQuoteAware(argsSrc);
+        if (argParts.Length != expectedCount) return false;
+        foreach (var ap in argParts) {
+            var s = ap.Trim();
+            if (s.Length < 2) return false;
+            var q = s[0];
+            if ((q != '\'' && q != '"') || s[s.Length - 1] != q) return false;
+        }
+        return true;
     }
 
     // IsSimpleTransformRhs validates an item-transform RHS:
@@ -1748,6 +2364,117 @@ internal static class GoEmitter {
     static string? LocalTaskGoFunc(string taskName) =>
         _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;
 
+    // Tasks the codegen prefers to keep as hand-rolled local-task helpers even
+    // when SDK metadata is available. These are intrinsics where the Go
+    // runtime implementation is faster (no IPC + JSON marshal/unmarshal),
+    // simpler to reason about, and bit-faithful to the SDK semantics. Mirrors
+    // Emitter._keepHandrolled.
+    static readonly HashSet<string> _keepHandrolledGo = new(StringComparer.OrdinalIgnoreCase) {
+        "Copy", "Touch", "Delete", "MakeDir", "RemoveDir",
+        "WriteLinesToFile", "ReadLinesFromFile", "FindUnderPath", "ConvertToAbsolutePath",
+        "Message", "Warning", "Error", "AllowEmptyTelemetry",
+        "Exec", "Hash",
+        "CallTarget", "JoinItems",
+    };
+
+    // GetGoTaskMeta resolves a task name against the metadata index supplied
+    // at emit time. Returns null when the task is in the hand-rolled keep set
+    // (use the local helper), when no metadata was loaded, or when the task
+    // isn't registered in any UsingTask. Mirrors Emitter.GetTaskMeta with the
+    // same short-name fallback.
+    static TaskMetadataLoader.TaskMeta? GetGoTaskMeta(string taskName) {
+        if (_taskMetadata == null) return null;
+        if (_keepHandrolledGo.Contains(taskName)) return null;
+        if (_taskMetadata.ByTaskName.TryGetValue(taskName, out var m)) return m;
+        foreach (var kv in _taskMetadata.ByTaskName) {
+            if (ShortTaskName(kv.Key).Equals(taskName, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+        return null;
+    }
+
+    // ShortTaskName strips a namespace prefix off a fully-qualified task name.
+    // The registry keys are sometimes full type names ("Microsoft.Build.Tasks.Csc"),
+    // sometimes short names ("Csc"); the SDK XML uses short names everywhere,
+    // so we register and dispatch under the short form.
+    static string ShortTaskName(string taskName) {
+        var dot = taskName.LastIndexOf('.');
+        return dot < 0 ? taskName : taskName.Substring(dot + 1);
+    }
+
+    // CLR property types the SDK-task emitter knows how to set via typed
+    // request methods. Anything else is rejected with "sdk-task-prop:Type"
+    // so the wrong-not-loud failure surfaces at codegen time rather than as
+    // a silently-dropped parameter at runtime.
+    static bool IsSupportedSdkPropertyType(string clrShort) => clrShort switch {
+        "string" or "bool" or "int" or "int?" or "long" or "long?"
+            or "double" or "double?" or "string[]"
+            or "ITaskItem" or "ITaskItem[]"
+            or "ProjectStyle" => true,
+        _ => false,
+    };
+
+    // ClassifyAsSdkTask validates that an SDK task call can be emitted as a
+    // typed bsharp-taskd invocation. Returns null on success, or a short
+    // reason string ("task:Name", "sdk-task-prop:Type", "sdk-task-output",
+    // "task-batching", "complex-task-condition", "complex-task-param:Name.Prop")
+    // when the call should fall back to the existing stub-with-reason path.
+    static string? ClassifyAsSdkTask(ProjectTaskInstance task) {
+        var meta = GetGoTaskMeta(task.Name);
+        if (meta == null) return "task:" + task.Name;
+
+        // Build property lookup for parameter validation.
+        var propMap = new Dictionary<string, TaskMetadataLoader.PropertyMeta>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in meta.Properties) propMap[p.Name] = p;
+
+        // Task-level batching: same rules as local tasks. SDK tasks can also
+        // bind outputs per iteration; the emitter appends item outputs from
+        // each invocation and overwrites property outputs with the last batch.
+        var taskSrcList = ComputeTaskBatchSrcList(task);
+        var hasBatching = taskSrcList != null
+            || ContainsBatching(task.Condition)
+            || task.Parameters.Any(p => ContainsBatching(p.Value));
+        if (hasBatching && taskSrcList == null) return "task-batching";
+        if (!IsSimpleConditionTemplate(task.Condition, taskSrcList)) return "complex-task-condition";
+
+        foreach (var p in task.Parameters) {
+            // Unknown parameter names are tolerated (matches C# emitter behavior).
+            if (!propMap.TryGetValue(p.Key, out var pm)) continue;
+            if (!pm.CanWrite) continue;
+            if (!IsSupportedSdkPropertyType(pm.PropertyTypeShort))
+                return "sdk-task-prop:" + pm.PropertyTypeShort;
+            // String-shaped parameters (string/bool/int/long/double/string[])
+            // expand via MustExpand → SDK does its own type coercion.
+            // ITaskItem/ITaskItem[] need either a direct @(SimpleIdent) ref or
+            // a simple-expression value that we coerce via SpecsFromScalar.
+            if (!IsSimpleExpressionTemplate(p.Value, taskSrcList))
+                return "complex-task-param:" + task.Name + "." + p.Key;
+        }
+
+        // Outputs: only bind to simple identifier targets (so emitted Go is
+        // a single I.AppendTo / property assignment).
+        foreach (var o in task.Outputs) {
+            switch (o) {
+                case ProjectTaskOutputItemInstance oi:
+                    if (!IsSimpleIdentifierName(oi.ItemType)) return "sdk-task-output-itemtype";
+                    if (!propMap.TryGetValue(oi.TaskParameter, out var oim)) continue;
+                    if (!IsSupportedSdkPropertyType(oim.PropertyTypeShort))
+                        return "sdk-task-output-prop:" + oim.PropertyTypeShort;
+                    break;
+                case ProjectTaskOutputPropertyInstance op:
+                    if (!IsSimpleIdentifierName(op.PropertyName)) return "sdk-task-output-propname";
+                    if (!propMap.TryGetValue(op.TaskParameter, out var opm)) continue;
+                    if (!IsSupportedSdkPropertyType(opm.PropertyTypeShort))
+                        return "sdk-task-output-prop:" + opm.PropertyTypeShort;
+                    break;
+                default:
+                    return "sdk-task-output-unknown";
+            }
+        }
+
+        return null;
+    }
+
     // TaskNeedsItemBag returns true for tasks whose Go signature has the
     // shape (ParamList, *OutputList, ItemBag, PropertyBag). The emitter
     // appends ", outputs, I, P" to the call site for these. Tasks NOT in
@@ -1807,6 +2534,13 @@ internal static class GoEmitter {
         return true;
     }
 
+    static bool IsSimpleExpressionTemplateForSources(string? template, string[]? allowedSources) {
+        if (allowedSources is not { Length: > 0 }) return IsSimpleExpressionTemplate(template);
+        if (allowedSources.Length == 1) return IsSimpleExpressionTemplate(template, allowedSources[0]);
+        var normalized = NormalizeAllowedBatchQualifiers(template ?? "", allowedSources);
+        return IsSimpleExpressionTemplate(normalized, allowedSources[0]);
+    }
+
     // IsSimpleExpressionInner accepts either a Phase A/B property expression
     // (bare identifier or whitelisted method chain on a property) OR a Phase G
     // [TypeName]::Member(args?) call with supported type+member + simple args.
@@ -1818,6 +2552,9 @@ internal static class GoEmitter {
         var trimmed = inner.Trim();
         if (trimmed.Length > 0 && trimmed[0] == '[') {
             return IsSimpleIntrinsicCall(trimmed, allowedQualifier);
+        }
+        if (allowedQualifier != null && inner.Contains("%(", StringComparison.Ordinal)) {
+            return IsSimpleExpressionTemplate(inner, allowedQualifier);
         }
         // Anything else containing `[` or `:` past the leading char is an
         // unsupported intrinsic or indexer construct we haven't modelled.
@@ -1885,12 +2622,14 @@ internal static class GoEmitter {
                 new() { Name = "IsOsPlatform", RequiresArgs = true },
                 new() { Name = "ValueOrDefault", RequiresArgs = true },
                 new() { Name = "Escape", RequiresArgs = true },
+                new() { Name = "Unescape", RequiresArgs = true },
                 new() { Name = "EnsureTrailingSlash", RequiresArgs = true },
                 new() { Name = "MakeRelative", RequiresArgs = true },
                 new() { Name = "NormalizePath", RequiresArgs = true },
                 new() { Name = "NormalizeDirectory", RequiresArgs = true },
                 new() { Name = "DoesTaskHostExist", RequiresArgs = true },
                 new() { Name = "IsTargetFrameworkCompatible", RequiresArgs = true },
+                new() { Name = "AreFeaturesEnabled", RequiresArgs = true },
             },
             ["System.IO.Path"] = new IntrinsicMember[] {
                 new() { Name = "Combine", RequiresArgs = true },
@@ -2095,6 +2834,7 @@ internal static class GoEmitter {
             case "startswith":
             case "endswith":
             case "contains":
+            case "equals":
             case "indexof":
                 return hasArgs && argCount == 1;
             case "split":
@@ -2198,7 +2938,7 @@ internal static class GoEmitter {
         // Fast-reject `%()` when batching is not allowed — silent expansion
         // to "" would be wrong-not-loud. Batched callers pass an allowed
         // qualifier and validate each %()-ref explicitly below.
-        if (allowedQualifier == null && condition!.Contains("%(", StringComparison.Ordinal)) return false;
+        if (allowedQualifier == null && ContainsBatching(condition)) return false;
         if (!ValidateAllDollarExpansions(condition!, allowedQualifier)) return false;
         // Walk top-level constructs: $(...) must be a simple property expression
         // (Phase A or B form); bare identifiers must be And/Or/Not/True/False or
@@ -2316,6 +3056,13 @@ internal static class GoEmitter {
         return quote == '\0';
     }
 
+    static bool IsSimpleConditionTemplateForSources(string? condition, string[]? allowedSources) {
+        if (allowedSources is not { Length: > 0 }) return IsSimpleConditionTemplate(condition);
+        if (allowedSources.Length == 1) return IsSimpleConditionTemplate(condition, allowedSources[0]);
+        var normalized = NormalizeAllowedBatchQualifiers(condition ?? "", allowedSources);
+        return IsSimpleConditionTemplate(normalized, allowedSources[0]);
+    }
+
     // ValidateAllDollarExpansions walks `s` (which may be a condition,
     // expression template, or quoted operand) and returns true iff every
     // `$(...)` / `@(...)` / `%(...)` occurrence — regardless of whether it
@@ -2376,6 +3123,37 @@ internal static class GoEmitter {
         var meta = s.Substring(dot + 1).Trim();
         if (!IsSimpleIdentifierName(qual) || !IsSimpleIdentifierName(meta)) return false;
         return string.Equals(qual, allowedQualifier, StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string NormalizeAllowedBatchQualifiers(string s, string[] allowedQualifiers) {
+        if (string.IsNullOrEmpty(s) || allowedQualifiers.Length == 0) return s;
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++) {
+            if (s[i] == '%' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) {
+                    sb.Append(s[i]);
+                    continue;
+                }
+                var inner = s.Substring(i + 2, end - i - 2).Trim();
+                var dot = inner.IndexOf('.');
+                if (dot > 0) {
+                    var qual = inner.Substring(0, dot).Trim();
+                    var meta = inner.Substring(dot + 1).Trim();
+                    if (IsSimpleIdentifierName(meta)
+                        && allowedQualifiers.Any(a => string.Equals(a, qual, StringComparison.OrdinalIgnoreCase))) {
+                        sb.Append("%(").Append(meta).Append(')');
+                        i = end;
+                        continue;
+                    }
+                }
+                sb.Append(s, i, end - i + 1);
+                i = end;
+                continue;
+            }
+            sb.Append(s[i]);
+        }
+        return sb.ToString();
     }
 
     // ValidateBatchMetaRefsInString walks `s` looking for `%(...)` chunks
@@ -2538,6 +3316,55 @@ internal static class GoEmitter {
         return (true, null);
     }
 
+    static void EmitTaskRegistry(StringBuilder sb, ProjectInstance instance) {
+        sb.AppendLine("// initTasks wires the bsharp-taskd connection used by all SDK-task dispatch");
+        sb.AppendLine("// sites and registers every task referenced by a UsingTask in this project.");
+        sb.AppendLine("// Local hand-rolled tasks (Message/Copy/...) bypass this path entirely.");
+        sb.AppendLine("func initTasks() {");
+        if (_taskMetadata == null || _taskMetadata.ByTaskName.Count == 0) {
+            sb.AppendLine("\t// no UsingTask metadata baked in; SDK dispatch will fail loudly when invoked");
+            sb.AppendLine("\treturn");
+        } else {
+            sb.AppendLine("\tcwd, _ := os.Getwd()");
+            sb.Append("\tTasks = rt.NewTaskRunner(").Append(GoStringLiteral(_sdkFingerprint)).AppendLine(")");
+            sb.AppendLine("\tTasks.Init(os.Getenv(\"BSHARP_TASKD_PATH\"), cwd)");
+            // Pre-compute which tasks are actually invoked from any target body so
+            // we don't bloat the registry with unused UsingTask entries.
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in instance.Targets.Values) {
+                foreach (var c in t.Children) {
+                    if (c is ProjectTaskInstance ti) used.Add(ti.Name);
+                }
+            }
+            // Output names per task: union of all <Output TaskParameter="..."/> values
+            // and all metadata-declared OutputProperties (covers SDK tasks that bind
+            // outputs purely through the daemon's response surface).
+            foreach (var kv in _taskMetadata.ByTaskName.OrderBy(k => k.Key, StringComparer.Ordinal)) {
+                var meta = kv.Value;
+                var shortName = ShortTaskName(kv.Key);
+                if (!used.Contains(shortName) && !used.Contains(kv.Key)) continue;
+                if (LocalTaskGoFunc(shortName) != null) continue; // local helper handles it
+                if (_keepHandrolledGo.Contains(shortName)) continue;
+                var outputs = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var op in meta.OutputProperties) outputs.Add(op.Name);
+                sb.Append("\tTasks.Register(")
+                  .Append(GoStringLiteral(shortName)).Append(", ")
+                  .Append(GoStringLiteral(meta.FullTypeName ?? "")).Append(", ")
+                  .Append(GoStringLiteral(meta.AssemblyPath ?? "")).Append(", ")
+                  .Append("[]string{");
+                var first = true;
+                foreach (var o in outputs) {
+                    if (!first) sb.Append(", ");
+                    first = false;
+                    sb.Append(GoStringLiteral(o));
+                }
+                sb.AppendLine("})");
+            }
+        }
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
     static void EmitMain(StringBuilder sb, ProjectInstance instance, IReadOnlyList<string>? requestedTargets) {
         var defaultEntry = requestedTargets is { Count: > 0 } ? requestedTargets[0] : (instance.DefaultTargets.FirstOrDefault() ?? "Build");
         var projectDir = instance.Directory ?? Path.GetDirectoryName(instance.FullPath) ?? ".";
@@ -2548,6 +3375,8 @@ internal static class GoEmitter {
         sb.AppendLine("\t\tfmt.Fprintf(os.Stderr, \"bsharp-go-host: chdir(%q) failed: %v\\n\", rt.ProjectDir, err)");
         sb.AppendLine("\t\tos.Exit(2)");
         sb.AppendLine("\t}");
+        sb.AppendLine("\tinitTasks()");
+        sb.AppendLine("\tif Tasks != nil { defer Tasks.Close() }");
         sb.AppendLine("\tentry := " + GoStringLiteral(defaultEntry));
         sb.AppendLine("\tif len(os.Args) > 1 { entry = os.Args[1] }");
         sb.AppendLine("\tif !dispatchTarget(entry) {");
@@ -2560,8 +3389,9 @@ internal static class GoEmitter {
         sb.AppendLine("\t}");
         sb.AppendLine("}");
         sb.AppendLine();
-        sb.AppendLine("// Reference \"strings\" to keep the import alive when no helper uses it.");
+        sb.AppendLine("// Reference \"strings\", \"json\" to keep imports alive when no helper uses them.");
         sb.AppendLine("var _ = strings.ToLower");
+        sb.AppendLine("var _ = json.Unmarshal");
     }
 
     static string BuildGoMod(string runtimeReplacePath) {

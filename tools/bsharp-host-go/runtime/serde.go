@@ -95,6 +95,10 @@ func SpecsFromScalar(semicolonList string) []ItemSpec {
 	return out
 }
 
+func EscapeItemIdentity(value string) string {
+	return strings.ReplaceAll(value, ";", "%3B")
+}
+
 // ItemsFromSpecs builds a deduplicated []*Item from a slice of ItemSpecs.
 // Deduplication is by (identity, sorted metadata) — matches MSBuild item
 // equality semantics.

@@ -125,6 +125,17 @@ func Delete(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) 
 func Copy(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	src := SplitSemicolon(p.GetValueOrDefault("SourceFiles"))
 	dst := SplitSemicolon(p.GetValueOrDefault("DestinationFiles"))
+	if len(dst) == 0 {
+		if folder := p.GetValueOrDefault("DestinationFolder"); folder != "" {
+			dst = make([]string, 0, len(src))
+			for _, s := range src {
+				if s == "" {
+					continue
+				}
+				dst = append(dst, filepath.Join(folder, filepath.Base(s)))
+			}
+		}
+	}
 	skipUnchanged := strings.EqualFold(p.GetValueOrDefault("SkipUnchangedFiles"), "true")
 	var copied []*Item
 	for i, s := range src {

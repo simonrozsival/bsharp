@@ -90,7 +90,12 @@ static class Codegen {
         var project = pc.LoadProject(fullPath);
         var instance = project.CreateProjectInstance();
         var absRuntime = Path.GetFullPath(runtimeReplacePath);
-        return GoEmitter.Emit(instance, outDir, requestedTargets, globalProps, absRuntime);
+        // Load UsingTask registry + metadata so the emitter can dispatch SDK tasks
+        // through bsharp-taskd instead of always falling through to local-task
+        // panics. Mirrors the C# host emission path (RunInner).
+        var taskRegistry = UsingTaskRegistry.Build(instance, project);
+        var taskMetadata = TaskMetadataLoader.Load(taskRegistry);
+        return GoEmitter.Emit(instance, outDir, requestedTargets, globalProps, absRuntime, taskMetadata);
     }
 
     public static int EmitGoReplay(string tracePath, string outDir, string sdkFingerprint) {
@@ -1490,6 +1495,26 @@ static class UsingTaskRegistry {
         foreach (var imp in project.Imports)
             if (imp.ImportedProject != null) sources.Add(imp.ImportedProject);
 
+        // Microsoft.Common.tasks is loaded implicitly by MSBuild from the toolset
+        // (no <Import/>), so it's never in `project.Imports`. Add it explicitly so the
+        // ~80 Microsoft.Build.Tasks.* intrinsics (AssignLinkMetadata, AssignCulture,
+        // AssignTargetPath, FindAppConfigFile, ...) get registered with proper
+        // AssemblyName resolution.
+        var toolsPath = instance.GetPropertyValue("MSBuildToolsPath");
+        if (!string.IsNullOrEmpty(toolsPath)) {
+            foreach (var tasksFile in new[] { "Microsoft.Common.tasks", "Microsoft.Common.CurrentVersion.tasks" }) {
+                var fullPath = Path.Combine(toolsPath, tasksFile);
+                if (File.Exists(fullPath)) {
+                    try {
+                        var pre = ProjectRootElement.Open(fullPath);
+                        if (pre != null && !sources.Any(s => string.Equals(s.FullPath, fullPath, StringComparison.OrdinalIgnoreCase))) {
+                            sources.Add(pre);
+                        }
+                    } catch { /* best effort */ }
+                }
+            }
+        }
+
         // Step 1: register MSBuild's built-in intrinsic tasks. MSBuild knows these by name
         // without any <UsingTask> declaration; we synthesize fake entries here so the
         // codegen typed-task path picks them up automatically. Microsoft.Build.Tasks.Core.dll
@@ -1546,8 +1571,20 @@ static class UsingTaskRegistry {
                         notes = $"AssemblyFile path does not exist after expansion: '{expanded}'";
                     }
                 } else if (!string.IsNullOrEmpty(ut.AssemblyName)) {
-                    status = "unresolved";
-                    notes = $"AssemblyName='{ut.AssemblyName}' (no AssemblyFile) — unsupported in v1";
+                    // AssemblyName-only resolution: AssemblyName loading from the GAC isn't
+                    // supported in v1. As a targeted unlock for SDK-task dispatch, accept
+                    // entries that name `Microsoft.Build.Tasks.Core` and route them at the
+                    // intrinsics DLL on disk. Without this, ~70 Microsoft.Build.Tasks.*
+                    // intrinsics (AssignLinkMetadata, AssignProjectConfiguration, ...) would
+                    // bypass the typed-dispatch path entirely.
+                    var asmFirst = ut.AssemblyName.Split(',')[0].Trim();
+                    if (string.Equals(asmFirst, "Microsoft.Build.Tasks.Core", StringComparison.OrdinalIgnoreCase)
+                        && TryResolveOnSearchPath(instance, "Microsoft.Build.Tasks.Core.dll") is string corePath) {
+                        resolvedPath = corePath;
+                    } else {
+                        status = "unresolved";
+                        notes = $"AssemblyName='{ut.AssemblyName}' (no AssemblyFile) — unsupported in v1";
+                    }
                 } else {
                     status = "unresolved";
                     notes = "no AssemblyFile or AssemblyName specified";
@@ -6084,7 +6121,9 @@ static partial class Tasks {
         var realTaskMeta = task.Name != "CallTarget" && !ForceLocalTaskImplementation(task.Name)
             ? GetTaskMeta(task.Name)
             : null;
-        var batchPlan = realTaskMeta is null ? CreateTaskBatchPlan(strs) : null;
+        var batchPlan = realTaskMeta is null || ShouldUseGroupedTaskBatching(task)
+            ? CreateTaskBatchPlan(strs)
+            : null;
         var itemAccessOverrides = default(Dictionary<string, string>);
         string? batch = batchPlan?.PrimaryItemType;
         if (batchPlan != null) {
@@ -6302,7 +6341,9 @@ static partial class Tasks {
             var direct = TryParseDirectItemRef(rawValue);
             if ((pm.PropertyTypeShort == "ITaskItem" || pm.PropertyTypeShort == "ITaskItem[]") && direct != null) {
                 typeName = "List<Item>";
-                valueExpr = ItemAccess(direct);
+                valueExpr = itemAccessOverrides != null && itemAccessOverrides.TryGetValue(direct, out var overrideExpr)
+                    ? overrideExpr
+                    : ItemAccess(direct);
             }
             // Most generated task arguments are just expressions over global generated state
             // (`P.X`, `I.Y`, literals, and LINQ over item lists), so the helper can read them
@@ -6334,7 +6375,8 @@ static partial class Tasks {
 
     static bool ValueExprUsesCurrentBatchItem(string valueExpr) =>
         valueExpr.Contains("batchItem.GetMetadata(", StringComparison.Ordinal)
-        || valueExpr.Contains("batchItem.HasMetadata(", StringComparison.Ordinal);
+        || valueExpr.Contains("batchItem.HasMetadata(", StringComparison.Ordinal)
+        || valueExpr.Contains("__batchItems_", StringComparison.Ordinal);
 
     static string RegisterGeneratedTaskHelper(string logName, string shortName, List<GeneratedTaskArg> args) {
         var helperName = $"{SanitizeIdent(shortName)}_{++_generatedTaskHelperCounter:D3}";
@@ -6685,6 +6727,13 @@ static partial class Tasks {
     }
 
     sealed record TaskBatchPlan(string MetadataName, string PrimaryItemType, IReadOnlyList<string> SourceItemTypes, IReadOnlyList<string> ReferencedItemTypes);
+
+    static bool ShouldUseGroupedTaskBatching(ProjectTaskInstance task) {
+        if (task.Outputs.Count == 0) return false;
+        if (!EnumerateMetadataRefs(task.Condition).Any()
+            && !task.Parameters.Any(p => EnumerateMetadataRefs(p.Value).Any())) return false;
+        return string.Equals(task.Name, "CreateItem", StringComparison.OrdinalIgnoreCase);
+    }
 
     static TaskBatchPlan? CreateTaskBatchPlan(IEnumerable<string?> exprs) {
         var values = exprs.Where(e => !string.IsNullOrEmpty(e)).ToArray();

@@ -93,7 +93,7 @@ internal static class GeneratedCodeExtensions
             "dotnet",
             runArguments,
             generated.OutputDirectory,
-            BsharpTestEnvironment.DotnetEnvironment,
+            BsharpTestEnvironment.DotnetEnvironmentWithTaskDaemon(),
             BsharpTestEnvironment.CommandTimeout);
     }
 }
