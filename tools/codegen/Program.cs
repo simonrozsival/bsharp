@@ -11,7 +11,18 @@ if (args.Length < 2) {
     Console.Error.WriteLine("usage: codegen --project <csproj> --out-dir <dir> [--entry Build] [--targets X;Y] [-p Name=Value ...]");
     Console.Error.WriteLine("       codegen --audit --project <csproj> [-p Name=Value ...]");
     Console.Error.WriteLine("       codegen --emit-go-replay --trace <jsonl> --out-dir <dir> [--sdk-fingerprint <fp>]");
+    Console.Error.WriteLine("       codegen --emit-go --project <csproj> --out-dir <dir> --runtime <abs path to tools/bsharp-host-go> [-p Name=Value ...]");
     return 1;
+}
+if (args.Contains("--emit-go", StringComparer.OrdinalIgnoreCase)) {
+    var goProject = ArgValue(args, "--project");
+    var goOutDir = ArgValue(args, "--out-dir") ?? ArgValue(args, "--out");
+    var goRuntime = ArgValue(args, "--runtime");
+    if (goProject == null || goOutDir == null || goRuntime == null) {
+        Console.Error.WriteLine("usage: codegen --emit-go --project <csproj> --out-dir <dir> --runtime <abs path to tools/bsharp-host-go> [-p Name=Value ...]");
+        return 1;
+    }
+    return Codegen.EmitGo(goProject, goOutDir, goRuntime, Codegen.SplitTargetList(ArgValue(args, "--targets") ?? ArgValue(args, "--entry")), CollectRepeated(args, "-p"));
 }
 if (args.Contains("--emit-go-replay", StringComparer.OrdinalIgnoreCase)) {
     var goTrace = ArgValue(args, "--trace");
@@ -66,6 +77,20 @@ static class Codegen {
     public static int Audit(string projectPath, Dictionary<string, string> globalProps) {
         MSBuildLocator.RegisterDefaults();
         return AuditInner(projectPath, globalProps);
+    }
+
+    public static int EmitGo(string projectPath, string outDir, string runtimeReplacePath, IReadOnlyList<string>? requestedTargets, Dictionary<string, string> globalProps) {
+        MSBuildLocator.RegisterDefaults();
+        return EmitGoInner(projectPath, outDir, runtimeReplacePath, requestedTargets, globalProps);
+    }
+
+    static int EmitGoInner(string projectPath, string outDir, string runtimeReplacePath, IReadOnlyList<string>? requestedTargets, Dictionary<string, string> globalProps) {
+        var pc = new ProjectCollection(globalProps);
+        var fullPath = Path.GetFullPath(projectPath);
+        var project = pc.LoadProject(fullPath);
+        var instance = project.CreateProjectInstance();
+        var absRuntime = Path.GetFullPath(runtimeReplacePath);
+        return GoEmitter.Emit(instance, outDir, requestedTargets, globalProps, absRuntime);
     }
 
     public static int EmitGoReplay(string tracePath, string outDir, string sdkFingerprint) {
