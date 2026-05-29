@@ -24,24 +24,32 @@ import (
 // shape. The classifier mirrors this whitelist; new intrinsics must be added
 // in both places.
 func EvalIntrinsic(typeName, member, argsStr string, hasArgs bool, p PropertyBag) (string, bool) {
+	return EvalIntrinsicWithMeta(typeName, member, argsStr, hasArgs, p, nil)
+}
+
+// EvalIntrinsicWithMeta is the batch-aware variant. `meta` provides the
+// per-source-item metadata bag so %(...) references inside intrinsic args
+// can expand against it. When meta is nil, %(...) refs fail loudly via
+// Expand.
+func EvalIntrinsicWithMeta(typeName, member, argsStr string, hasArgs bool, p PropertyBag, meta map[string]string) (string, bool) {
 	switch strings.ToLower(typeName) {
 	case "msbuild":
 		if !hasArgs {
 			return "", false
 		}
-		return msbuildIntrinsic(member, argsStr, p)
+		return msbuildIntrinsic(member, argsStr, p, meta)
 	case "system.io.path":
-		return pathIntrinsic(member, argsStr, hasArgs, p)
+		return pathIntrinsic(member, argsStr, hasArgs, p, meta)
 	case "system.text.regularexpressions.regex":
 		if !hasArgs {
 			return "", false
 		}
-		return regexIntrinsic(member, argsStr, p)
+		return regexIntrinsic(member, argsStr, p, meta)
 	case "system.guid":
 		if !hasArgs {
 			return "", false
 		}
-		return guidIntrinsic(member, argsStr, p)
+		return guidIntrinsic(member, argsStr, p, meta)
 	}
 	return "", false
 }
@@ -49,11 +57,11 @@ func EvalIntrinsic(typeName, member, argsStr string, hasArgs bool, p PropertyBag
 // EvalMSBuildIntrinsic preserves the older API for tests; new callers should
 // use EvalIntrinsic.
 func EvalMSBuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
-	return msbuildIntrinsic(name, argsStr, p)
+	return msbuildIntrinsic(name, argsStr, p, nil)
 }
 
-func msbuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
-	args, ok := splitIntrinsicArgs(argsStr, p)
+func msbuildIntrinsic(name, argsStr string, p PropertyBag, meta map[string]string) (string, bool) {
+	args, ok := splitIntrinsicArgs(argsStr, p, meta)
 	if !ok {
 		return "", false
 	}
@@ -227,7 +235,7 @@ func normalizePathJoin(args []string, dir bool) string {
 }
 
 // pathIntrinsic handles [System.IO.Path]::* members.
-func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, bool) {
+func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag, meta map[string]string) (string, bool) {
 	lower := strings.ToLower(name)
 	// "Parameterless" intrinsics may be invoked as `Name` (no parens) or
 	// as `Name()` (empty parens). Route both shapes through the same
@@ -267,7 +275,7 @@ func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, b
 		// dispatch below will reject with len(args) != N for any required-arg
 		// member, which is the correct loud-failure.
 	}
-	args, ok := splitIntrinsicArgs(argsStr, p)
+	args, ok := splitIntrinsicArgs(argsStr, p, meta)
 	if !ok {
 		return "", false
 	}
@@ -457,7 +465,7 @@ func msbuildEscape(s string) string {
 // constructs surfaced via Expand. This is a SEPARATE resolver from
 // resolveFunctionArg (which is intentionally stricter for property method
 // chains).
-func splitIntrinsicArgs(s string, p PropertyBag) ([]string, bool) {
+func splitIntrinsicArgs(s string, p PropertyBag, meta map[string]string) ([]string, bool) {
 	if strings.TrimSpace(s) == "" {
 		return nil, true
 	}
@@ -493,7 +501,7 @@ func splitIntrinsicArgs(s string, p PropertyBag) ([]string, bool) {
 	rawParts = append(rawParts, s[start:])
 	out := make([]string, 0, len(rawParts))
 	for _, raw := range rawParts {
-		v, ok := resolveIntrinsicArg(strings.TrimSpace(raw), p)
+		v, ok := resolveIntrinsicArg(strings.TrimSpace(raw), p, meta)
 		if !ok {
 			return nil, false
 		}
@@ -502,14 +510,14 @@ func splitIntrinsicArgs(s string, p PropertyBag) ([]string, bool) {
 	return out, true
 }
 
-func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
+func resolveIntrinsicArg(arg string, p PropertyBag, meta map[string]string) (string, bool) {
 	if arg == "" {
 		return "", true
 	}
 	// Accept backtick quoting (MSBuild allows it for callsite quoting).
 	if (arg[0] == '\'' || arg[0] == '"' || arg[0] == '`') && len(arg) >= 2 && arg[len(arg)-1] == arg[0] {
 		inner := arg[1 : len(arg)-1]
-		expanded, ok := Expand(inner, p, emptyItemBag{}, nil)
+		expanded, ok := Expand(inner, p, emptyItemBag{}, meta)
 		if !ok {
 			return "", false
 		}
@@ -519,7 +527,7 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 	// text (e.g. `$(_RuntimeSymbolsDir)\$(CrossgenSubOutputPath)`). Expand
 	// against the property bag — Expand handles plain literals correctly.
 	if strings.ContainsAny(arg, "$@%") {
-		expanded, ok := Expand(arg, p, emptyItemBag{}, nil)
+		expanded, ok := Expand(arg, p, emptyItemBag{}, meta)
 		if !ok {
 			return "", false
 		}
@@ -537,7 +545,7 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 //     (unsupported name, malformed args, etc.); caller should propagate
 //     unsupported upward
 //   - handled=true, ok=true → value is the resolved intrinsic result
-func tryEvalIntrinsic(inner string, p PropertyBag) (string, bool, bool) {
+func tryEvalIntrinsic(inner string, p PropertyBag, meta map[string]string) (string, bool, bool) {
 	trimmed := strings.TrimSpace(inner)
 	if len(trimmed) < 2 || trimmed[0] != '[' {
 		return "", false, false
@@ -586,7 +594,7 @@ func tryEvalIntrinsic(inner string, p PropertyBag) (string, bool, bool) {
 		// unsupported.
 		return "", false, true
 	}
-	value, ok := EvalIntrinsic(typeName, member, argsStr, hasArgs, p)
+	value, ok := EvalIntrinsicWithMeta(typeName, member, argsStr, hasArgs, p, meta)
 	return value, ok, true
 }
 
@@ -633,8 +641,8 @@ func compileRegex(pattern string) (*regexp.Regexp, bool) {
 //	  patterns; complex .NET-specific syntax is rejected via compile failure.
 //	IsMatch(input, pattern) — returns "True"/"False" depending on whether
 //	  pattern matches anywhere in input.
-func regexIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
-	args, ok := splitIntrinsicArgs(argsStr, p)
+func regexIntrinsic(name, argsStr string, p PropertyBag, meta map[string]string) (string, bool) {
+	args, ok := splitIntrinsicArgs(argsStr, p, meta)
 	if !ok {
 		return "", false
 	}
@@ -683,7 +691,7 @@ func regexIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 // is supported -- the SDK calls it to mint a unique identity for an ad-hoc
 // item in a few _RestoreGraphEntry-style ItemGroups. Returns a lowercase
 // hyphenated UUID string matching .NET's Guid.NewGuid().ToString() format.
-func guidIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
+func guidIntrinsic(name, argsStr string, p PropertyBag, meta map[string]string) (string, bool) {
 	switch strings.ToLower(name) {
 	case "newguid":
 		if strings.TrimSpace(argsStr) != "" {

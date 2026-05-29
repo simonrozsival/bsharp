@@ -44,7 +44,7 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 				return sb.String(), false
 			}
 			inner := template[j+2 : end]
-			if value, ok, handled := tryEvalIntrinsic(inner, p); handled {
+			if value, ok, handled := tryEvalIntrinsic(inner, p, batchMeta); handled {
 				if !ok {
 					return sb.String(), false
 				}
@@ -729,7 +729,7 @@ func resolveFunctionArg(arg string, p PropertyBag) (string, bool) {
 		}
 		// `[TypeName]::Member(args)` intrinsic call wrapped in $(...).
 		if len(inner) > 0 && inner[0] == '[' {
-			if v, ok, handled := tryEvalIntrinsic(inner, p); handled {
+			if v, ok, handled := tryEvalIntrinsic(inner, p, nil); handled {
 				return v, ok
 			}
 			return "", false

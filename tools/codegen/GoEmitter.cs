@@ -1091,7 +1091,7 @@ internal static class GoEmitter {
             foreach (var meta in item.Metadata) {
                 if (ContainsBatching(meta.Value)) {
                     if (srcList == null) return "ig-meta-batching";
-                    if (!IsSimpleExpressionTemplate(meta.Value)) return "ig-complex-meta-value";
+                    if (!IsSimpleExpressionTemplate(meta.Value, srcList)) return "ig-complex-meta-value";
                     if (!ValidateBatchMetaRefsInString(meta.Value, srcList)) return "ig-meta-batching";
                 } else if (!IsSimpleExpressionTemplate(meta.Value)) {
                     return "ig-complex-meta-value";
@@ -1506,7 +1506,16 @@ internal static class GoEmitter {
     // $(X.Method(args)) chains with whitelisted methods and simple args,
     // $([MSBuild]::F(args)) supported intrinsics, @(Y) (no transforms),
     // and %(Z).
-    static bool IsSimpleExpressionTemplate(string? template) {
+    static bool IsSimpleExpressionTemplate(string? template) =>
+        IsSimpleExpressionTemplate(template, allowedQualifier: null);
+
+    // IsSimpleExpressionTemplate validates a value-context template (Include,
+    // Exclude, metadata value, task parameter value, property value). When
+    // `allowedQualifier` is non-null, `%(qualifier.M)` and `%(M)` references
+    // are accepted both at the top level and inside intrinsic args, because
+    // the emitter has classified this template as part of a batched per-item
+    // iteration where a metadata bag is available at runtime.
+    static bool IsSimpleExpressionTemplate(string? template, string? allowedQualifier) {
         if (string.IsNullOrEmpty(template)) return true;
         for (int i = 0; i < template.Length; i++) {
             var c = template[i];
@@ -1516,9 +1525,12 @@ internal static class GoEmitter {
                 if (end < 0) return false;
                 var inner = template.Substring(i + 2, end - i - 2);
                 if (c == '$') {
-                    if (!IsSimpleExpressionInner(inner)) return false;
+                    if (!IsSimpleExpressionInner(inner, allowedQualifier)) return false;
                 } else if (c == '@') {
                     if (!IsSimpleItemRefInner(inner)) return false;
+                } else { // '%'
+                    if (allowedQualifier == null) return false;
+                    if (!IsValidBatchMetaRef(inner, allowedQualifier)) return false;
                 }
                 i = end;
             }
@@ -1530,10 +1542,13 @@ internal static class GoEmitter {
     // (bare identifier or whitelisted method chain on a property) OR a Phase G
     // [TypeName]::Member(args?) call with supported type+member + simple args.
     // Mirrors what the Go runtime's Expand evaluator accepts inside `$(...)`.
-    static bool IsSimpleExpressionInner(string inner) {
+    static bool IsSimpleExpressionInner(string inner) =>
+        IsSimpleExpressionInner(inner, allowedQualifier: null);
+
+    static bool IsSimpleExpressionInner(string inner, string? allowedQualifier) {
         var trimmed = inner.Trim();
         if (trimmed.Length > 0 && trimmed[0] == '[') {
-            return IsSimpleIntrinsicCall(trimmed);
+            return IsSimpleIntrinsicCall(trimmed, allowedQualifier);
         }
         // Anything else containing `[` or `:` past the leading char is an
         // unsupported intrinsic or indexer construct we haven't modelled.
@@ -1541,11 +1556,17 @@ internal static class GoEmitter {
         return IsSimplePropertyExpression(inner);
     }
 
+    static bool IsSimpleIntrinsicCall(string s) =>
+        IsSimpleIntrinsicCall(s, allowedQualifier: null);
+
     // IsSimpleIntrinsicCall validates the shape `[TypeName]::Member(args?)`.
     // Type+member must appear in IntrinsicMembers (mirrors the runtime
     // dispatch in EvalIntrinsic). Member may be parameterless (static
     // property like `[System.IO.Path]::DirectorySeparatorChar`).
-    static bool IsSimpleIntrinsicCall(string s) {
+    // When `allowedQualifier` is non-null, `%(...)` references that target
+    // it are permitted inside intrinsic args (runtime threads batchMeta
+    // through tryEvalIntrinsic → resolveIntrinsicArg → Expand).
+    static bool IsSimpleIntrinsicCall(string s, string? allowedQualifier) {
         if (s.Length < 2 || s[0] != '[') return false;
         var closeBracket = s.IndexOf(']');
         if (closeBracket <= 1) return false;
@@ -1571,7 +1592,7 @@ internal static class GoEmitter {
         if (close < 0) return false;
         if (tail.Substring(close + 1).Trim().Length != 0) return false;
         var argsStr = tail.Substring(1, close - 1);
-        return AreSimpleMSBuildIntrinsicArgs(argsStr);
+        return AreSimpleMSBuildIntrinsicArgs(argsStr, allowedQualifier);
     }
 
     readonly struct IntrinsicMember {
@@ -1632,7 +1653,10 @@ internal static class GoEmitter {
     // itself contain only simple $() references), a single $(SimpleProp)
     // expansion, or a bare literal (digits/dots/identifier chars — used for
     // bare version literals like `5.0`). Anything else fails.
-    static bool AreSimpleMSBuildIntrinsicArgs(string argsStr) {
+    static bool AreSimpleMSBuildIntrinsicArgs(string argsStr) =>
+        AreSimpleMSBuildIntrinsicArgs(argsStr, allowedQualifier: null);
+
+    static bool AreSimpleMSBuildIntrinsicArgs(string argsStr, string? allowedQualifier) {
         if (string.IsNullOrWhiteSpace(argsStr)) return true;
         var depth = 0;
         char quote = '\0';
@@ -1659,42 +1683,50 @@ internal static class GoEmitter {
         if (quote != '\0' || depth != 0) return false;
         parts.Add(argsStr.Substring(start));
         foreach (var raw in parts) {
-            if (!IsSimpleMSBuildIntrinsicArg(raw.Trim())) return false;
+            if (!IsSimpleMSBuildIntrinsicArg(raw.Trim(), allowedQualifier)) return false;
         }
         return true;
     }
 
-    static bool IsSimpleMSBuildIntrinsicArg(string arg) {
+    static bool IsSimpleMSBuildIntrinsicArg(string arg) =>
+        IsSimpleMSBuildIntrinsicArg(arg, allowedQualifier: null);
+
+    static bool IsSimpleMSBuildIntrinsicArg(string arg, string? allowedQualifier) {
         if (arg.Length == 0) return true;
         if ((arg[0] == '\'' || arg[0] == '"' || arg[0] == '`') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
             // Inside a quoted intrinsic arg, only `$(SimpleProp)` references
             // and literal text are allowed — mirrors splitIntrinsicArgs ->
-            // resolveIntrinsicArg in the runtime.
-            return AreSimpleExpansionsOnly(arg.Substring(1, arg.Length - 2));
+            // resolveIntrinsicArg in the runtime. When an allowedQualifier is
+            // active, %(qualifier.M) and %(M) references are also accepted.
+            return AreSimpleExpansionsOnly(arg.Substring(1, arg.Length - 2), allowedQualifier);
         }
-        // Bare unquoted arg: same shape rules as inside a quote — every
-        // expansion must be a simple property expression / supported intrinsic;
-        // mixed with literal text is fine. Reject `@()` / `%()` because the
-        // runtime resolver only passes an emptyItemBag.
         if (arg.IndexOfAny(new[] { '\'', '"', '`' }) >= 0) return false;
-        return AreSimpleExpansionsOnly(arg);
+        return AreSimpleExpansionsOnly(arg, allowedQualifier);
     }
 
-    // AreSimpleExpansionsOnly walks a string and ensures that every `$(...)`
-    // expansion in it is either a simple identifier or a Phase A/B property
-    // expression / Phase G intrinsic. Literal text (no expansions) is fine.
-    // `@(...)` and `%(...)` are NOT allowed.
-    static bool AreSimpleExpansionsOnly(string s) {
+    static bool AreSimpleExpansionsOnly(string s) =>
+        AreSimpleExpansionsOnly(s, allowedQualifier: null);
+
+    static bool AreSimpleExpansionsOnly(string s, string? allowedQualifier) {
         for (int i = 0; i < s.Length; i++) {
             var c = s[i];
-            if (c == '@' || c == '%') {
+            if (c == '@') {
                 if (i + 1 < s.Length && s[i + 1] == '(') return false;
+            }
+            if (c == '%' && i + 1 < s.Length && s[i + 1] == '(') {
+                if (allowedQualifier == null) return false;
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return false;
+                var inner = s.Substring(i + 2, end - i - 2);
+                if (!IsValidBatchMetaRef(inner, allowedQualifier)) return false;
+                i = end;
+                continue;
             }
             if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
                 var end = FindMatchingParenQuoteAware(s, i + 1);
                 if (end < 0) return false;
                 var inner = s.Substring(i + 2, end - i - 2);
-                if (!IsSimpleExpressionInner(inner)) return false;
+                if (!IsSimpleExpressionInner(inner, allowedQualifier)) return false;
                 i = end;
             }
         }
@@ -1953,7 +1985,7 @@ internal static class GoEmitter {
                         var end = FindMatchingParenQuoteAware(condition, i + 1);
                         if (end < 0) return false;
                         var inner = condition.Substring(i + 2, end - i - 2);
-                        if (!IsSimpleExpressionInner(inner)) return false;
+                        if (!IsSimpleExpressionInner(inner, allowedQualifier)) return false;
                         i = end + 1;
                         continue;
                     }
@@ -2035,7 +2067,7 @@ internal static class GoEmitter {
                 var end = FindMatchingParenQuoteAware(s, i + 1);
                 if (end < 0) return false;
                 var inner = s.Substring(i + 2, end - i - 2);
-                if (!IsSimpleExpressionInner(inner)) return false;
+                if (!IsSimpleExpressionInner(inner, allowedQualifier)) return false;
                 i = end;
                 continue;
             }
@@ -2152,18 +2184,20 @@ internal static class GoEmitter {
         var s = value!;
         for (int i = 0; i < s.Length; i++) {
             var c = s[i];
+            // `@(X->'%(M)')` introduces a transform context: `%(M)` inside
+            // refers to the transform's per-iteration meta, not real batching
+            // on the outer item. Skip past `@(...)` entirely.
             if (c == '@' && i + 1 < s.Length && s[i + 1] == '(') {
                 var end = FindMatchingParenQuoteAware(s, i + 1);
                 if (end < 0) return true;
                 i = end;
                 continue;
             }
-            if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
-                var end = FindMatchingParenQuoteAware(s, i + 1);
-                if (end < 0) return true;
-                i = end;
-                continue;
-            }
+            // `$(X)` is a property expansion; `%(...)` inside `$()` (e.g.
+            // `$([MSBuild]::F(%(Identity)))`) IS real batching — the outer
+            // batched item's metadata flows through the intrinsic. Walk into
+            // `$()` contents rather than skipping past so the `%(` inside
+            // triggers batched emission.
             if (c == '%' && i + 1 < s.Length && s[i + 1] == '(') return true;
         }
         return false;
