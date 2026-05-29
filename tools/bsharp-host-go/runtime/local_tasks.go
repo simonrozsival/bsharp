@@ -230,6 +230,36 @@ func ConvertToAbsolutePath(p ParamList, outputs *OutputList, items ItemBag, prop
 	return nil
 }
 
+// RemoveDuplicates dedupes the "Inputs" item identities (case-insensitive)
+// and emits the deduped list under the "Filtered" output. Preserves first-
+// occurrence order. Also sets "HadAnyDuplicates" = "True"/"False" on the
+// property output if that binding is present (MSBuild's RemoveDuplicates
+// surfaces both Filtered + HadAnyDuplicates).
+func RemoveDuplicates(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	seen := map[string]bool{}
+	var filtered []*Item
+	hadDup := false
+	for _, id := range SplitSemicolon(p.GetValueOrDefault("Inputs")) {
+		key := strings.ToLower(id)
+		if seen[key] {
+			hadDup = true
+			continue
+		}
+		seen[key] = true
+		filtered = append(filtered, NewItem(id))
+	}
+	writeItemOutput(outputs, items, "Filtered", filtered)
+	writeStringOutput(outputs, items, props, "HadAnyDuplicates", boolStr(hadDup))
+	return nil
+}
+
+func boolStr(v bool) string {
+	if v {
+		return "True"
+	}
+	return "False"
+}
+
 // Message logs at the requested importance ("high", "normal", "low").
 // Empty Importance defaults to "normal".
 func Message(p ParamList) error {

@@ -771,6 +771,7 @@ internal static class GoEmitter {
         { "ReadLinesFromFile", "ReadLinesFromFile" },
         { "Hash", "Hash" },
         { "ConvertToAbsolutePath", "ConvertToAbsolutePath" },
+        { "RemoveDuplicates", "RemoveDuplicates" },
         { "NETSdkError", "NETSdkError" },
         { "NETSdkWarning", "NETSdkWarning" },
         { "NETSdkInformation", "NETSdkInformation" },
@@ -786,7 +787,7 @@ internal static class GoEmitter {
     // ParamList.
     static readonly HashSet<string> _tasksNeedingItemBag = new(StringComparer.OrdinalIgnoreCase) {
         "MakeDir", "RemoveDir", "Touch", "Delete", "Copy",
-        "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath",
+        "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
     };
     static bool TaskNeedsItemBag(string taskName) => _tasksNeedingItemBag.Contains(taskName);
 
@@ -796,7 +797,7 @@ internal static class GoEmitter {
     // <Output PropertyName="..."/> bindings for these.
     static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
         "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
-        "Hash", "ConvertToAbsolutePath",
+        "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs

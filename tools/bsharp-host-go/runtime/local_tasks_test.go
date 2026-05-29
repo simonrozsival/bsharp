@@ -134,3 +134,46 @@ func TestWriteStringOutputItemFallback(t *testing.T) {
 		t.Errorf("expected no property write, got %q", props.Get("Result"))
 	}
 }
+
+func TestRemoveDuplicatesDedupesPreservingOrder(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "Filtered", ItemName: "_F"},
+		Output{Key: "HadAnyDuplicates", PropertyName: "HadDup"},
+	)
+	plist := NewParamList(Param{Key: "Inputs", Value: "a;b;A;c;B"})
+	if err := RemoveDuplicates(plist, outputs, items, props); err != nil {
+		t.Fatalf("RemoveDuplicates returned %v", err)
+	}
+	got := items.Get("_F")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items after dedupe, got %d: %+v", len(got), got)
+	}
+	ids := []string{got[0].Identity, got[1].Identity, got[2].Identity}
+	want := []string{"a", "b", "c"}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("item[%d] = %q; want %q", i, ids[i], want[i])
+		}
+	}
+	if props.Get("HadDup") != "True" {
+		t.Errorf("HadAnyDuplicates = %q; want True", props.Get("HadDup"))
+	}
+}
+
+func TestRemoveDuplicatesNoDuplicates(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "Filtered", ItemName: "_F"},
+		Output{Key: "HadAnyDuplicates", PropertyName: "HadDup"},
+	)
+	plist := NewParamList(Param{Key: "Inputs", Value: "a;b;c"})
+	if err := RemoveDuplicates(plist, outputs, items, props); err != nil {
+		t.Fatalf("RemoveDuplicates returned %v", err)
+	}
+	if props.Get("HadDup") != "False" {
+		t.Errorf("HadAnyDuplicates = %q; want False", props.Get("HadDup"))
+	}
+}
