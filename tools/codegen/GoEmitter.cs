@@ -489,6 +489,29 @@ internal static class GoEmitter {
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
                 sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
                 sb.Append(bodyIndent).AppendLine("}");
+            } else if (kind == ItemIncludeKind.ItemListFilter) {
+                var trimmed = include.Trim();
+                var inner = trimmed.Substring(2, trimmed.Length - 3);
+                if (!TryParseWithMetadataValueInclude(inner, out var spec) || spec == null) {
+                    // Should never happen — the classifier already accepted
+                    // this shape. Defensive panic so a future regression is
+                    // loud rather than silently wrong.
+                    throw new InvalidOperationException("ItemListFilter classified but re-parse failed: " + include);
+                }
+                sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(spec.SourceItemType)).AppendLine(") {");
+                if (hasExclude) {
+                    sb.Append(bodyIndent).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+                }
+                // MSBuild's WithMetadataValue is case-insensitive on the
+                // metadata value. The metadata KEY is also case-insensitive
+                // (Item.GetMetadata already handles that).
+                sb.Append(bodyIndent).Append("\tif !strings.EqualFold(src.GetMetadata(")
+                  .Append(GoStringLiteral(spec.MetaName)).Append("), rt.MustExpand(")
+                  .Append(GoStringLiteral(spec.ValueTemplate)).AppendLine(", P, I, nil)) { continue }");
+                sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
+                EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
+                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                sb.Append(bodyIndent).AppendLine("}");
             } else {
                 // Literal/expansion path: expand, split, create items with metadata.
                 sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
@@ -1089,8 +1112,14 @@ internal static class GoEmitter {
     // so the emitter can pick the right runtime call:
     //   - Literal: no @() refs at all; expand + split + new items
     //   - ItemListCopy: exactly one @(SimpleType) reference; clone source items
+    //   - ItemListFilter: @(SrcList->WithMetadataValue('M', 'V')); clone
+    //     matching source items, preserving all metadata
     //   - Unsupported: anything else (mixed, transforms, etc.)
-    enum ItemIncludeKind { Literal, ItemListCopy, Unsupported }
+    enum ItemIncludeKind { Literal, ItemListCopy, ItemListFilter, Unsupported }
+
+    // ItemListFilterSpec captures the structured form of an ItemListFilter
+    // include, recovered from re-parsing the include in EmitItemGroupChild.
+    sealed record ItemListFilterSpec(string SourceItemType, string MetaName, string ValueTemplate);
 
     static ItemIncludeKind ClassifyItemIncludeSpec(string include) {
         if (string.IsNullOrEmpty(include)) return ItemIncludeKind.Literal;
@@ -1103,6 +1132,13 @@ internal static class GoEmitter {
                 && IsSimpleIdentifierName(inner.Trim())) {
                 return ItemIncludeKind.ItemListCopy;
             }
+            // @(SrcList->WithMetadataValue('M', 'V')) — predicate filter that
+            // preserves source metadata. We detect it here (BEFORE the
+            // string-joined transform fallback below) so the emitter can
+            // produce a typed Item.Clone loop instead of dropping metadata.
+            if (TryParseWithMetadataValueInclude(inner, out _)) {
+                return ItemIncludeKind.ItemListFilter;
+            }
             // Single @() but not a simple ident — fall through to Literal
             // evaluation below if IsSimpleExpressionTemplate accepts it
             // (e.g. transforms `@(X->'tpl')` produce `;`-joined identities).
@@ -1114,6 +1150,48 @@ internal static class GoEmitter {
         // `@(X->'template')`, and property functions.
         if (IsSimpleExpressionTemplate(include)) return ItemIncludeKind.Literal;
         return ItemIncludeKind.Unsupported;
+    }
+
+    // TryParseWithMetadataValueInclude recognizes `Name->WithMetadataValue('M', 'V')`
+    // (the inner of `@(...)`) and returns the source item-list name, the
+    // metadata key, and the value template. The value template may freely
+    // contain `$(SimpleProp)` expansions which are evaluated at emit-time
+    // runtime via MustExpand. Returns false for any other shape.
+    static bool TryParseWithMetadataValueInclude(string inner, out ItemListFilterSpec? spec) {
+        spec = null;
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) return false;
+        var name = inner.Substring(0, arrow).Trim();
+        if (!IsSimpleIdentifierName(name)) return false;
+        var rhs = inner.Substring(arrow + 2).TrimStart();
+        const string prefix = "WithMetadataValue(";
+        if (!rhs.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!rhs.EndsWith(")", StringComparison.Ordinal)) return false;
+        var argsSrc = rhs.Substring(prefix.Length, rhs.Length - prefix.Length - 1);
+        var parts = SplitArgsQuoteAware(argsSrc);
+        if (parts.Length != 2) return false;
+        string? Unquote(string raw) {
+            var s = raw.Trim();
+            if (s.Length < 2) return null;
+            var q = s[0];
+            if ((q != '\'' && q != '"') || s[s.Length - 1] != q) return null;
+            return s.Substring(1, s.Length - 2);
+        }
+        var metaName = Unquote(parts[0]);
+        var valueTpl = Unquote(parts[1]);
+        if (metaName == null || valueTpl == null) return false;
+        if (string.IsNullOrEmpty(metaName)) return false;
+        // The metadata KEY must be a literal identifier — no expansions —
+        // because the runtime calls GetMetadata(metaName) directly. The
+        // VALUE template may contain `$(SimpleProp)` so it's validated via
+        // the literal-expansion checker (which already rejects `@()` and
+        // `%(...)` since neither is meaningful in this context).
+        foreach (var ch in metaName) {
+            if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-')) return false;
+        }
+        if (!AreSimpleExpansionsOnly(valueTpl)) return false;
+        spec = new ItemListFilterSpec(name, metaName, valueTpl);
+        return true;
     }
 
     static bool IsSimpleIdentifierName(string? name) {
@@ -1184,12 +1262,20 @@ internal static class GoEmitter {
         return false;
     }
 
-    // IsSimpleTransformRhs validates an item-transform RHS: either
-    // `'template'` or `'template', 'sep'`. The template may freely use
-    // `%(Meta)` / `%(ItemName.Meta)` (per-item batch context), `$(P)`
-    // (validated via IsSimpleExpressionInner), and `@(Y)` for nested
-    // unbatched item-list refs (validated recursively). Literal text is
-    // accepted as-is.
+    // IsSimpleTransformRhs validates an item-transform RHS:
+    //   - `'template'`
+    //   - `'template', 'sep'`
+    //   - `'template' -> Method(args) [ -> Method(args) ... ] [, 'sep']`
+    //
+    // The template may freely use `%(Meta)` / `%(ItemName.Meta)` (per-item
+    // batch context), `$(P)` (validated via IsSimpleExpressionInner), and
+    // `@(Y)` for nested unbatched item-list refs (validated recursively).
+    // Literal text is accepted as-is.
+    //
+    // Chained `->Method(args)` calls use the property-function whitelist
+    // (TrimStart, Replace, ToLower, etc.) and reuse the same arg validator
+    // as property functions — args must be quoted-string literals (with
+    // optional `$()` inside) or integer literals.
     static bool IsSimpleTransformRhs(string rhs) {
         rhs = rhs.Trim();
         if (rhs.Length < 2) return false;
@@ -1200,6 +1286,19 @@ internal static class GoEmitter {
         var template = rhs.Substring(1, end - 1);
         if (!IsSimpleTransformTemplate(template)) return false;
         var rest = rhs.Substring(end + 1).TrimStart();
+        while (rest.StartsWith("->", StringComparison.Ordinal)) {
+            rest = rest.Substring(2).TrimStart();
+            int openIdx = rest.IndexOf('(');
+            if (openIdx < 0) return false;
+            var methodName = rest.Substring(0, openIdx).Trim();
+            if (!IsSimpleIdentifierName(methodName)) return false;
+            if (!IsKnownStringTransformMethod(methodName)) return false;
+            var closeIdx = FindMatchingParenQuoteAware(rest, openIdx);
+            if (closeIdx < 0) return false;
+            var argsSrc = rest.Substring(openIdx + 1, closeIdx - openIdx - 1);
+            if (!AreSimpleTransformMethodArgs(argsSrc)) return false;
+            rest = rest.Substring(closeIdx + 1).TrimStart();
+        }
         if (rest.Length == 0) return true;
         if (rest[0] != ',') return false;
         rest = rest.Substring(1).TrimStart();
@@ -1208,6 +1307,25 @@ internal static class GoEmitter {
         if (q2 != '\'' && q2 != '"') return false;
         var endSep = rest.IndexOf(q2, 1);
         if (endSep != rest.Length - 1) return false;
+        return true;
+    }
+
+    // AreSimpleTransformMethodArgs validates the argument list of a chained
+    // transform method. Each arg must be a quoted string (single or double);
+    // inside the quote, only literal text and simple `$()` expansions are
+    // allowed (mirrors parseTransformMethodArgs at runtime). `%()` and bare
+    // unquoted args are rejected so the shape stays predictable.
+    static bool AreSimpleTransformMethodArgs(string argsSrc) {
+        if (string.IsNullOrWhiteSpace(argsSrc)) return true;
+        var parts = SplitArgsQuoteAware(argsSrc);
+        foreach (var p in parts) {
+            var s = p.Trim();
+            if (s.Length < 2) return false;
+            var q = s[0];
+            if ((q != '\'' && q != '"') || s[s.Length - 1] != q) return false;
+            var inner = s.Substring(1, s.Length - 2);
+            if (!AreSimpleExpansionsOnly(inner)) return false;
+        }
         return true;
     }
 
@@ -1550,6 +1668,36 @@ internal static class GoEmitter {
             rest = rest.Substring(1);
         }
         return true;
+    }
+
+    // IsKnownStringTransformMethod returns true if `method` is one of the
+    // string-function names supported by applyPropertyFunction in the
+    // runtime. Used by chained-transform validation in IsSimpleTransformRhs;
+    // the per-call arg-count + hasArgs validation lives in
+    // AreSimpleTransformMethodArgs at the surface level and in
+    // applyPropertyFunction at runtime.
+    static bool IsKnownStringTransformMethod(string method) {
+        switch (method.ToLowerInvariant()) {
+            case "tolower":
+            case "tolowerinvariant":
+            case "toupper":
+            case "toupperinvariant":
+            case "tostring":
+            case "length":
+            case "trim":
+            case "trimstart":
+            case "trimend":
+            case "replace":
+            case "substring":
+            case "startswith":
+            case "endswith":
+            case "contains":
+            case "indexof":
+            case "split":
+                return true;
+            default:
+                return false;
+        }
     }
 
     static bool IsWhitelistedPropertyMethod(string method, int argCount, bool hasArgs) {

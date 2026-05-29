@@ -267,13 +267,24 @@ func evalItemFunc(inner string, items ItemBag, p PropertyBag) (string, bool) {
 	return "", false
 }
 
-// evalItemTransform evaluates `@(Name->'template'[, 'sep'])`. For each item
-// in the named list, expands `template` with the item's metadata as the
-// batch context, then joins with `sep` (default `;`). Matches MSBuild's
-// item-transform expansion. Returns ok=false if the transform shape is
-// malformed.
+// transformMethodCall represents one `-> Method(args)` step in a chained
+// item-transform RHS, e.g. `->TrimStart('foo')`, `->Replace('.', '_')`. The
+// args are pre-resolved at parse time (quoted literals expanded against the
+// property bag) and applied per-item via applyPropertyFunction.
+type transformMethodCall struct {
+	name string
+	args []string
+}
+
+// evalItemTransform evaluates `@(Name->'template'[ ->Method(args) ... ][, 'sep'])`.
+// For each item in the named list, expands `template` with the item's metadata
+// as the batch context, then pipes the result through each chained string
+// method (TrimStart, Replace, ToLower, …) before joining with `sep`
+// (default `;`). Matches MSBuild's item-transform-with-chained-methods
+// expansion. Returns ok=false if the transform shape is malformed or any
+// chained method is unsupported.
 func evalItemTransform(name, rhs string, items ItemBag, p PropertyBag) (string, bool) {
-	template, sep, ok := parseTransformRhs(rhs)
+	template, methods, sep, ok := parseTransformRhs(rhs, p, items)
 	if !ok {
 		return "", false
 	}
@@ -285,45 +296,139 @@ func evalItemTransform(name, rhs string, items ItemBag, p PropertyBag) (string, 
 		if !ok {
 			return "", false
 		}
+		for _, m := range methods {
+			v, ok = applyPropertyFunction(v, m.name, m.args, true)
+			if !ok {
+				return "", false
+			}
+		}
 		parts = append(parts, v)
 	}
 	return strings.Join(parts, sep), true
 }
 
-// parseTransformRhs parses the post-`->` RHS of an @() item transform.
-// Forms: `'template'` (default sep `;`) and `'template', 'sep'`. Returns
-// template, sep, ok. Quotes may be single or double (MSBuild allows both).
-func parseTransformRhs(rhs string) (template, sep string, ok bool) {
+// parseTransformRhs parses the post-`->` RHS of an @() item transform. The
+// supported forms are:
+//
+//	'template'
+//	'template' , 'sep'
+//	'template' -> Method(args) [ -> Method(args) ... ] [ , 'sep' ]
+//
+// Where each Method is a string-function from applyPropertyFunction
+// (TrimStart, Replace, ToLower, etc.). Method args are quoted-string
+// literals; `$()` expansions inside the quoted args are resolved against
+// the property bag at parse time. Returns ok=false on any malformed
+// shape so callers fall through to a stub.
+func parseTransformRhs(rhs string, p PropertyBag, items ItemBag) (template string, methods []transformMethodCall, sep string, ok bool) {
 	rhs = strings.TrimSpace(rhs)
 	if len(rhs) < 2 {
-		return "", "", false
+		return "", nil, "", false
 	}
 	q := rhs[0]
 	if q != '\'' && q != '"' {
-		return "", "", false
+		return "", nil, "", false
 	}
 	end := strings.IndexByte(rhs[1:], q)
 	if end < 0 {
-		return "", "", false
+		return "", nil, "", false
 	}
 	template = rhs[1 : 1+end]
 	rest := strings.TrimSpace(rhs[1+end+1:])
+	for strings.HasPrefix(rest, "->") {
+		rest = strings.TrimSpace(rest[2:])
+		openIdx := strings.IndexByte(rest, '(')
+		if openIdx < 0 {
+			return "", nil, "", false
+		}
+		methodName := strings.TrimSpace(rest[:openIdx])
+		if !isSimpleIdentifier(methodName) {
+			return "", nil, "", false
+		}
+		closeIdx := findMatchingParenQuoteAware(rest, openIdx)
+		if closeIdx < 0 {
+			return "", nil, "", false
+		}
+		argsSrc := rest[openIdx+1 : closeIdx]
+		args, argsOk := parseTransformMethodArgs(argsSrc, p, items)
+		if !argsOk {
+			return "", nil, "", false
+		}
+		methods = append(methods, transformMethodCall{name: methodName, args: args})
+		rest = strings.TrimSpace(rest[closeIdx+1:])
+	}
 	if rest == "" {
-		return template, ";", true
+		return template, methods, ";", true
 	}
 	if rest[0] != ',' {
-		return "", "", false
+		return "", nil, "", false
 	}
 	rest = strings.TrimSpace(rest[1:])
 	if len(rest) < 2 || (rest[0] != '\'' && rest[0] != '"') {
-		return "", "", false
+		return "", nil, "", false
 	}
 	q2 := rest[0]
 	endSep := strings.IndexByte(rest[1:], q2)
 	if endSep < 0 || endSep+2 != len(rest) {
-		return "", "", false
+		return "", nil, "", false
 	}
-	return template, rest[1 : 1+endSep], true
+	return template, methods, rest[1 : 1+endSep], true
+}
+
+// parseTransformMethodArgs resolves the argument list of a chained transform
+// method (e.g. `'.', '_'` inside `Replace('.', '_')`). Args may be quoted
+// strings (single or double); inside the quotes `$()` references are
+// expanded against the property bag. Bare unquoted args are rejected so
+// the shape stays predictable.
+func parseTransformMethodArgs(src string, p PropertyBag, items ItemBag) ([]string, bool) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return nil, true
+	}
+	var rawParts []string
+	start := 0
+	depth := 0
+	var quote byte = 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				rawParts = append(rawParts, src[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if quote != 0 || depth != 0 {
+		return nil, false
+	}
+	rawParts = append(rawParts, src[start:])
+	out := make([]string, 0, len(rawParts))
+	for _, raw := range rawParts {
+		s := strings.TrimSpace(raw)
+		if len(s) >= 2 && (s[0] == '\'' || s[0] == '"') && s[len(s)-1] == s[0] {
+			inner := s[1 : len(s)-1]
+			expanded, ok := Expand(inner, p, items, nil)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, expanded)
+			continue
+		}
+		return nil, false
+	}
+	return out, true
 }
 
 // ItemBatchMeta is the exported wrapper around itemBatchMeta so the
