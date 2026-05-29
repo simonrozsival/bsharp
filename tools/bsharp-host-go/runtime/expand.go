@@ -73,10 +73,11 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 				return sb.String(), false
 			}
 			inner := template[j+2 : end]
-			// `@(ItemName->FuncName())` -- supported intrinsic item functions
-			// (currently just Count()). Evaluated against the items bag.
+			// `@(ItemName->FuncName(args))` -- supported intrinsic item functions
+			// (currently Count() and AnyHaveMetadataValue()). Evaluated against
+			// the items bag (and properties for arg expansion).
 			if strings.Contains(inner, "->") {
-				value, ok := evalItemFunc(inner, i)
+				value, ok := evalItemFunc(inner, i, p)
 				if !ok {
 					return sb.String(), false
 				}
@@ -202,14 +203,15 @@ func isSimpleIdentifier(s string) bool {
 }
 
 // evalItemFunc evaluates `ItemName -> FuncName(args)` inside an @(...)
-// expansion. Currently the only supported function is Count(), which returns
-// the integer count of items in the named collection as a decimal string
-// (matches MSBuild's @(X->Count()) semantics). Returns ok=false for any
-// other shape so unsupported transforms (e.g. @(X->'%(Identity)'),
-// @(X->WithMetadataValue(...)), @(X->AnyHaveMetadataValue(...)),
-// chained calls) panic loudly via MustExpand instead of silently
-// returning the wrong value.
-func evalItemFunc(inner string, items ItemBag) (string, bool) {
+// expansion. Currently supported functions:
+//   - Count()                                       -> integer count as string
+//   - AnyHaveMetadataValue('MetaName', 'Value')     -> "True"/"False"
+//
+// Returns ok=false for any other shape so unsupported transforms (e.g.
+// @(X->'%(Identity)'), @(X->WithMetadataValue(...)), chained calls)
+// panic loudly via MustExpand instead of silently returning the wrong
+// value.
+func evalItemFunc(inner string, items ItemBag, p PropertyBag) (string, bool) {
 	arrow := strings.Index(inner, "->")
 	if arrow < 0 {
 		return "", false
@@ -219,7 +221,6 @@ func evalItemFunc(inner string, items ItemBag) (string, bool) {
 	if !isSimpleIdentifier(name) {
 		return "", false
 	}
-	// Expect FuncName(...) with no trailing chained calls/metadata.
 	openIdx := strings.IndexByte(rhs, '(')
 	if openIdx < 0 || !strings.HasSuffix(rhs, ")") {
 		return "", false
@@ -232,8 +233,76 @@ func evalItemFunc(inner string, items ItemBag) (string, bool) {
 			return "", false
 		}
 		return fmt.Sprintf("%d", len(items.Get(name))), true
+	case "anyhavemetadatavalue":
+		args, ok := parseItemFuncArgs(argsSrc, p, items)
+		if !ok || len(args) != 2 {
+			return "", false
+		}
+		metaName, metaValue := args[0], args[1]
+		for _, it := range items.Get(name) {
+			if strings.EqualFold(it.GetMetadata(metaName), metaValue) {
+				return "True", true
+			}
+		}
+		return "False", true
 	}
 	return "", false
+}
+
+// parseItemFuncArgs splits a comma-separated argument list (quote-aware),
+// unquotes each element, and expands any `$()` references inside. Returns
+// ok=false on any quote/format error.
+func parseItemFuncArgs(src string, p PropertyBag, items ItemBag) ([]string, bool) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return nil, true
+	}
+	// Split by commas at depth=0 outside quotes.
+	var parts []string
+	start := 0
+	depth := 0
+	var quote byte = 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, src[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if quote != 0 || depth != 0 {
+		return nil, false
+	}
+	parts = append(parts, src[start:])
+	out := make([]string, 0, len(parts))
+	for _, raw := range parts {
+		s := strings.TrimSpace(raw)
+		if len(s) >= 2 && (s[0] == '\'' || s[0] == '"') && s[len(s)-1] == s[0] {
+			inner := s[1 : len(s)-1]
+			expanded, ok := Expand(inner, p, items, nil)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, expanded)
+			continue
+		}
+		return nil, false
+	}
+	return out, true
 }
 
 // evalPropertyExpression evaluates the inside of a `$(...)` expression. It

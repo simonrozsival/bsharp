@@ -836,13 +836,13 @@ internal static class GoEmitter {
 
     // Returns true if `inner` (the body of an @(...) reference, without the
     // surrounding parens) is in a shape the runtime can evaluate:
-    //   - "Name"                — simple identifier
-    //   - "Name, 'sep'"         — identifier with explicit separator
-    //   - "Name->Count()"       — intrinsic item function (no args)
+    //   - "Name"                                       — simple identifier
+    //   - "Name, 'sep'"                                — identifier with explicit separator
+    //   - "Name->Count()"                              — count intrinsic
+    //   - "Name->AnyHaveMetadataValue('m', 'v')"       — metadata predicate
     // Anything else (transforms returning items, WithMetadataValue,
-    // AnyHaveMetadataValue, chained calls, batching `%()` refs, etc.) is
-    // rejected so the codegen + classifier never produce silently-wrong
-    // output.
+    // chained calls, batching `%()` refs, etc.) is rejected so the codegen
+    // + classifier never produce silently-wrong output.
     static bool IsSimpleItemRefInner(string inner) {
         if (inner.Contains("%(", StringComparison.Ordinal)) return false;
         var arrow = inner.IndexOf("->", StringComparison.Ordinal);
@@ -860,8 +860,30 @@ internal static class GoEmitter {
         var name = inner.Substring(0, arrow).Trim();
         var rhs = inner.Substring(arrow + 2).Trim();
         if (!IsSimpleIdentifierName(name)) return false;
-        // Only `Count()` is supported; no chaining, no args.
-        return string.Equals(rhs, "Count()", StringComparison.OrdinalIgnoreCase);
+        // Count() — no args.
+        if (string.Equals(rhs, "Count()", StringComparison.OrdinalIgnoreCase)) return true;
+        // AnyHaveMetadataValue('MetaName', 'MetaValue') — two quoted args. The
+        // arg values may contain $() expansions which the runtime expands; we
+        // only validate the surface shape (quote balance + no nested @() /
+        // %() / chained calls).
+        const string anyPrefix = "AnyHaveMetadataValue(";
+        if (rhs.StartsWith(anyPrefix, StringComparison.OrdinalIgnoreCase) && rhs.EndsWith(")", StringComparison.Ordinal)) {
+            var argsSrc = rhs.Substring(anyPrefix.Length, rhs.Length - anyPrefix.Length - 1);
+            if (argsSrc.Contains("@(", StringComparison.Ordinal)) return false;
+            if (argsSrc.Contains("%(", StringComparison.Ordinal)) return false;
+            // The args themselves must be exactly two quoted strings separated
+            // by a comma (with optional whitespace). Anything else is rejected.
+            var argParts = SplitArgsQuoteAware(argsSrc);
+            if (argParts.Length != 2) return false;
+            foreach (var ap in argParts) {
+                var s = ap.Trim();
+                if (s.Length < 2) return false;
+                var q = s[0];
+                if ((q != '\'' && q != '"') || s[s.Length - 1] != q) return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     static bool ContainsGlobChar(string? s) {
@@ -1032,6 +1054,9 @@ internal static class GoEmitter {
             ["System.Text.RegularExpressions.Regex"] = new IntrinsicMember[] {
                 new() { Name = "Replace", RequiresArgs = true },
                 new() { Name = "IsMatch", RequiresArgs = true },
+            },
+            ["System.Guid"] = new IntrinsicMember[] {
+                new() { Name = "NewGuid", RequiresArgs = true },
             },
         };
 

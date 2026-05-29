@@ -278,11 +278,40 @@ func TestPathIntrinsicsRejectUnsupported(t *testing.T) {
 	for _, tmpl := range []string{
 		"$([System.IO.Path]::HasExtension('foo'))",   // not in whitelist
 		"$([System.IO.Directory]::GetFiles('/tmp'))", // not supported
-		"$([System.Guid]::NewGuid())",                // not supported
 	} {
 		if _, ok := Expand(tmpl, p, testItems{}, nil); ok {
 			t.Errorf("Expand(%q) should be ok=false", tmpl)
 		}
+	}
+}
+
+func TestGuidNewGuid(t *testing.T) {
+	// $([System.Guid]::NewGuid()) returns a hyphenated lowercase UUID
+	// matching .NET's Guid.NewGuid().ToString() format
+	// (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx, RFC 4122 v4).
+	p := newProps()
+	got, ok := Expand("$([System.Guid]::NewGuid())", p, testItems{}, nil)
+	if !ok {
+		t.Fatal("Expand returned ok=false")
+	}
+	if len(got) != 36 {
+		t.Errorf("guid length = %d; want 36 (got %q)", len(got), got)
+	}
+	if got[8] != '-' || got[13] != '-' || got[18] != '-' || got[23] != '-' {
+		t.Errorf("guid format invalid: %q", got)
+	}
+	// Variant + version bits: '4' at position 14, one of [8,9,a,b] at position 19.
+	if got[14] != '4' {
+		t.Errorf("expected version-4 GUID; got %q", got)
+	}
+	v := got[19]
+	if v != '8' && v != '9' && v != 'a' && v != 'b' {
+		t.Errorf("invalid variant bits at index 19: %q (full: %q)", v, got)
+	}
+	// Two consecutive NewGuid() calls must not collide.
+	got2, ok := Expand("$([System.Guid]::NewGuid())", p, testItems{}, nil)
+	if !ok || got == got2 {
+		t.Errorf("two consecutive NewGuid()s collided: %q %q", got, got2)
 	}
 }
 

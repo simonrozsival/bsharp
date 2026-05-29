@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"crypto/rand"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -33,6 +35,11 @@ func EvalIntrinsic(typeName, member, argsStr string, hasArgs bool, p PropertyBag
 			return "", false
 		}
 		return regexIntrinsic(member, argsStr, p)
+	case "system.guid":
+		if !hasArgs {
+			return "", false
+		}
+		return guidIntrinsic(member, argsStr, p)
 	}
 	return "", false
 }
@@ -610,3 +617,25 @@ func regexIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 	return "", false
 }
 
+
+// guidIntrinsic handles [System.Guid]::* members. Currently only NewGuid()
+// is supported -- the SDK calls it to mint a unique identity for an ad-hoc
+// item in a few _RestoreGraphEntry-style ItemGroups. Returns a lowercase
+// hyphenated UUID string matching .NET's Guid.NewGuid().ToString() format.
+func guidIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
+	switch strings.ToLower(name) {
+	case "newguid":
+		if strings.TrimSpace(argsStr) != "" {
+			return "", false
+		}
+		var b [16]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", false
+		}
+		// RFC 4122 v4 variant bits, matching .NET's behavior.
+		b[6] = (b[6] & 0x0f) | 0x40
+		b[8] = (b[8] & 0x3f) | 0x80
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), true
+	}
+	return "", false
+}

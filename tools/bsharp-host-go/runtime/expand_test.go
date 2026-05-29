@@ -235,3 +235,38 @@ func TestExpandItemFuncRejectsChainedCall(t *testing.T) {
 		t.Error("chained item function should be rejected")
 	}
 }
+
+func TestExpandItemAnyHaveMetadataValue(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{
+		"PackageReference": {
+			NewItemWithMetadata("Foo", map[string]string{"Identity": "Foo", "Version": "1.0"}),
+			NewItemWithMetadata("Bar", map[string]string{"Identity": "Bar", "Version": "2.0"}),
+		},
+		"Empty": nil,
+	}}
+	p := &stubPB{m: map[string]string{"Wanted": "Bar"}}
+	cases := []struct {
+		tmpl string
+		want string
+	}{
+		// literal metadata value
+		{`@(PackageReference->AnyHaveMetadataValue('Identity', 'Foo'))`, "True"},
+		{`@(PackageReference->AnyHaveMetadataValue('Identity', 'Baz'))`, "False"},
+		// case-insensitive value compare (matches MSBuild)
+		{`@(PackageReference->AnyHaveMetadataValue('Identity', 'BAR'))`, "True"},
+		// expansion in the value arg
+		{`@(PackageReference->AnyHaveMetadataValue('Identity', '$(Wanted)'))`, "True"},
+		// empty collection always False
+		{`@(Empty->AnyHaveMetadataValue('Identity', 'Anything'))`, "False"},
+	}
+	for _, tc := range cases {
+		got, ok := Expand(tc.tmpl, p, items, nil)
+		if !ok {
+			t.Errorf("%q: expected ok, got unsupported", tc.tmpl)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.tmpl, got, tc.want)
+		}
+	}
+}
