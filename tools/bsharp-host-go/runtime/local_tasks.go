@@ -319,6 +319,171 @@ func FindUnderPath(p ParamList, outputs *OutputList, items ItemBag, props Proper
 	return nil
 }
 
+// JoinItemsArgs holds the typed inputs to JoinItems. Unlike most local
+// tasks which receive everything through ParamList, JoinItems needs the
+// full *Item slices for Left and Right so per-item metadata can be
+// merged. The emitter looks up each side via I.Get(name) (for `@(name)`
+// references) or builds bare identity-only items via ItemsFromIdentities
+// (for `$(property)` references that expand to a `;`-separated list).
+//
+// Metadata allow-lists are passed verbatim ("", "*", or a `;`-separated
+// list of metadata names). MSBuild splits string[] parameters on `;`, so
+// `LeftMetadata="HintPath;Aliases"` arrives as a two-name allow-list.
+type JoinItemsArgs struct {
+	Left          []*Item
+	Right         []*Item
+	LeftKey       string
+	RightKey      string
+	LeftMetadata  string
+	RightMetadata string
+	ItemSpecToUse string
+}
+
+// JoinItems performs an inner join of Left × Right on (LeftKey, RightKey)
+// where empty keys default to Identity. Each Left item that matches a
+// right entry produces one output item; right duplicates after the first
+// per key are ignored (mirrors Linq.Join semantics used by the SDK
+// implementation). Comparison is case-insensitive. Metadata is merged
+// per Left/RightMetadata ("*" = all, empty = none, otherwise the named
+// keys). ItemSpecToUse picks Left/Right identity for the output;
+// when empty, output identity defaults to the Left's join-key value
+// (matching Microsoft.NET.Build.Tasks.JoinItems).
+//
+// Cross-checked against the decompiled SDK source: when both sides use
+// "*" allow-lists, MSBuild copies left's metadata first, then right's
+// metadata (right wins on collisions); OriginalItemSpec is stripped on
+// any "*" copy.
+func JoinItems(args JoinItemsArgs, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	leftMeta := parseJoinMetaList(args.LeftMetadata)
+	rightMeta := parseJoinMetaList(args.RightMetadata)
+	useAllLeftMeta := len(leftMeta) == 1 && leftMeta[0] == "*"
+	useAllRightMeta := len(rightMeta) == 1 && rightMeta[0] == "*"
+
+	useLeftItemSpec := strings.EqualFold(args.ItemSpecToUse, "Left")
+	useRightItemSpec := strings.EqualFold(args.ItemSpecToUse, "Right")
+	if args.ItemSpecToUse != "" && !useLeftItemSpec && !useRightItemSpec {
+		return fmt.Errorf("JoinItems: ItemSpecToUse must be empty, 'Left', or 'Right' (got %q)", args.ItemSpecToUse)
+	}
+
+	rightIndex := make(map[string]*Item, len(args.Right))
+	for _, r := range args.Right {
+		k := strings.ToLower(joinItemKey(args.RightKey, r))
+		if _, ok := rightIndex[k]; !ok {
+			rightIndex[k] = r
+		}
+	}
+
+	var result []*Item
+	for _, l := range args.Left {
+		k := strings.ToLower(joinItemKey(args.LeftKey, l))
+		r, ok := rightIndex[k]
+		if !ok {
+			continue
+		}
+		result = append(result, mergeJoinedItem(
+			l, r,
+			args.LeftKey, args.RightKey,
+			leftMeta, rightMeta,
+			useAllLeftMeta, useAllRightMeta,
+			useLeftItemSpec, useRightItemSpec,
+		))
+	}
+
+	writeItemOutput(outputs, items, "JoinResult", result)
+	return nil
+}
+
+// ItemsFromIdentities builds bare identity-only items from a
+// `;`-separated string. Used by the emitter when JoinItems' Right is
+// a property reference (`$(SatelliteResourceLanguages)`) rather than
+// an item-list reference.
+func ItemsFromIdentities(s string) []*Item {
+	parts := SplitSemicolon(s)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]*Item, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		out = append(out, NewItem(p))
+	}
+	return out
+}
+
+func joinItemKey(key string, it *Item) string {
+	if key == "" {
+		return it.Identity
+	}
+	return it.GetMetadata(key)
+}
+
+func parseJoinMetaList(raw string) []string {
+	parts := SplitSemicolon(raw)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func mergeJoinedItem(
+	left, right *Item,
+	leftKey, rightKey string,
+	leftMeta, rightMeta []string,
+	useAllLeftMeta, useAllRightMeta bool,
+	useLeftItemSpec, useRightItemSpec bool,
+) *Item {
+	// Fast paths replicating Microsoft.NET.Build.Tasks.JoinItems.
+	if useAllLeftMeta && (leftKey == "" || useLeftItemSpec) && len(rightMeta) == 0 {
+		return left.Clone()
+	}
+	if useAllRightMeta && (rightKey == "" || useRightItemSpec) && len(leftMeta) == 0 {
+		return right.Clone()
+	}
+
+	var id string
+	switch {
+	case useLeftItemSpec:
+		id = left.Identity
+	case useRightItemSpec:
+		id = right.Identity
+	default:
+		id = joinItemKey(leftKey, left)
+	}
+	out := NewItem(id)
+
+	// Order matches the SDK source: useAllLeftMeta → RightMetadata specific
+	// → LeftMetadata specific → useAllRightMeta. The two "*" copies strip
+	// OriginalItemSpec to avoid contaminating the merged identity trail.
+	if useAllLeftMeta {
+		left.CopyMetadataTo(out)
+		out.RemoveMetadata("OriginalItemSpec")
+	}
+	if !useAllRightMeta && len(rightMeta) > 0 {
+		for _, name := range rightMeta {
+			out.SetMetadata(name, right.GetMetadata(name))
+		}
+	}
+	if !useAllLeftMeta && len(leftMeta) > 0 {
+		for _, name := range leftMeta {
+			out.SetMetadata(name, left.GetMetadata(name))
+		}
+	}
+	if useAllRightMeta {
+		right.CopyMetadataTo(out)
+		out.RemoveMetadata("OriginalItemSpec")
+	}
+	return out
+}
+
 func ensureTrailingSeparator(p string) string {
 	if p == "" {
 		return p

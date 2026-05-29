@@ -431,6 +431,147 @@ func TestFindUnderPathRequiresPath(t *testing.T) {
 	}
 }
 
+// TestJoinItemsAllLeftAllRightMetadata mirrors the
+// _JoinedResolvedCompileFileDefinitions usage:
+//
+//	Left=ResolvedCompileFileDefinitions, LeftKey="FileName", LeftMetadata="*",
+//	Right=Reference, RightKey="", RightMetadata="*", ItemSpecToUse=""
+//
+// Identity comes from left's FileName metadata; right's metadata is
+// copied last so it wins on collisions.
+func TestJoinItemsAllLeftAllRightMetadata(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "JoinResult", ItemName: "_Joined"})
+	left := []*Item{
+		mkItem("/pkgs/Newtonsoft.Json.dll", map[string]string{
+			"HintPath":           "/pkgs/Newtonsoft.Json.dll",
+			"NuGetPackageId":     "Newtonsoft.Json",
+			"OriginalItemSpec":   "/pkgs/Newtonsoft.Json.dll",
+		}),
+	}
+	right := []*Item{
+		mkItem("Newtonsoft.Json", map[string]string{
+			"FrameworkReferenceName": "",
+			"Private":                "true",
+		}),
+	}
+	args := JoinItemsArgs{
+		Left: left, Right: right,
+		LeftKey: "FileName", RightKey: "",
+		LeftMetadata: "*", RightMetadata: "*",
+	}
+	if err := JoinItems(args, outputs, items, props); err != nil {
+		t.Fatalf("JoinItems returned %v", err)
+	}
+	got := items.Get("_Joined")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 joined item, got %d", len(got))
+	}
+	// Identity = left.FileName = "Newtonsoft.Json"
+	if got[0].Identity != "Newtonsoft.Json" {
+		t.Errorf("identity = %q, want Newtonsoft.Json", got[0].Identity)
+	}
+	// HintPath (only on left) is preserved.
+	if got[0].GetMetadata("HintPath") != "/pkgs/Newtonsoft.Json.dll" {
+		t.Errorf("HintPath = %q, want /pkgs/Newtonsoft.Json.dll", got[0].GetMetadata("HintPath"))
+	}
+	// Private (only on right) is preserved.
+	if got[0].GetMetadata("Private") != "true" {
+		t.Errorf("Private = %q, want true", got[0].GetMetadata("Private"))
+	}
+	// OriginalItemSpec stripped by useAllLeftMeta / useAllRightMeta paths.
+	if got[0].GetMetadata("OriginalItemSpec") != "" {
+		t.Errorf("OriginalItemSpec should have been removed, got %q", got[0].GetMetadata("OriginalItemSpec"))
+	}
+}
+
+// TestJoinItemsRightFromIdentities mirrors _FilterSatelliteResourcesForPublish:
+//
+//	Left=_PublishSatelliteResources (with Culture metadata),
+//	Right=$(SatelliteResourceLanguages) (just identities),
+//	LeftKey="Culture", LeftMetadata="*", RightMetadata="", ItemSpecToUse="Left"
+//
+// Only Left items whose Culture is in the property list survive; output
+// identity is left.ItemSpec (ItemSpecToUse="Left").
+func TestJoinItemsRightFromIdentities(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "JoinResult", ItemName: "_Filtered"})
+	left := []*Item{
+		mkItem("/loc/en/My.resources.dll", map[string]string{"Culture": "en"}),
+		mkItem("/loc/fr/My.resources.dll", map[string]string{"Culture": "fr"}),
+		mkItem("/loc/de/My.resources.dll", map[string]string{"Culture": "de"}),
+	}
+	right := ItemsFromIdentities("en;fr")
+	args := JoinItemsArgs{
+		Left: left, Right: right,
+		LeftKey: "Culture", RightKey: "",
+		LeftMetadata: "*", RightMetadata: "",
+		ItemSpecToUse: "Left",
+	}
+	if err := JoinItems(args, outputs, items, props); err != nil {
+		t.Fatalf("JoinItems returned %v", err)
+	}
+	got := items.Get("_Filtered")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 joined items, got %d: %v", len(got), identities(got))
+	}
+	// useAllLeftMeta + ItemSpecToUse=Left + RightMetadata empty → fast path returns left.Clone().
+	if got[0].Identity != "/loc/en/My.resources.dll" || got[1].Identity != "/loc/fr/My.resources.dll" {
+		t.Errorf("identities = %v, want [en, fr]", identities(got))
+	}
+	if got[0].GetMetadata("Culture") != "en" {
+		t.Errorf("Culture meta lost: got %q", got[0].GetMetadata("Culture"))
+	}
+}
+
+// TestJoinItemsCaseInsensitiveKeys ensures the inner-join's key
+// comparison matches MSBuild's OrdinalIgnoreCase semantics.
+func TestJoinItemsCaseInsensitiveKeys(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "JoinResult", ItemName: "_J"})
+	left := []*Item{mkItem("FOO", nil)}
+	right := []*Item{mkItem("foo", map[string]string{"X": "1"})}
+	args := JoinItemsArgs{
+		Left: left, Right: right,
+		RightMetadata: "*",
+	}
+	if err := JoinItems(args, outputs, items, props); err != nil {
+		t.Fatalf("JoinItems returned %v", err)
+	}
+	if len(items.Get("_J")) != 1 {
+		t.Errorf("expected 1 join hit on case-insensitive keys, got %d", len(items.Get("_J")))
+	}
+}
+
+// TestJoinItemsNoMatchIsEmpty covers the inner-join "no matches"
+// scenario — no JoinResult items, no errors.
+func TestJoinItemsNoMatchIsEmpty(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "JoinResult", ItemName: "_J"})
+	args := JoinItemsArgs{
+		Left:  []*Item{mkItem("a", nil)},
+		Right: []*Item{mkItem("b", nil)},
+	}
+	if err := JoinItems(args, outputs, items, props); err != nil {
+		t.Fatalf("JoinItems returned %v", err)
+	}
+	if got := items.Get("_J"); len(got) != 0 {
+		t.Errorf("expected empty join, got %d items", len(got))
+	}
+}
+
+func mkItem(id string, meta map[string]string) *Item {
+	it := NewItem(id)
+	for k, v := range meta {
+		it.SetMetadata(k, v)
+	}
+	return it
+}
+
 func identities(it []*Item) []string {
 	r := make([]string, len(it))
 	for i, x := range it {

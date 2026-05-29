@@ -783,6 +783,14 @@ internal static class GoEmitter {
             return;
         }
 
+        // JoinItems uses a typed Left/Right []*Item signature (the standard
+        // ParamList path can't preserve item metadata). The classifier has
+        // already validated the supported shape.
+        if (string.Equals(task.Name, "JoinItems", StringComparison.OrdinalIgnoreCase)) {
+            EmitJoinItemsTask(sb, target, task);
+            return;
+        }
+
         var fn = LocalTaskGoFunc(task.Name);
         if (fn == null) {
             sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name + ":" + task.Name)).AppendLine(")");
@@ -917,6 +925,130 @@ internal static class GoEmitter {
         }
     }
 
+    // ClassifyJoinItemsTask returns null if the JoinItems task can be
+    // emitted directly, or a short reason string otherwise.
+    //
+    // Supported shape:
+    //   <JoinItems Left="@(L)" Right="@(R)" or Right="$(prop)"
+    //              LeftKey="..." RightKey="..."
+    //              LeftMetadata="..." RightMetadata="..."
+    //              ItemSpecToUse="">
+    //     <Output TaskParameter="JoinResult" ItemName="OutName"/>
+    //   </JoinItems>
+    //
+    // All scalar params must be simple expressions (no batching, no
+    // transforms inside `@()`). Output binding must be a single
+    // `<Output TaskParameter="JoinResult" ItemName="..."/>` (the only
+    // output JoinItems exposes); PropertyName binding is rejected because
+    // JoinResult is item-typed.
+    static string? ClassifyJoinItemsTask(ProjectTaskInstance task) {
+        if (!IsSimpleConditionTemplate(task.Condition)) return "complex-task-condition";
+        if (ContainsBatching(task.Condition)) return "task-batching";
+
+        // Left is required and must be an item-list reference `@(X)`.
+        if (!task.Parameters.TryGetValue("Left", out var left) || string.IsNullOrWhiteSpace(left))
+            return "complex-task-param:JoinItems.Left";
+        if (TryGetSimpleItemListRef(left) == null) return "complex-task-param:JoinItems.Left";
+        if (ContainsBatching(left)) return "task-batching";
+
+        // Right may be `@(X)` (item-list) OR a simple expression that
+        // expands to a `;`-separated identity string (e.g. `$(prop)`).
+        if (!task.Parameters.TryGetValue("Right", out var right) || string.IsNullOrWhiteSpace(right))
+            return "complex-task-param:JoinItems.Right";
+        var rightIsItemList = TryGetSimpleItemListRef(right) != null;
+        if (!rightIsItemList && !IsSimpleExpressionTemplate(right))
+            return "complex-task-param:JoinItems.Right";
+        if (ContainsBatching(right)) return "task-batching";
+
+        foreach (var key in new[] { "LeftKey", "RightKey", "LeftMetadata", "RightMetadata", "ItemSpecToUse" }) {
+            if (!task.Parameters.TryGetValue(key, out var val) || val == null) continue;
+            if (!IsSimpleExpressionTemplate(val)) return "complex-task-param:JoinItems." + key;
+            if (ContainsBatching(val)) return "task-batching";
+        }
+
+        if (task.Outputs.Count == 0) return "complex-task-param:JoinItems.NoOutput";
+        if (task.Outputs.Count > 1) return "complex-task-param:JoinItems.MultipleOutputs";
+        if (task.Outputs[0] is not ProjectTaskOutputItemInstance oi)
+            return "complex-task-param:JoinItems.OutputNotItem";
+        if (!string.Equals(oi.TaskParameter, "JoinResult", StringComparison.OrdinalIgnoreCase))
+            return "complex-task-param:JoinItems.OutputParam";
+        if (!IsSimpleIdentifierName(oi.ItemType))
+            return "complex-task-param:JoinItems.OutputItemType";
+        return null;
+    }
+
+    // EmitJoinItemsTask emits a typed JoinItems call. Left and Right are
+    // materialized as []*Item slices (looked up via I.Get for @() refs,
+    // built from a `;`-separated identity string via rt.ItemsFromIdentities
+    // for property-sourced sides). The result is bound to the single
+    // `<Output ItemName="OutName"/>` via I.AppendTo.
+    static void EmitJoinItemsTask(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
+        var oi = (ProjectTaskOutputItemInstance)task.Outputs[0];
+        var outName = oi.ItemType;
+        var hasCond = !string.IsNullOrWhiteSpace(task.Condition);
+
+        sb.Append("\t{").AppendLine();
+        var indent = "\t\t";
+        if (hasCond) {
+            sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
+            indent = "\t\t\t";
+        }
+
+        var leftVal = task.Parameters["Left"];
+        var rightVal = task.Parameters["Right"];
+        sb.Append(indent).Append("_jiLeft := ").Append(EmitJoinItemsSide(leftVal)).AppendLine();
+        sb.Append(indent).Append("_jiRight := ").Append(EmitJoinItemsSide(rightVal)).AppendLine();
+        sb.Append(indent).AppendLine("_jiArgs := rt.JoinItemsArgs{");
+        sb.Append(indent).AppendLine("\tLeft:  _jiLeft,");
+        sb.Append(indent).AppendLine("\tRight: _jiRight,");
+        EmitJoinItemsStringField(sb, indent, "LeftKey", task);
+        EmitJoinItemsStringField(sb, indent, "RightKey", task);
+        EmitJoinItemsStringField(sb, indent, "LeftMetadata", task);
+        EmitJoinItemsStringField(sb, indent, "RightMetadata", task);
+        EmitJoinItemsStringField(sb, indent, "ItemSpecToUse", task);
+        sb.Append(indent).AppendLine("}");
+        sb.Append(indent).Append("_jiOut := rt.NewOutputList(rt.Output{Key: \"JoinResult\", ItemName: ")
+          .Append(GoStringLiteral(outName)).AppendLine("})");
+        sb.Append(indent).AppendLine("if err := rt.JoinItems(_jiArgs, _jiOut, I, P); err != nil {");
+        sb.Append(indent).Append("\trt.GetErrorList().Add(\"").Append(EscapeForGo(target.Name)).AppendLine("\", err)");
+        sb.Append(indent).AppendLine("}");
+        if (hasCond) {
+            sb.Append("\t\t}").AppendLine();
+        }
+        sb.Append("\t}").AppendLine();
+    }
+
+    // EmitJoinItemsSide returns a Go expression that yields []*Item for a
+    // JoinItems Left/Right parameter. `@(X)` becomes `I.Get("X")`; other
+    // simple expressions are expanded then split into identity-only items
+    // via rt.ItemsFromIdentities.
+    static string EmitJoinItemsSide(string val) {
+        var listName = TryGetSimpleItemListRef(val);
+        if (listName != null) {
+            return "I.Get(" + GoStringLiteral(listName) + ")";
+        }
+        return "rt.ItemsFromIdentities(rt.MustExpand(" + GoStringLiteral(val) + ", P, I, nil))";
+    }
+
+    static void EmitJoinItemsStringField(StringBuilder sb, string indent, string key, ProjectTaskInstance task) {
+        var val = task.Parameters.TryGetValue(key, out var v) ? v : "";
+        if (string.IsNullOrEmpty(val)) return;
+        sb.Append(indent).Append("\t").Append(key).Append(": rt.MustExpand(")
+          .Append(GoStringLiteral(val)).AppendLine(", P, I, nil),");
+    }
+
+    // TryGetSimpleItemListRef returns the item-list name if `val` is exactly
+    // `@(SimpleIdent)` (possibly with surrounding whitespace), otherwise
+    // null. Used by the JoinItems classifier + emitter to recognize the
+    // `Left="@(X)"` shape without engaging the general expression path.
+    static string? TryGetSimpleItemListRef(string? val) {
+        if (string.IsNullOrEmpty(val)) return null;
+        var s = val.Trim();
+        if (s.Length < 4 || s[0] != '@' || s[1] != '(' || s[s.Length - 1] != ')') return null;
+        var inner = s.Substring(2, s.Length - 3).Trim();
+        return IsSimpleIdentifierName(inner) ? inner : null;
+    }
+
     // ClassifyTarget returns null if the target can be emitted with a real
     // body, or a short reason string otherwise.
     static string? ClassifyTarget(ProjectTargetInstance target) {
@@ -951,6 +1083,14 @@ internal static class GoEmitter {
                             if (!IsSimpleExpressionTemplate(ctTargets)) return "complex-task-param:CallTarget.Targets";
                             if (ContainsBatching(ctTargets)) return "task-batching";
                         }
+                        break;
+                    }
+                    if (string.Equals(task.Name, "JoinItems", StringComparison.OrdinalIgnoreCase)) {
+                        // JoinItems uses a dedicated typed call path (the
+                        // standard ParamList path can't preserve Left/Right
+                        // metadata). Validate the supported shape here.
+                        var jiReason = ClassifyJoinItemsTask(task);
+                        if (jiReason != null) return jiReason;
                         break;
                     }
                     if (LocalTaskGoFunc(task.Name) == null) return "task:" + task.Name;
@@ -1564,6 +1704,7 @@ internal static class GoEmitter {
         { "CheckForDuplicateNuGetItemsTask", "CheckForDuplicateNuGetItemsTask" },
         { "Exec", "Exec" },
         { "FindUnderPath", "FindUnderPath" },
+        { "JoinItems", "JoinItems" },
     };
     static string? LocalTaskGoFunc(string taskName) =>
         _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;

@@ -152,6 +152,25 @@ func (i *Item) SetMetadata(name, value string) {
 	}
 }
 
+// RemoveMetadata deletes the metadata entry under the lowercased name.
+// Cached well-known paths are invalidated where applicable so a later
+// GetMetadata recomputes from Identity.
+func (i *Item) RemoveMetadata(name string) {
+	if i.meta == nil {
+		return
+	}
+	key := strings.ToLower(name)
+	delete(i.meta, key)
+	switch key {
+	case "fullpath":
+		i.cachedFullPathOK = false
+	case "directory":
+		i.cachedDirectoryOK = false
+	case "relativedir":
+		i.cachedRelDirOK = false
+	}
+}
+
 // CopyMetadataTo copies all metadata from src to dst. Existing keys in dst
 // are overwritten (matches the C# CopyMetadataTo behavior).
 func (i *Item) CopyMetadataTo(dst *Item) {
