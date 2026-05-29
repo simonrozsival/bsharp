@@ -38,8 +38,8 @@ internal static class GoEmitter {
             JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
         Console.Error.WriteLine($"codegen: --emit-go wrote main.go ({mainGo.Length} chars), go.mod, emit-report.json to {outDir}");
-        Console.Error.WriteLine($"codegen: --emit-go status: {report.Targets.Total} targets ({report.Targets.SupportedStub} stub, {report.Targets.UnsupportedNote} marked unsupported)");
-        Console.Error.WriteLine($"codegen: --emit-go NOT a working host yet — target bodies panic at runtime via runtime.NotImplemented.");
+        Console.Error.WriteLine($"codegen: --emit-go status: {report.Targets.Total} targets ({report.Targets.RealBody} real-body, {report.Targets.StubBody} stub)");
+        Console.Error.WriteLine($"codegen: --emit-go Phase A: complex targets still panic; see emit-report.json for per-reason counts.");
         return 0;
     }
 
@@ -150,27 +150,37 @@ internal static class GoEmitter {
             .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         report.Targets.Total = targets.Length;
-        report.Targets.SupportedStub = 0;
-        report.Targets.UnsupportedNote = 0;
+        report.Targets.RealBody = 0;
+        report.Targets.StubBody = 0;
+        report.Targets.UnsupportedReasons = new SortedDictionary<string, int>(StringComparer.Ordinal);
 
-        sb.AppendLine("// Target stubs. Each panics via runtime.NotImplemented until the real");
-        sb.AppendLine("// body emitter lands. Names are sanitized to Go-identifier form.");
-        sb.AppendLine();
         var targetIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var nameSet = new HashSet<string>(StringComparer.Ordinal);
         foreach (var target in targets) {
-            var ident = SanitizeTargetName(target.Name, nameSet);
-            targetIndex[target.Name] = ident;
-            sb.Append("func ").Append(ident).Append("() {");
-            sb.AppendLine();
-            sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name)).AppendLine(")");
-            sb.AppendLine("\tpanic(\"target body not yet emitted: " + EscapeForGo(target.Name) + "\")");
-            sb.AppendLine("}");
-            sb.AppendLine();
-            report.Targets.SupportedStub++;
+            targetIndex[target.Name] = SanitizeTargetName(target.Name, nameSet);
         }
 
-        sb.AppendLine("// dispatchTarget maps target names to stub functions. Generated.");
+        sb.AppendLine("// Generated target functions. Each target is classified as one of:");
+        sb.AppendLine("//   - real-body: emitted from MSBuild XML using runtime.Expand / runtime.EvalCondition");
+        sb.AppendLine("//   - stub:      panics via runtime.NotImplemented (Phase A doesn't yet handle the construct)");
+        sb.AppendLine("// See emit-report.json for the classification per target.");
+        sb.AppendLine();
+
+        foreach (var target in targets) {
+            var ident = targetIndex[target.Name];
+            var reason = ClassifyTarget(target);
+            if (reason == null) {
+                EmitRealTargetBody(sb, target, ident, targetIndex);
+                report.Targets.RealBody++;
+            } else {
+                EmitStubTargetBody(sb, target, ident, reason);
+                report.Targets.StubBody++;
+                report.Targets.UnsupportedReasons.TryGetValue(reason, out var c);
+                report.Targets.UnsupportedReasons[reason] = c + 1;
+            }
+        }
+
+        sb.AppendLine("// dispatchTarget maps target names to functions. Generated.");
         sb.AppendLine("func dispatchTarget(name string) bool {");
         sb.AppendLine("\tswitch strings.ToLower(name) {");
         foreach (var target in targets) {
@@ -185,14 +195,221 @@ internal static class GoEmitter {
         sb.AppendLine();
     }
 
+    static void EmitStubTargetBody(StringBuilder sb, ProjectTargetInstance target, string ident, string reason) {
+        sb.Append("// ").Append(target.Name).Append(": stub — ").AppendLine(reason);
+        sb.Append("func ").Append(ident).AppendLine("() {");
+        sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        sb.AppendLine("\tpanic(\"target body not yet emitted: " + EscapeForGo(target.Name) + " — " + EscapeForGo(reason) + "\")");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    static void EmitRealTargetBody(StringBuilder sb, ProjectTargetInstance target, string ident, Dictionary<string, string> targetIndex) {
+        sb.Append("// ").Append(target.Name).AppendLine(": real body");
+        sb.Append("func ").Append(ident).AppendLine("() {");
+        sb.Append("\tts := rt.GetTargetState(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        sb.AppendLine("\tif !ts.TryEnter() { return }");
+
+        if (!string.IsNullOrWhiteSpace(target.DependsOnTargets)) {
+            foreach (var dep in target.DependsOnTargets.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+                if (targetIndex.TryGetValue(dep, out var depIdent)) {
+                    sb.Append("\t").Append(depIdent).AppendLine("()")
+                      .Append("");
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.Condition)) {
+            sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
+        }
+
+        sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+
+        foreach (var child in target.Children) {
+            if (child is ProjectTaskInstance task) {
+                EmitLocalTaskCall(sb, target, task);
+            }
+        }
+
+        sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+        sb.AppendLine("\tts.MarkDone()");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    static void EmitLocalTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
+        var fn = LocalTaskGoFunc(task.Name);
+        if (fn == null) {
+            sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name + ":" + task.Name)).AppendLine(")");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.Append("\tif rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
+        }
+
+        sb.Append("\tif err := rt.").Append(fn).Append("(rt.NewParamList(");
+        var first = true;
+        foreach (var param in task.Parameters) {
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append("rt.Param{Key: ").Append(GoStringLiteral(param.Key))
+              .Append(", Value: rt.MustExpand(").Append(GoStringLiteral(param.Value)).Append(", P, I, nil)}");
+        }
+        sb.Append("));");
+
+        // Tasks that take ItemBag/OutputList come in two flavors. Our Phase A
+        // classifier rejected any task with an <Output/>, so we know there are
+        // no outputs to wire — pass nil/empty for ItemBag.
+        if (TaskNeedsItemBag(task.Name)) {
+            // Replace closing paren with the extra args. The last char written
+            // was ");" — strip the trailing ");" and re-emit with outputs nil.
+            sb.Length -= 2;
+            sb.Append(", nil, I);");
+        }
+        sb.AppendLine(" err != nil { rt.GetErrorList().Add(\"" + EscapeForGo(target.Name) + "\", err) }");
+
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.AppendLine("\t}");
+        }
+    }
+
+    // ClassifyTarget returns null if the target can be emitted with a real
+    // body, or a short reason string otherwise.
+    static string? ClassifyTarget(ProjectTargetInstance target) {
+        if (ContainsBatching(target.Inputs) || ContainsBatching(target.Outputs)) {
+            return "target-batching";
+        }
+        if (!string.IsNullOrWhiteSpace(target.Inputs) || !string.IsNullOrWhiteSpace(target.Outputs)) {
+            return "target-inputs-outputs";
+        }
+        if (target.BeforeTargets is { Length: > 0 } || target.AfterTargets is { Length: > 0 }) {
+            // Before/After hooks need a different dispatch model; defer.
+            return "before-after-targets";
+        }
+        if (!string.IsNullOrWhiteSpace(target.DependsOnTargets) && target.DependsOnTargets.IndexOfAny(new[] { '$', '@', '%' }) >= 0) {
+            return "dynamic-depends-on-targets";
+        }
+        if (!IsSimpleConditionTemplate(target.Condition)) {
+            return "complex-target-condition";
+        }
+        foreach (var child in target.Children) {
+            switch (child) {
+                case ProjectTaskInstance task:
+                    if (LocalTaskGoFunc(task.Name) == null) return "task:" + task.Name;
+                    if (task.Outputs.Count > 0) return "task-has-outputs:" + task.Name;
+                    if (!IsSimpleConditionTemplate(task.Condition)) return "complex-task-condition";
+                    foreach (var p in task.Parameters) {
+                        if (!IsSimpleExpressionTemplate(p.Value)) return "complex-task-param:" + task.Name + "." + p.Key;
+                        if (ContainsBatching(p.Value)) return "task-batching";
+                    }
+                    break;
+                case ProjectPropertyGroupTaskInstance:
+                    return "property-group-in-target";
+                case ProjectItemGroupTaskInstance:
+                    return "item-group-in-target";
+                case ProjectOnErrorInstance:
+                    return "on-error";
+                default:
+                    return "unknown-target-child";
+            }
+        }
+        return null;
+    }
+
+    // LocalTaskGoFunc maps an MSBuild task name to the Go runtime helper name.
+    // Returns null for tasks we don't have a local implementation for yet.
+    static string? LocalTaskGoFunc(string taskName) => taskName switch {
+        "Message" => "Message",
+        "Warning" => "Warning",
+        "Error"   => "Error",
+        "MakeDir" => "MakeDir",
+        "RemoveDir" => "RemoveDir",
+        "Touch"   => "Touch",
+        "Delete"  => "Delete",
+        "Copy"    => "Copy",
+        "WriteLinesToFile" => "WriteLinesToFile",
+        "ReadLinesFromFile" => "ReadLinesFromFile",
+        _ => null,
+    };
+
+    static bool TaskNeedsItemBag(string taskName) => taskName switch {
+        "MakeDir" or "RemoveDir" or "Touch" or "Delete" or "Copy" or "ReadLinesFromFile" => true,
+        _ => false,
+    };
+
+    // IsSimpleExpressionTemplate returns true if `template` only uses constructs
+    // the Phase A runtime.Expand evaluator handles: literals, $(X), @(Y) (no
+    // transforms), %(Z). Returns false on anything more complex.
+    static bool IsSimpleExpressionTemplate(string? template) {
+        if (string.IsNullOrEmpty(template)) return true;
+        for (int i = 0; i < template.Length; i++) {
+            var c = template[i];
+            if (c == '$' || c == '@' || c == '%') {
+                if (i + 1 >= template.Length || template[i + 1] != '(') continue;
+                var end = FindMatchingParen(template, i + 1);
+                if (end < 0) return false;
+                var inner = template.Substring(i + 2, end - i - 2);
+                if (c == '$' && inner.IndexOfAny(new[] { '.', '(', '[', ':' }) >= 0) return false;
+                if (c == '@' && inner.Contains("->")) return false;
+                i = end;
+            }
+        }
+        return true;
+    }
+
+    static bool IsSimpleConditionTemplate(string? condition) {
+        if (string.IsNullOrWhiteSpace(condition)) return true;
+        // Reject any of the well-known Phase B+ markers.
+        if (condition.IndexOf("Exists", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+        if (condition.IndexOf("HasTrailingSlash", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+        if (condition.IndexOf("MSBuild::", StringComparison.Ordinal) >= 0) return false;
+        if (condition.IndexOf("System.", StringComparison.Ordinal) >= 0) return false;
+        if (condition.IndexOf("::", StringComparison.Ordinal) >= 0) return false;
+        // Allow only $(Prop) / @(Items) / %(Meta) and quoted strings; reject
+        // property functions like $(X.ToLower()).
+        for (int i = 0; i < condition.Length; i++) {
+            if (condition[i] == '$' && i + 1 < condition.Length && condition[i + 1] == '(') {
+                var end = FindMatchingParen(condition, i + 1);
+                if (end < 0) return false;
+                var inner = condition.Substring(i + 2, end - i - 2);
+                if (inner.IndexOfAny(new[] { '.', '(' }) >= 0) return false;
+                i = end;
+            }
+        }
+        return true;
+    }
+
+    static int FindMatchingParen(string s, int openIdx) {
+        var depth = 0;
+        for (int i = openIdx; i < s.Length; i++) {
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    static bool ContainsBatching(string? value) {
+        if (string.IsNullOrEmpty(value)) return false;
+        for (int i = 0; i + 1 < value.Length; i++) {
+            if (value[i] == '%' && value[i + 1] == '(') return true;
+        }
+        return false;
+    }
+
     static void EmitMain(StringBuilder sb, ProjectInstance instance, IReadOnlyList<string>? requestedTargets) {
         var defaultEntry = requestedTargets is { Count: > 0 } ? requestedTargets[0] : (instance.DefaultTargets.FirstOrDefault() ?? "Build");
         sb.AppendLine("func main() {");
+        sb.AppendLine("\trt.Log.Level = rt.ParseVerbosity(os.Getenv(\"BSHARP_VERBOSITY\"))");
         sb.AppendLine("\tentry := " + GoStringLiteral(defaultEntry));
         sb.AppendLine("\tif len(os.Args) > 1 { entry = os.Args[1] }");
         sb.AppendLine("\tif !dispatchTarget(entry) {");
         sb.AppendLine("\t\tfmt.Fprintf(os.Stderr, \"bsharp-go-host: unknown target %q\\n\", entry)");
         sb.AppendLine("\t\tos.Exit(2)");
+        sb.AppendLine("\t}");
+        sb.AppendLine("\tif rt.GetErrorList().HasErrors() {");
+        sb.AppendLine("\t\tfmt.Fprint(os.Stderr, rt.GetErrorList().FormatSummary())");
+        sb.AppendLine("\t\tos.Exit(1)");
         sb.AppendLine("\t}");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -252,7 +469,7 @@ internal static class GoEmitter {
         public ItemsReport Items { get; set; } = new();
         public TargetsReport Targets { get; set; } = new();
         public string Note { get; set; } =
-            "Foundation scaffold only. Target bodies panic; full emit lands in follow-up work.";
+            "Phase A scaffold. Real bodies emitted for simple targets; complex ones still panic.";
     }
     internal sealed class PropertiesReport {
         public int Total { get; set; }
@@ -265,7 +482,8 @@ internal static class GoEmitter {
     }
     internal sealed class TargetsReport {
         public int Total { get; set; }
-        public int SupportedStub { get; set; }
-        public int UnsupportedNote { get; set; }
+        public int RealBody { get; set; }
+        public int StubBody { get; set; }
+        public SortedDictionary<string, int> UnsupportedReasons { get; set; } = new(StringComparer.Ordinal);
     }
 }
