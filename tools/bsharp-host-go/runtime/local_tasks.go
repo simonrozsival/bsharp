@@ -271,6 +271,63 @@ func NotImplemented(name string) {
 	Log.Warning("BSGO0001", "task '"+name+"' is not implemented in the Go host")
 }
 
+// formatSdkMessage builds the diagnostic text for the NETSdk*/MSBuildInternalMessage
+// task family. The MSBuild SDK looks ResourceName up in a localised .resx file
+// and applies String.Format with FormatArguments; the bsharp Go host does not
+// embed those resource strings, so it prints the bare ResourceName plus the
+// (already-expanded) format arguments. Semantically this is enough — the
+// gating logic lives in the task's Condition; the body only runs when the
+// SDK would also have raised the diagnostic.
+func formatSdkMessage(p ParamList) string {
+	resourceName := p.GetValueOrDefault("ResourceName")
+	formatArgs := p.GetValueOrDefault("FormatArguments")
+	if formatArgs == "" {
+		return resourceName
+	}
+	return resourceName + ": " + formatArgs
+}
+
+// NETSdkError emits an SDK-defined build error. Returns the formatted error
+// so the calling target adds it to the error list (terminal failure).
+func NETSdkError(p ParamList) error {
+	text := formatSdkMessage(p)
+	code := "NETSDK_" + p.GetValueOrDefault("ResourceName")
+	Log.Error(code, text)
+	return fmt.Errorf("%s: %s", code, text)
+}
+
+// NETSdkWarning emits an SDK-defined build warning. Never fails the build.
+func NETSdkWarning(p ParamList) error {
+	Log.Warning("NETSDK_"+p.GetValueOrDefault("ResourceName"), formatSdkMessage(p))
+	return nil
+}
+
+// NETSdkInformation emits an SDK-defined informational message.
+func NETSdkInformation(p ParamList) error {
+	Log.MessageHigh(formatSdkMessage(p))
+	return nil
+}
+
+// MSBuildInternalMessage is a polymorphic diagnostic the SDK uses where the
+// severity is decided by a property. Severity values: "Error", "Warning",
+// "Message" (default normal-importance), "Information" (high-importance).
+func MSBuildInternalMessage(p ParamList) error {
+	text := formatSdkMessage(p)
+	code := "MSB_" + p.GetValueOrDefault("ResourceName")
+	switch strings.ToLower(p.GetValueOrDefault("Severity")) {
+	case "error":
+		Log.Error(code, text)
+		return fmt.Errorf("%s: %s", code, text)
+	case "warning":
+		Log.Warning(code, text)
+	case "information", "high":
+		Log.MessageHigh(text)
+	default:
+		Log.MessageNormal(text)
+	}
+	return nil
+}
+
 // PropertyBag is the contract the runtime expects from the generated `P`
 // struct: set / get / set-extra. Generated code implements this via methods
 // on the `*props` struct.

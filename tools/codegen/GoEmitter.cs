@@ -668,6 +668,10 @@ internal static class GoEmitter {
         "Copy"    => "Copy",
         "WriteLinesToFile" => "WriteLinesToFile",
         "ReadLinesFromFile" => "ReadLinesFromFile",
+        "NETSdkError" => "NETSdkError",
+        "NETSdkWarning" => "NETSdkWarning",
+        "NETSdkInformation" => "NETSdkInformation",
+        "MSBuildInternalMessage" => "MSBuildInternalMessage",
         _ => null,
     };
 
@@ -877,6 +881,25 @@ internal static class GoEmitter {
                 continue;
             }
             switch (c) {
+                case '<': case '>':
+                    // Numeric / version comparisons (>=, <=, >, <) are NOT
+                    // supported by the runtime cond_eval grammar (it only
+                    // handles == and !=). Rejecting these here prevents
+                    // runtime panics in targets that would otherwise pass
+                    // classification because the surrounding $() / @()
+                    // operands are themselves valid.
+                    return false;
+                case '!':
+                    // `!=` is fine (handled by the runtime); a lone `!`
+                    // followed by anything else is a bare boolean negation
+                    // (e.g. `!$(X.Contains(';'))`) which the runtime
+                    // condition parser does not accept. Reject early so the
+                    // target stubs out instead of panicking.
+                    if (i + 1 < condition.Length && condition[i + 1] == '=') {
+                        i += 2;
+                        continue;
+                    }
+                    return false;
                 case '\'': case '"': quote = c; i++; continue;
                 case '$':
                     if (i + 1 < condition.Length && condition[i + 1] == '(') {
