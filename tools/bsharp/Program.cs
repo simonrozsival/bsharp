@@ -132,13 +132,9 @@ static class Launcher {
             }
         }
 
-        // Fast path: if cached build exists and was validated recently, skip expensive hash recomputation
+        // Fast path: if cached build exists and no shape input is newer than the cache, trust it.
         if (!noCache && File.Exists(hashFile) && File.Exists(binFile)) {
-            var hashFileInfo = new FileInfo(hashFile);
-            var age = DateTime.UtcNow - hashFileInfo.LastWriteTimeUtc;
-            
-            // If validated within the last second, trust it (developers rarely modify and build in < 1s)
-            if (age.TotalSeconds < 1.0) {
+            if (IsHashFileStillFresh(projectPath, hashFile)) {
                 return ExecBuildBinary(binFile, forwardArgs);
             }
         }
@@ -281,13 +277,24 @@ static class Launcher {
     static int RestoreMissingAssetsWithCachedHost(string binFile, string projectPath) {
         Console.Error.WriteLine("bsharp: restoring missing project assets with cached bsharp host...");
         var sw = Stopwatch.StartNew();
-        var rc = ExecBuildBinary(binFile, new List<string> { "restore", projectPath, "-v:quiet" });
+        // Use the non-execv path here: we need to return to the launcher to
+        // continue with the actual build/run after the restore completes.
+        var rc = RunBuildBinaryAndWait(binFile, new List<string> { "restore", projectPath, "-v:quiet" });
         sw.Stop();
         if (rc != 0)
             Console.Error.WriteLine($"bsharp: cached bsharp restore failed (exit {rc}); falling back to dotnet restore");
         else
             Console.Error.WriteLine($"bsharp: cached bsharp restore done in {sw.ElapsedMilliseconds}ms");
         return rc;
+    }
+
+    static int RunBuildBinaryAndWait(string binFile, List<string> forwardArgs) {
+        SetBuildBinaryEnvironment();
+        var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
+        foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
+        var proc = Process.Start(psi)!;
+        proc.WaitForExit();
+        return proc.ExitCode;
     }
 
     static int RestoreProject(string projectPath, List<KeyValuePair<string, string>> globalProps, string reason) {
@@ -1302,26 +1309,83 @@ static class Launcher {
     }
 
     static int ExecBuildBinary(string binFile, List<string> forwardArgs) {
-        var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
-        if (!string.IsNullOrEmpty(Environment.ProcessPath)) {
-            psi.Environment["BSHARP_LAUNCHER_PATH"] = Environment.ProcessPath;
-            // Daemon binary is staged alongside the launcher. The host looks up sibling
-            // first, but BSHARP_TASKD_PATH lets us also support odd layouts (link to the
-            // launcher from a different directory than the daemon publish, dev tree, ...).
-            if (Environment.GetEnvironmentVariable("BSHARP_TASKD_PATH") is null) {
-                var launcherDir = Path.GetDirectoryName(ResolveLauncherRealPath(Environment.ProcessPath));
-                if (!string.IsNullOrEmpty(launcherDir)) {
-                    var exe = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "bsharp-taskd.exe" : "bsharp-taskd";
-                    var candidate = Path.Combine(launcherDir, exe);
-                    if (File.Exists(candidate))
-                        psi.Environment["BSHARP_TASKD_PATH"] = candidate;
-                }
+        SetBuildBinaryEnvironment();
+
+        // On Unix, replace the launcher process with the host via execv. Saves
+        // ~10 ms vs Process.Start + WaitForExit (no fork, no wait round-trip)
+        // and the launcher process simply disappears. We only need fork+wait on
+        // Windows or if execv fails for some reason.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+            try {
+                ExecvOrThrow(binFile, forwardArgs);
+            } catch {
+                // Fall through to Process.Start on failure.
             }
         }
+
+        var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
         foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
         var proc = Process.Start(psi)!;
         proc.WaitForExit();
         return proc.ExitCode;
+    }
+
+    static void SetBuildBinaryEnvironment() {
+        if (string.IsNullOrEmpty(Environment.ProcessPath)) return;
+        SetEnvironmentVariableForExec("BSHARP_LAUNCHER_PATH", Environment.ProcessPath);
+        // Daemon binary is staged alongside the launcher. The host looks up sibling
+        // first, but BSHARP_TASKD_PATH lets us also support odd layouts (link to the
+        // launcher from a different directory than the daemon publish, dev tree, ...).
+        if (Environment.GetEnvironmentVariable("BSHARP_TASKD_PATH") is null) {
+            var launcherDir = Path.GetDirectoryName(ResolveLauncherRealPath(Environment.ProcessPath));
+            if (!string.IsNullOrEmpty(launcherDir)) {
+                var exe = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "bsharp-taskd.exe" : "bsharp-taskd";
+                var candidate = Path.Combine(launcherDir, exe);
+                if (File.Exists(candidate))
+                    SetEnvironmentVariableForExec("BSHARP_TASKD_PATH", candidate);
+            }
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "execv", SetLastError = true)]
+    static extern int LibcExecv(string path, IntPtr argv);
+
+    // CoreCLR's Environment.SetEnvironmentVariable on Unix does NOT update the
+    // process's environ(7) array; it only updates a managed cache. That means
+    // any env var we want to be visible after execv must go through libc
+    // setenv(3) directly. Without this, BSHARP_LAUNCHER_PATH / BSHARP_TASKD_PATH
+    // would silently be dropped on the launcher→host execv transition.
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setenv", SetLastError = true)]
+    static extern int LibcSetenv(string name, string value, int overwrite);
+
+    static void SetEnvironmentVariableForExec(string name, string value) {
+        Environment.SetEnvironmentVariable(name, value);
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+            _ = LibcSetenv(name, value, 1);
+        }
+    }
+
+    static void ExecvOrThrow(string path, List<string> forwardArgs) {
+        // execv(path, [path, arg1, ..., argN, NULL])
+        var argvLen = forwardArgs.Count + 2; // path + args + null terminator
+        var argv = Marshal.AllocHGlobal(IntPtr.Size * argvLen);
+        try {
+            Marshal.WriteIntPtr(argv, 0, Marshal.StringToCoTaskMemUTF8(path));
+            for (int i = 0; i < forwardArgs.Count; i++)
+                Marshal.WriteIntPtr(argv, (i + 1) * IntPtr.Size, Marshal.StringToCoTaskMemUTF8(forwardArgs[i]));
+            Marshal.WriteIntPtr(argv, (argvLen - 1) * IntPtr.Size, IntPtr.Zero);
+
+            LibcExecv(path, argv);
+            // execv only returns on failure
+            throw new InvalidOperationException("execv returned, errno=" + Marshal.GetLastWin32Error());
+        } finally {
+            // Only reached on failure; on success the process image is replaced.
+            for (int i = 0; i < argvLen - 1; i++) {
+                var p = Marshal.ReadIntPtr(argv, i * IntPtr.Size);
+                if (p != IntPtr.Zero) Marshal.FreeCoTaskMem(p);
+            }
+            Marshal.FreeHGlobal(argv);
+        }
     }
 
     static string ResolveLauncherRealPath(string launcherPath) {
@@ -1334,10 +1398,16 @@ static class Launcher {
     }
 
     static int ExecBuildBinaryAndRefreshShapeHash(string binFile, List<string> forwardArgs, string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets, string hashFile) {
-        var rc = ExecBuildBinary(binFile, forwardArgs);
-        if (rc == 0 && File.Exists(hashFile))
-            RefreshShapeHash(projectPath, globalProps, requestedTargets, hashFile);
-        return rc;
+        // On Unix we execv into the build binary, so any post-exec refresh
+        // would never run. Bump the hash file's mtime *before* exec'ing so the
+        // next call's stat-based fast path triggers. We don't recompute the
+        // hash here: callers only invoke this on a cache hit, so the on-disk
+        // hash is already correct -- we just need to tell the filesystem "yes,
+        // this is current as of now".
+        if (File.Exists(hashFile)) {
+            try { File.SetLastWriteTimeUtc(hashFile, DateTime.UtcNow); } catch { }
+        }
+        return ExecBuildBinary(binFile, forwardArgs);
     }
 
     static void RefreshShapeHash(string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets, string hashFile) {
@@ -1345,5 +1415,77 @@ static class Launcher {
         var mode = lines.Length > 1 ? lines[1] : "";
         var hash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
         File.WriteAllText(hashFile, hash + "\n" + mode + "\n");
+    }
+
+    // Cheap stat-only check used as the launcher fast path. We trust the cached
+    // shape.hash if none of the *user-controlled* shape inputs has a newer
+    // mtime than the cache. This skips SHA256-ing every Directory.Build.* and
+    // re-parsing every .csproj that ComputeShapeHash walks.
+    //
+    // Inputs we look at (project-local; SDK imports never change between builds):
+    //   - The project file itself
+    //   - All ancestor Directory.Build.props, Directory.Build.targets,
+    //     Directory.Packages.props, NuGet.config, global.json (walk up to root)
+    //   - packages.lock.json + obj/project.assets.json next to the project
+    //   - Statically resolvable <Import Project="..."/> and <ProjectReference Include="..."/>
+    //     entries, walked transitively with the same per-project shape inputs.
+    //
+    // If any of these is newer than the hashFile (or any disappeared / appeared),
+    // we fall back to the full ComputeShapeHash + content check.
+    static bool IsHashFileStillFresh(string projectPath, string hashFile) {
+        var hashMtime = File.GetLastWriteTimeUtc(hashFile);
+        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return ProjectGraphStillFresh(projectPath, hashMtime, visitedProjects, visitedImports);
+
+        static bool ProjectGraphStillFresh(string path, DateTime threshold, HashSet<string> visitedProjects, HashSet<string> visitedImports) {
+            path = Path.GetFullPath(path);
+            if (!visitedProjects.Add(path)) return true;
+            if (NewerThan(path, threshold)) return false;
+
+            var projDir = Path.GetDirectoryName(path)!;
+            if (NewerThan(Path.Combine(projDir, "packages.lock.json"), threshold)) return false;
+            if (NewerThan(Path.Combine(projDir, "obj", "project.assets.json"), threshold)) return false;
+
+            var d = new DirectoryInfo(projDir);
+            while (d != null) {
+                if (NewerThan(Path.Combine(d.FullName, "Directory.Build.props"), threshold)) return false;
+                if (NewerThan(Path.Combine(d.FullName, "Directory.Build.targets"), threshold)) return false;
+                if (NewerThan(Path.Combine(d.FullName, "Directory.Packages.props"), threshold)) return false;
+                if (NewerThan(Path.Combine(d.FullName, "NuGet.config"), threshold)) return false;
+                if (NewerThan(Path.Combine(d.FullName, "global.json"), threshold)) return false;
+                d = d.Parent;
+            }
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (!ImportGraphStillFresh(importPath, threshold, visitedProjects, visitedImports))
+                    return false;
+            }
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include")) {
+                if (!ProjectGraphStillFresh(referencePath, threshold, visitedProjects, visitedImports))
+                    return false;
+            }
+            return true;
+        }
+
+        static bool ImportGraphStillFresh(string path, DateTime threshold, HashSet<string> visitedProjects, HashSet<string> visitedImports) {
+            path = Path.GetFullPath(path);
+            if (!visitedImports.Add(path)) return true;
+            if (NewerThan(path, threshold)) return false;
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (!ImportGraphStillFresh(importPath, threshold, visitedProjects, visitedImports))
+                    return false;
+            }
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include")) {
+                if (!ProjectGraphStillFresh(referencePath, threshold, visitedProjects, visitedImports))
+                    return false;
+            }
+            return true;
+        }
+
+        static bool NewerThan(string path, DateTime threshold) {
+            if (!File.Exists(path)) return false;
+            return File.GetLastWriteTimeUtc(path) > threshold;
+        }
     }
 }
