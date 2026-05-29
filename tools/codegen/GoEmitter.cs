@@ -693,8 +693,12 @@ internal static class GoEmitter {
                 var includeKind = ClassifyItemIncludeSpec(include);
                 if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
             } else {
+                // Remove="..." path: any expression that IsSimpleExpression
+                // can handle is fine here, including @(SomeItemList). The
+                // emitter passes Remove through rt.MustExpand which already
+                // joins @() lists by identity and SplitSemicolon-splits the
+                // result for per-identity removal.
                 if (!IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
-                if (remove.Contains("@(", StringComparison.Ordinal)) return "ig-remove-item-ref-not-supported";
             }
 
             foreach (var meta in item.Metadata) {
