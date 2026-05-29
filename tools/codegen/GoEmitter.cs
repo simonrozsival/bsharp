@@ -223,10 +223,27 @@ internal static class GoEmitter {
         sb.AppendLine("\tif !ts.TryEnter() { return }");
 
         if (!string.IsNullOrWhiteSpace(target.DependsOnTargets)) {
-            foreach (var dep in target.DependsOnTargets.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
-                if (targetIndex.TryGetValue(dep, out var depIdent)) {
-                    sb.Append("\t").Append(depIdent).AppendLine("()")
-                      .Append("");
+            var dot = target.DependsOnTargets;
+            if (dot.Contains('$')) {
+                // Dynamic depends-on: expand the template at runtime and
+                // dispatch by name. Order is preserved; duplicates are kept
+                // (MSBuild may legitimately re-attempt a target after an
+                // intervening mutation — TargetState's TryEnter handles the
+                // "already done" short-circuit). Unknown names panic loudly.
+                sb.Append("\tfor _, dep := range rt.SplitSemicolon(rt.MustExpand(")
+                  .Append(GoStringLiteral(dot))
+                  .AppendLine(", P, I, nil)) {");
+                sb.AppendLine("\t\tif dep == \"\" { continue }");
+                sb.Append("\t\tif !dispatchTarget(dep) { panic(fmt.Sprintf(")
+                  .Append(GoStringLiteral("DependsOnTargets: unknown target %q referenced by " + target.Name))
+                  .AppendLine(", dep)) }");
+                sb.AppendLine("\t}");
+            } else {
+                foreach (var dep in dot.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+                    if (targetIndex.TryGetValue(dep, out var depIdent)) {
+                        sb.Append("\t").Append(depIdent).AppendLine("()")
+                          .Append("");
+                    }
                 }
             }
         }
@@ -397,8 +414,9 @@ internal static class GoEmitter {
             // Before/After hooks need a different dispatch model; defer.
             return "before-after-targets";
         }
-        if (!string.IsNullOrWhiteSpace(target.DependsOnTargets) && target.DependsOnTargets.IndexOfAny(new[] { '$', '@', '%' }) >= 0) {
-            return "dynamic-depends-on-targets";
+        if (!string.IsNullOrWhiteSpace(target.DependsOnTargets)) {
+            var (ok, reason) = IsSimpleDependsOnTargetsTemplate(target.DependsOnTargets);
+            if (!ok) return reason!;
         }
         if (!IsSimpleConditionTemplate(target.Condition)) {
             return "complex-target-condition";
@@ -826,6 +844,37 @@ internal static class GoEmitter {
             if (value[i] == '%' && value[i + 1] == '(') return true;
         }
         return false;
+    }
+
+    // IsSimpleDependsOnTargetsTemplate validates that a DependsOnTargets template
+    // contains only literal text and $(...) property expressions. Returns
+    // (true, null) when the template can be safely emitted (literal-only or
+    // dynamic-via-runtime-Expand); otherwise (false, reason) where reason is
+    // the classifier bucket. Phase C accepts $(SimpleProp) and property
+    // function chains $(X.Method().Method2()) — anything the runtime's
+    // evalPropertyExpression handles. @() and %() are unsupported here
+    // because: item-list refs in a depends-on string are unusual enough to
+    // defer (would need explicit semantics), and %() outside a batching
+    // context silently expands to empty (wrong-not-loud).
+    static (bool ok, string? reason) IsSimpleDependsOnTargetsTemplate(string template) {
+        if (string.IsNullOrEmpty(template)) return (true, null);
+        if (template.Contains("@(", StringComparison.Ordinal)) return (false, "depends-on-item-ref");
+        if (template.Contains("%(", StringComparison.Ordinal)) return (false, "depends-on-batching");
+        for (int i = 0; i < template.Length; i++) {
+            if (template[i] != '$') continue;
+            if (i + 1 >= template.Length || template[i + 1] != '(') {
+                // Bare `$` is not a recognized MSBuild form here.
+                return (false, "depends-on-complex-expression");
+            }
+            var end = FindMatchingParenQuoteAware(template, i + 1);
+            if (end < 0) return (false, "depends-on-complex-expression");
+            var inner = template.Substring(i + 2, end - i - 2);
+            // Indexers $(X[...]) and registry $(Registry:...) are not supported.
+            if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return (false, "depends-on-complex-expression");
+            if (!IsSimplePropertyExpression(inner)) return (false, "depends-on-complex-expression");
+            i = end;
+        }
+        return (true, null);
     }
 
     static void EmitMain(StringBuilder sb, ProjectInstance instance, IReadOnlyList<string>? requestedTargets) {
