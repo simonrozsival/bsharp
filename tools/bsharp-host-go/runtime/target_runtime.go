@@ -132,3 +132,38 @@ func (e *ErrorList) FormatSummary() string {
 	}
 	return b.String()
 }
+
+// targetStateRegistry holds a *TargetState per target name. Emitted target
+// functions call GetTargetState at the top of each invocation to get their
+// per-build state; this matches the C# generated host where each target
+// declares a static field that doubles as the once-only execution gate.
+var targetStateRegistry sync.Map
+
+// GetTargetState returns the shared *TargetState for the target identified by
+// name. Concurrency-safe; the first caller per name wins, subsequent callers
+// observe the same instance.
+func GetTargetState(name string) *TargetState {
+	if v, ok := targetStateRegistry.Load(name); ok {
+		return v.(*TargetState)
+	}
+	v, _ := targetStateRegistry.LoadOrStore(name, &TargetState{})
+	return v.(*TargetState)
+}
+
+// globalErrors is the singleton ErrorList consulted by all emitted target
+// functions. Mirrors `Targets.Errors` in the C# host.
+var globalErrors = &ErrorList{}
+
+// GetErrorList returns the global build error list. Append errors via
+// list.Append("TargetName", err.Error()).
+func GetErrorList() *ErrorList { return globalErrors }
+
+// Add is a convenience alias for Append that accepts an error directly,
+// matching the pattern emitted by the Go codegen.
+func (e *ErrorList) Add(target string, err error) {
+	if err == nil {
+		return
+	}
+	e.Append(target, err.Error())
+}
+
