@@ -1303,7 +1303,19 @@ internal static class GoEmitter {
         while (i < condition.Length) {
             var c = condition[i];
             if (quote != '\0') {
-                if (c == quote) quote = '\0';
+                if (c == quote) { quote = '\0'; i++; continue; }
+                // MSBuild treats `$(...)`, `@(...)`, `%(...)` inside a quoted
+                // string as expansion constructs whose inner content is NOT a
+                // string terminator. Skip past the matching close paren so the
+                // outer quote scan finds the right closing quote — required
+                // for conditions like `'@(X->F('a', 'b'))' == ''`.
+                if ((c == '$' || c == '@' || c == '%')
+                    && i + 1 < condition.Length && condition[i + 1] == '(') {
+                    var inEnd = FindMatchingParenQuoteAware(condition, i + 1);
+                    if (inEnd < 0) return false;
+                    i = inEnd + 1;
+                    continue;
+                }
                 i++;
                 continue;
             }

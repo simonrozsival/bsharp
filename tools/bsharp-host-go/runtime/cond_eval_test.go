@@ -210,3 +210,34 @@ func TestCondItemCount(t *testing.T) {
 	check("@(NoItems->Count()) > 0", false)
 	check("'@(NativeFileReference->Count())' > 1", true)
 }
+
+func TestCondQuoteScanRespectsNestedExpansionArgs(t *testing.T) {
+	// SDK pattern: the LHS string literal `'@(X->F('a', 'b'))'` contains
+	// nested single quotes used as function-call arg delimiters. A naive
+	// tokenizer reads the first inner `'` as the string terminator, breaking
+	// the comparison. The quote scan must skip past balanced @()/$()/%()
+	// parens before looking for the closing `'`.
+	ib := &stubIB{m: map[string][]*Item{
+		"PackageReference": {
+			{Identity: "Microsoft.Net.Compilers.Toolset.Framework"},
+			{Identity: "OtherPackage"},
+		},
+		"NoneOfThese": {
+			{Identity: "SomethingElse"},
+		},
+	}}
+	check := func(cond string, want bool) {
+		t.Helper()
+		got, ok := EvalCondition(cond, &stubPB{}, ib)
+		if !ok {
+			t.Errorf("%q: expected ok, got unsupported", cond)
+			return
+		}
+		if got != want {
+			t.Errorf("%q: got %v, want %v", cond, got, want)
+		}
+	}
+	check("'@(PackageReference->AnyHaveMetadataValue('Identity', 'Microsoft.Net.Compilers.Toolset.Framework'))' == 'True'", true)
+	check("'@(NoneOfThese->AnyHaveMetadataValue('Identity', 'Microsoft.Net.Compilers.Toolset.Framework'))' == 'True'", false)
+	check("'@(NoneOfThese->AnyHaveMetadataValue('Identity', 'Microsoft.Net.Compilers.Toolset.Framework'))' == ''", false)
+}

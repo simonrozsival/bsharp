@@ -131,7 +131,25 @@ func tokenizeCondition(s string) ([]condToken, bool) {
 		case c == '\'' || c == '"':
 			quote := c
 			end := i + 1
-			for end < len(s) && s[end] != quote {
+			for end < len(s) {
+				if s[end] == quote {
+					break
+				}
+				// MSBuild treats `$(...)`, `@(...)`, `%(...)` inside a quoted
+				// string as expansion constructs whose contents (including
+				// nested single quotes used as function-call arg delimiters)
+				// are NOT string terminators. Scan past the matching close
+				// paren so e.g. `'@(X->F('a', 'b'))' == ''` tokenizes as
+				// one string operand, not three.
+				if (s[end] == '$' || s[end] == '@' || s[end] == '%') &&
+					end+1 < len(s) && s[end+1] == '(' {
+					closeIdx := findMatchingParenQuoteAware(s, end+1)
+					if closeIdx < 0 {
+						return nil, false
+					}
+					end = closeIdx + 1
+					continue
+				}
 				end++
 			}
 			if end >= len(s) {
