@@ -521,17 +521,36 @@ internal static class GoEmitter {
     }
 
     // EmitBatchedItemGroupChild emits a per-item iteration for the batched
-    // form `<X Include="@(SrcList)" Condition="...%(SrcList.Meta)..."/>`.
-    // The classifier guarantees Include is exactly `@(SrcList)` and every
-    // `%()` ref in the condition is either unqualified or qualified with
-    // SrcList. The whole emission lives in a Go block so the `excluded` /
-    // `meta` / `item` locals don't collide with sibling ItemGroup children.
+    // forms:
+    //   1. `<X Include="@(SrcList)" Condition="...%(SrcList.Meta)..."/>`
+    //   2. modify-meta `<X Condition="...%(X.Meta)..."><M>v</M></X>` (no
+    //      Include/Remove — modifies existing items of type X in place).
+    //   3. `<X Remove="@(SrcList)" Condition="...%(SrcList.Meta)..."/>` —
+    //      remove items whose per-item condition matches.
+    // The classifier guarantees every `%()` ref in the condition is either
+    // unqualified or qualified with the source list name. The whole emission
+    // lives in a Go block so the `excluded` / `meta` / `item` locals don't
+    // collide with sibling ItemGroup children.
     static void EmitBatchedItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
-        var include = item.Include!.Trim();
-        var srcList = include.Substring(2, include.Length - 3).Trim();
+        var include = item.Include ?? "";
+        var remove = item.Remove ?? "";
         var exclude = item.Exclude ?? "";
         var hasExclude = exclude.Length > 0;
         var itemType = item.ItemType;
+        var isInclude = include.Length > 0;
+        var isRemove = !isInclude && remove.Length > 0;
+        var isModifyMeta = !isInclude && !isRemove;
+
+        string srcList;
+        if (isInclude) {
+            var trimmed = include.Trim();
+            srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        } else if (isRemove) {
+            var trimmed = remove.Trim();
+            srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
+        } else {
+            srcList = itemType;
+        }
 
         sb.Append(indent).AppendLine("{");
         var bi = indent + "\t";
@@ -542,6 +561,25 @@ internal static class GoEmitter {
             sb.Append(bi).AppendLine("\tif ex != \"\" { excluded[ex] = struct{}{} }");
             sb.Append(bi).AppendLine("}");
         }
+        if (isRemove) {
+            // Collect identities first to avoid mutating the underlying list
+            // while iterating it (matters when srcList == itemType).
+            sb.Append(bi).AppendLine("var toRemove []string");
+            sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
+            sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
+            sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
+              .Append(GoStringLiteral(item.Condition!)).AppendLine(", P, I, meta) { continue }");
+            if (hasExclude) {
+                sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+            }
+            sb.Append(bi).AppendLine("\ttoRemove = append(toRemove, src.Identity)");
+            sb.Append(bi).AppendLine("}");
+            sb.Append(bi).AppendLine("for _, id := range toRemove {");
+            sb.Append(bi).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
+            sb.Append(bi).AppendLine("}");
+            sb.Append(indent).AppendLine("}");
+            return;
+        }
         sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
         sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
         sb.Append(bi).Append("\tif !rt.MustEvalConditionWithMeta(")
@@ -549,9 +587,16 @@ internal static class GoEmitter {
         if (hasExclude) {
             sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
         }
-        sb.Append(bi).AppendLine("\titem := src.Clone()");
-        EmitItemMetadata(sb, item, bi + "\t", "item");
-        sb.Append(bi).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+        if (isModifyMeta) {
+            // Mutate the existing item in place — same semantics as the
+            // non-batched modify-meta path.
+            sb.Append(bi).AppendLine("\titem := src");
+            EmitItemMetadata(sb, item, bi + "\t", "item");
+        } else {
+            sb.Append(bi).AppendLine("\titem := src.Clone()");
+            EmitItemMetadata(sb, item, bi + "\t", "item");
+            sb.Append(bi).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+        }
         sb.Append(bi).AppendLine("}");
         sb.Append(indent).AppendLine("}");
     }
@@ -767,17 +812,32 @@ internal static class GoEmitter {
         foreach (var item in ig.Items) {
             if (!IsSimpleIdentifierName(item.ItemType)) return "ig-complex-item-type";
             if (!IsSimpleConditionTemplate(item.Condition)) {
-                // Batched per-item form: `<X Include="@(SrcList)" Condition="'%(SrcList.M)' op 'lit'"/>`.
-                // The Include must be a literal ItemListCopy and every `%()` in
-                // the condition must be either unqualified or qualified with
-                // the source list name. Anything else is genuine batching that
-                // the runtime doesn't yet model.
+                // Batched per-item form. Three shapes:
+                //   1. `<X Include="@(SrcList)" Condition="...%(SrcList.M)..."/>`
+                //   2. modify-meta: `<X Condition="...%(X.M)..."><Meta>v</Meta></X>`
+                //      (no Include/Remove → operates on existing items of type X).
+                //   3. `<X Remove="@(SrcList)" Condition="...%(SrcList.M)..."/>`
+                //      (remove matching items by per-item filter).
+                // In all cases every `%()` in the condition must be either
+                // unqualified or qualified with the source list name.
                 var rawInc = item.Include ?? "";
-                if (rawInc.Length == 0) return "ig-complex-item-condition";
-                if (ClassifyItemIncludeSpec(rawInc) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
-                var trimmed = rawInc.Trim();
-                var srcList = trimmed.Substring(2, trimmed.Length - 3).Trim();
-                if (!IsSimpleIdentifierName(srcList)) return "ig-complex-item-condition";
+                var rawRem = item.Remove ?? "";
+                string? srcList = null;
+                if (rawInc.Length > 0) {
+                    if (ClassifyItemIncludeSpec(rawInc) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
+                    var trimmed = rawInc.Trim();
+                    var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+                    if (!IsSimpleIdentifierName(ident)) return "ig-complex-item-condition";
+                    srcList = ident;
+                } else if (rawRem.Length > 0) {
+                    if (ClassifyItemIncludeSpec(rawRem) != ItemIncludeKind.ItemListCopy) return "ig-complex-item-condition";
+                    var trimmed = rawRem.Trim();
+                    var ident = trimmed.Substring(2, trimmed.Length - 3).Trim();
+                    if (!IsSimpleIdentifierName(ident)) return "ig-complex-item-condition";
+                    srcList = ident;
+                } else {
+                    srcList = item.ItemType;
+                }
                 if (!IsSimpleConditionTemplate(item.Condition, srcList)) return "ig-complex-item-condition";
             }
             // Reject advanced item attributes that we don't model.
