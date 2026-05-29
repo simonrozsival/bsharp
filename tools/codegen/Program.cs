@@ -1790,6 +1790,15 @@ static class Emitter {
         // Main
         sb.AppendLine("""
 var sw = Stopwatch.StartNew();
+var __timing = Environment.GetEnvironmentVariable("BSHARP_TIMING") == "1";
+var __phaseSw = __timing ? Stopwatch.StartNew() : null;
+static void __mark(Stopwatch? phaseSw, string name) {
+    if (phaseSw is null) return;
+    var ms = phaseSw.Elapsed.TotalMilliseconds;
+    Console.Error.WriteLine($"[t] {name,-32} {ms,8:F2} ms");
+    phaseSw.Restart();
+}
+__mark(__phaseSw, "startup");
 var restoreElapsed = TimeSpan.Zero;
 string command = "build";
 bool noBuild = false;
@@ -1824,12 +1833,14 @@ for (int i = 0; i < args.Length; i++) {
 string csprojPath = csprojArg != null
     ? Path.GetFullPath(csprojArg)
     : GeneratedProjectInfo.ProjectPath;
+__mark(__phaseSw, "args+csproj");
 
 var allowFastNoOp = command != "restore"
     && !noBuild
     && !noFastNoop
     && requestedTargets.Count == 0;
 var preInitFastNoOp = allowFastNoOp && FastNoOpBuildBeforePopulate(csprojPath);
+__mark(__phaseSw, "fastnoop_preinit");
 if (!preInitFastNoOp) {
     try {
         InitialState.Populate(csprojPath);
@@ -1840,6 +1851,7 @@ if (!preInitFastNoOp) {
         if (Environment.GetEnvironmentVariable("BSHARP_TRACE") == "1") Console.Error.WriteLine(ex.StackTrace);
         return 2;
     }
+    __mark(__phaseSw, "populate");
 }
 
 if (command == "restore") {
@@ -1853,6 +1865,7 @@ if (command == "restore") {
 
 if (!noBuild) {
     var fastNoOp = preInitFastNoOp || (allowFastNoOp && FastNoOpBuild(csprojPath));
+    __mark(__phaseSw, "fastnoop_full");
     if (!fastNoOp) {
         // Match `dotnet build` semantics: always invoke the Restore target unless
         // `--no-restore` was passed. NuGet's RestoreTask self-skips when nothing
@@ -1872,6 +1885,8 @@ if (!noBuild) {
             }
         }
         Targets.Build(requestedTargets.Count > 0 ? requestedTargets : null).GetAwaiter().GetResult();
+        __mark(__phaseSw, "targets.build");
+        Log.DumpTimingBreakdown();
         if (targetResultPath is not null)
             WriteTargetResultFile(targetResultPath, requestedTargets);
 
@@ -2562,11 +2577,32 @@ static partial class TaskRunner {
         }
     }
 
+    static long _ipcTicks;
+    static long _ipcSerTicks, _ipcWriteTicks, _ipcReadTicks, _ipcDeserTicks;
+    static long _ipcReqBytes, _ipcRespBytes;
+    public static double CumulativeIpcMilliseconds =>
+        System.Threading.Volatile.Read(ref _ipcTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    public static long IpcAccumulatedTicks => System.Threading.Volatile.Read(ref _ipcTicks);
+    public static void AccumulateIpcMicroTiming(long serTicks, long writeTicks, long readTicks, long deserTicks, int reqBytes, int respBytes) {
+        System.Threading.Interlocked.Add(ref _ipcSerTicks, serTicks);
+        System.Threading.Interlocked.Add(ref _ipcWriteTicks, writeTicks);
+        System.Threading.Interlocked.Add(ref _ipcReadTicks, readTicks);
+        System.Threading.Interlocked.Add(ref _ipcDeserTicks, deserTicks);
+        System.Threading.Interlocked.Add(ref _ipcReqBytes, reqBytes);
+        System.Threading.Interlocked.Add(ref _ipcRespBytes, respBytes);
+    }
+    public static (double serMs, double writeMs, double readMs, double deserMs, long reqBytes, long respBytes) IpcMicroBreakdown() {
+        var freq = System.Diagnostics.Stopwatch.Frequency;
+        return (_ipcSerTicks * 1000.0 / freq, _ipcWriteTicks * 1000.0 / freq, _ipcReadTicks * 1000.0 / freq, _ipcDeserTicks * 1000.0 / freq, _ipcReqBytes, _ipcRespBytes);
+    }
+
     static string? ExecuteCore(TaskInstance task) {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try {
             var timestampGuard = CaptureTimestampGuard(task);
+            var ipcStart = System.Diagnostics.Stopwatch.GetTimestamp();
             task.Result = GetDaemon().Invoke(task.Invocation);
+            System.Threading.Interlocked.Add(ref _ipcTicks, System.Diagnostics.Stopwatch.GetTimestamp() - ipcStart);
             RestoreTimestampIfContentUnchanged(timestampGuard);
             var error = task.Result.Success ? null : task.Result.Error ?? $"task '{task.Desc.ShortName}' returned false";
             TaskDiagnostics.Write(task, started, error);
@@ -2695,11 +2731,18 @@ static partial class TaskRunner {
                 for (var attempt = 0; attempt < 2; attempt++) {
                     try {
                         EnsureConnected();
+                        var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var payload = JsonSerializer.SerializeToUtf8Bytes(invocation, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskInvocation);
+                        var t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                         WriteFrame(_stream!, payload);
+                        var t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var response = ReadFrame(_stream!) ?? throw new EndOfStreamException("task daemon closed stream before responding");
-                        return JsonSerializer.Deserialize(response, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskResult)
+                        var t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        var result = JsonSerializer.Deserialize(response, Bsharp.Generated.TaskModel.TaskModelJson.Default.TaskResult)
                             ?? new Bsharp.Generated.TaskModel.TaskResult { Success = false, Error = "task daemon returned an empty response" };
+                        var t4 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        TaskRunner.AccumulateIpcMicroTiming(t1 - t0, t2 - t1, t3 - t2, t4 - t3, payload.Length, response.Length);
+                        return result;
                     } catch (Exception) when (attempt == 0) {
                         Disconnect();
                     }
@@ -3289,11 +3332,47 @@ static class Log {
     public static Verbosity Level = Verbosity.Minimal;
     static readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
     static long _taskTicks;
+    static long _targetTicks;
+    static readonly bool _trackPerTarget = Environment.GetEnvironmentVariable("BSHARP_TIMING") == "1";
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _perTargetTicks = new();
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _perTaskTicks = new();
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _perTaskCount = new();
     static readonly AsyncLocal<string?> _currentTarget = new();
     public static string? CurrentTarget => _currentTarget.Value;
     public static double CumulativeTaskMilliseconds =>
         System.Threading.Volatile.Read(ref _taskTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    public static double CumulativeTargetMilliseconds =>
+        System.Threading.Volatile.Read(ref _targetTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     public static void ResetTaskTiming() => System.Threading.Volatile.Write(ref _taskTicks, 0);
+
+    public static void DumpTimingBreakdown() {
+        if (!_trackPerTarget) return;
+        var sw = System.Diagnostics.Stopwatch.Frequency;
+        var ipcMs = TaskRunner.CumulativeIpcMilliseconds;
+        var (serMs, writeMs, readMs, deserMs, reqBytes, respBytes) = TaskRunner.IpcMicroBreakdown();
+        var taskMs = CumulativeTaskMilliseconds;
+        var targetMs = CumulativeTargetMilliseconds;
+        Console.Error.WriteLine($"[t] ipc total                            {ipcMs,8:F2} ms");
+        Console.Error.WriteLine($"[t]   ipc serialize (host)                {serMs,8:F2} ms ({reqBytes,10} req bytes)");
+        Console.Error.WriteLine($"[t]   ipc write (host)                    {writeMs,8:F2} ms");
+        Console.Error.WriteLine($"[t]   ipc read (host)                     {readMs,8:F2} ms");
+        Console.Error.WriteLine($"[t]   ipc deserialize (host)              {deserMs,8:F2} ms ({respBytes,10} resp bytes)");
+        Console.Error.WriteLine($"[t] task total                           {taskMs,8:F2} ms");
+        Console.Error.WriteLine($"[t] target total                         {targetMs,8:F2} ms");
+        var topTargets = _perTargetTicks.OrderByDescending(kv => kv.Value).Take(15).ToList();
+        var topTasks = _perTaskTicks.OrderByDescending(kv => kv.Value).Take(15).ToList();
+        Console.Error.WriteLine($"[t] === top {topTargets.Count} targets by self+children time ===");
+        foreach (var kv in topTargets) {
+            var ms = kv.Value * 1000.0 / sw;
+            Console.Error.WriteLine($"[t]   target {kv.Key,-50} {ms,8:F2} ms");
+        }
+        Console.Error.WriteLine($"[t] === top {topTasks.Count} tasks by cumulative time ===");
+        foreach (var kv in topTasks) {
+            var ms = kv.Value * 1000.0 / sw;
+            var count = _perTaskCount.TryGetValue(kv.Key, out var c) ? c : 0;
+            Console.Error.WriteLine($"[t]   task   {kv.Key,-50} {ms,8:F2} ms ({count} calls)");
+        }
+    }
 
     // Force unbuffered stdout/stderr so trace lines flush immediately. With buffering on,
     // a hot loop or hung task body looks like the prior log line was the last to write,
@@ -3326,6 +3405,10 @@ static class Log {
     public static void TaskFinished(string name, long started) {
         var elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
         System.Threading.Interlocked.Add(ref _taskTicks, elapsedTicks);
+        if (_trackPerTarget) {
+            _perTaskTicks.AddOrUpdate(name, elapsedTicks, (_, prev) => prev + elapsedTicks);
+            _perTaskCount.AddOrUpdate(name, 1, (_, prev) => prev + 1);
+        }
         if (Level < Verbosity.Normal) return;
         Console.WriteLine($"{Prefix()} Task: {name} {DurationSuffix(elapsedTicks)}");
     }
@@ -3339,8 +3422,12 @@ static class Log {
         return started;
     }
     public static void TargetFinished(string name, long started) {
+        var elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
+        System.Threading.Interlocked.Add(ref _targetTicks, elapsedTicks);
+        if (_trackPerTarget)
+            _perTargetTicks.AddOrUpdate(name, elapsedTicks, (_, prev) => prev + elapsedTicks);
         if (Level >= Verbosity.Detailed)
-            Console.WriteLine($"{Prefix()} Target finished:  {name} {DurationSuffix(System.Diagnostics.Stopwatch.GetTimestamp() - started)}");
+            Console.WriteLine($"{Prefix()} Target finished:  {name} {DurationSuffix(elapsedTicks)}");
         if (string.Equals(_currentTarget.Value, name, StringComparison.Ordinal))
             _currentTarget.Value = null;
     }
