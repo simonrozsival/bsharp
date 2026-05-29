@@ -124,6 +124,18 @@ internal static class GoEmitter {
         sb.AppendLine("\tk := strings.ToLower(name)");
         sb.AppendLine("\tit.lists[k] = append(it.lists[k], more...)");
         sb.AppendLine("}");
+        sb.AppendLine("// RemoveByIdentity removes every item from list `name` whose Identity");
+        sb.AppendLine("// matches identity. Used by emitted <ItemGroup><X Remove=\"...\"/></ItemGroup>.");
+        sb.AppendLine("func (it *items) RemoveByIdentity(name, identity string) {");
+        sb.AppendLine("\tk := strings.ToLower(name)");
+        sb.AppendLine("\tlist := it.lists[k]");
+        sb.AppendLine("\tif len(list) == 0 { return }");
+        sb.AppendLine("\tkeep := list[:0]");
+        sb.AppendLine("\tfor _, item := range list {");
+        sb.AppendLine("\t\tif item.Identity != identity { keep = append(keep, item) }");
+        sb.AppendLine("\t}");
+        sb.AppendLine("\tit.lists[k] = keep");
+        sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("var I = newItems()");
         sb.AppendLine();
@@ -226,8 +238,16 @@ internal static class GoEmitter {
         sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
 
         foreach (var child in target.Children) {
-            if (child is ProjectTaskInstance task) {
-                EmitLocalTaskCall(sb, target, task);
+            switch (child) {
+                case ProjectTaskInstance task:
+                    EmitLocalTaskCall(sb, target, task);
+                    break;
+                case ProjectPropertyGroupTaskInstance pg:
+                    EmitPropertyGroup(sb, pg);
+                    break;
+                case ProjectItemGroupTaskInstance ig:
+                    EmitItemGroup(sb, ig);
+                    break;
             }
         }
 
@@ -235,6 +255,96 @@ internal static class GoEmitter {
         sb.AppendLine("\tts.MarkDone()");
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    static void EmitPropertyGroup(StringBuilder sb, ProjectPropertyGroupTaskInstance pg) {
+        var hasOuterCond = !string.IsNullOrWhiteSpace(pg.Condition);
+        var indent = "\t";
+        if (hasOuterCond) {
+            sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(pg.Condition)).AppendLine(", P, I) {");
+            indent = "\t\t";
+        }
+        foreach (var prop in pg.Properties) {
+            var hasCond = !string.IsNullOrWhiteSpace(prop.Condition);
+            if (hasCond) {
+                sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(prop.Condition)).AppendLine(", P, I) {");
+                sb.Append(indent).Append("\tP.Set(").Append(GoStringLiteral(prop.Name)).Append(", rt.MustExpand(")
+                  .Append(GoStringLiteral(prop.Value)).AppendLine(", P, I, nil))");
+                sb.Append(indent).AppendLine("}");
+            } else {
+                sb.Append(indent).Append("P.Set(").Append(GoStringLiteral(prop.Name)).Append(", rt.MustExpand(")
+                  .Append(GoStringLiteral(prop.Value)).AppendLine(", P, I, nil))");
+            }
+        }
+        if (hasOuterCond) sb.AppendLine("\t}");
+    }
+
+    static void EmitItemGroup(StringBuilder sb, ProjectItemGroupTaskInstance ig) {
+        var hasOuterCond = !string.IsNullOrWhiteSpace(ig.Condition);
+        var indent = "\t";
+        if (hasOuterCond) {
+            sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(ig.Condition)).AppendLine(", P, I) {");
+            indent = "\t\t";
+        }
+        foreach (var item in ig.Items) {
+            EmitItemGroupChild(sb, item, indent);
+        }
+        if (hasOuterCond) sb.AppendLine("\t}");
+    }
+
+    static void EmitItemGroupChild(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent) {
+        var hasCond = !string.IsNullOrWhiteSpace(item.Condition);
+        var bodyIndent = indent;
+        if (hasCond) {
+            sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(item.Condition)).AppendLine(", P, I) {");
+            bodyIndent = indent + "\t";
+        }
+
+        var include = item.Include ?? "";
+        var remove = item.Remove ?? "";
+        var itemType = item.ItemType;
+
+        if (include.Length > 0) {
+            var kind = ClassifyItemIncludeSpec(include);
+            if (kind == ItemIncludeKind.ItemListCopy) {
+                var sourceType = include.Trim().Substring(2, include.Trim().Length - 3).Trim();
+                sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(sourceType)).AppendLine(") {");
+                sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
+                EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
+                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                sb.Append(bodyIndent).AppendLine("}");
+            } else {
+                // Literal/expansion path: expand, split, create items with metadata.
+                sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
+                  .Append(GoStringLiteral(include)).AppendLine(", P, I, nil)) {");
+                sb.Append(bodyIndent).AppendLine("\titem := rt.NewItem(id)");
+                EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
+                sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                sb.Append(bodyIndent).AppendLine("}");
+            }
+        } else if (remove.Length > 0) {
+            sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
+              .Append(GoStringLiteral(remove)).AppendLine(", P, I, nil)) {");
+            sb.Append(bodyIndent).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
+            sb.Append(bodyIndent).AppendLine("}");
+        }
+
+        if (hasCond) sb.Append(indent).AppendLine("}");
+    }
+
+    static void EmitItemMetadata(StringBuilder sb, ProjectItemGroupTaskItemInstance item, string indent, string itemVar) {
+        foreach (var meta in item.Metadata) {
+            var hasMetaCond = !string.IsNullOrWhiteSpace(meta.Condition);
+            if (hasMetaCond) {
+                sb.Append(indent).Append("if rt.MustEvalCondition(").Append(GoStringLiteral(meta.Condition)).AppendLine(", P, I) {");
+                sb.Append(indent).Append("\t").Append(itemVar).Append(".SetMetadata(").Append(GoStringLiteral(meta.Name))
+                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).AppendLine(", P, I, nil))");
+                sb.Append(indent).AppendLine("}");
+            } else {
+                sb.Append(indent).Append(itemVar).Append(".SetMetadata(").Append(GoStringLiteral(meta.Name))
+                  .Append(", rt.MustExpand(").Append(GoStringLiteral(meta.Value)).AppendLine(", P, I, nil))");
+            }
+        }
     }
 
     static void EmitLocalTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
@@ -304,10 +414,14 @@ internal static class GoEmitter {
                         if (ContainsBatching(p.Value)) return "task-batching";
                     }
                     break;
-                case ProjectPropertyGroupTaskInstance:
-                    return "property-group-in-target";
-                case ProjectItemGroupTaskInstance:
-                    return "item-group-in-target";
+                case ProjectPropertyGroupTaskInstance pg:
+                    var pgReason = ClassifyPropertyGroup(pg);
+                    if (pgReason != null) return pgReason;
+                    break;
+                case ProjectItemGroupTaskInstance ig:
+                    var igReason = ClassifyItemGroup(ig);
+                    if (igReason != null) return igReason;
+                    break;
                 case ProjectOnErrorInstance:
                     return "on-error";
                 default:
@@ -315,6 +429,100 @@ internal static class GoEmitter {
             }
         }
         return null;
+    }
+
+    static string? ClassifyPropertyGroup(ProjectPropertyGroupTaskInstance pg) {
+        if (!IsSimpleConditionTemplate(pg.Condition)) return "pg-complex-condition";
+        foreach (var prop in pg.Properties) {
+            if (ContainsBatching(prop.Value)) return "pg-batching";
+            if (ContainsBatching(prop.Condition)) return "pg-batching";
+            if (!IsSimpleConditionTemplate(prop.Condition)) return "pg-complex-prop-condition";
+            if (!IsSimpleExpressionTemplate(prop.Value)) return "pg-complex-prop-value";
+            if (!IsSimpleIdentifierName(prop.Name)) return "pg-complex-prop-name";
+        }
+        return null;
+    }
+
+    static string? ClassifyItemGroup(ProjectItemGroupTaskInstance ig) {
+        if (!IsSimpleConditionTemplate(ig.Condition)) return "ig-complex-condition";
+        foreach (var item in ig.Items) {
+            if (!IsSimpleIdentifierName(item.ItemType)) return "ig-complex-item-type";
+            if (!IsSimpleConditionTemplate(item.Condition)) return "ig-complex-item-condition";
+            // Reject advanced item attributes that we don't model.
+            if (!string.IsNullOrEmpty(item.Exclude)) return "ig-exclude-not-supported";
+            if (!string.IsNullOrEmpty(item.KeepDuplicates)) return "ig-keep-duplicates-not-supported";
+            if (!string.IsNullOrEmpty(item.KeepMetadata)) return "ig-keep-metadata-not-supported";
+            if (!string.IsNullOrEmpty(item.RemoveMetadata)) return "ig-remove-metadata-not-supported";
+            if (!string.IsNullOrEmpty(item.MatchOnMetadata)) return "ig-match-metadata-not-supported";
+
+            var include = item.Include ?? "";
+            var remove = item.Remove ?? "";
+            if (include.Length > 0 && remove.Length > 0) return "ig-include-and-remove";
+            if (include.Length == 0 && remove.Length == 0) return "ig-empty-include-remove";
+
+            var spec = include.Length > 0 ? include : remove;
+            if (ContainsBatching(spec)) return "ig-spec-batching";
+            if (ContainsGlobChar(spec)) return "ig-spec-glob-not-supported";
+            // Classify the include/remove spec.
+            if (include.Length > 0) {
+                var includeKind = ClassifyItemIncludeSpec(include);
+                if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+            } else {
+                if (!IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
+                if (remove.Contains("@(", StringComparison.Ordinal)) return "ig-remove-item-ref-not-supported";
+            }
+
+            foreach (var meta in item.Metadata) {
+                if (ContainsBatching(meta.Value)) return "ig-meta-batching";
+                if (!IsSimpleConditionTemplate(meta.Condition)) return "ig-complex-meta-condition";
+                if (!IsSimpleExpressionTemplate(meta.Value)) return "ig-complex-meta-value";
+                if (!IsSimpleIdentifierName(meta.Name)) return "ig-complex-meta-name";
+            }
+        }
+        return null;
+    }
+
+    // ItemIncludeKind classifies the syntactic shape of an Include attribute
+    // so the emitter can pick the right runtime call:
+    //   - Literal: no @() refs at all; expand + split + new items
+    //   - ItemListCopy: exactly one @(SimpleType) reference; clone source items
+    //   - Unsupported: anything else (mixed, transforms, etc.)
+    enum ItemIncludeKind { Literal, ItemListCopy, Unsupported }
+
+    static ItemIncludeKind ClassifyItemIncludeSpec(string include) {
+        if (string.IsNullOrEmpty(include)) return ItemIncludeKind.Literal;
+        var trimmed = include.Trim();
+        // Exactly @(SimpleIdent)
+        if (trimmed.StartsWith("@(", StringComparison.Ordinal) && trimmed.EndsWith(")", StringComparison.Ordinal)) {
+            var inner = trimmed.Substring(2, trimmed.Length - 3);
+            // No transforms or custom separators in the supported form.
+            if (!inner.Contains("->", StringComparison.Ordinal) && !inner.Contains(",", StringComparison.Ordinal)
+                && IsSimpleIdentifierName(inner.Trim())) {
+                return ItemIncludeKind.ItemListCopy;
+            }
+            return ItemIncludeKind.Unsupported;
+        }
+        // No @() at all → simple literal/expansion.
+        if (!include.Contains("@(", StringComparison.Ordinal)) {
+            if (IsSimpleExpressionTemplate(include)) return ItemIncludeKind.Literal;
+            return ItemIncludeKind.Unsupported;
+        }
+        return ItemIncludeKind.Unsupported;
+    }
+
+    static bool IsSimpleIdentifierName(string? name) {
+        if (string.IsNullOrEmpty(name)) return false;
+        foreach (var c in name) {
+            if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-')) return false;
+        }
+        return true;
+    }
+
+    static bool ContainsGlobChar(string? s) {
+        if (string.IsNullOrEmpty(s)) return false;
+        // A `*` or `?` outside quotes signals a glob the emitter does not expand.
+        // We don't attempt to honor quoting because $(X) values rarely embed *.
+        return s.IndexOfAny(new[] { '*', '?' }) >= 0;
     }
 
     // LocalTaskGoFunc maps an MSBuild task name to the Go runtime helper name.
@@ -339,55 +547,278 @@ internal static class GoEmitter {
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs
-    // the Phase A runtime.Expand evaluator handles: literals, $(X), @(Y) (no
-    // transforms), %(Z). Returns false on anything more complex.
+    // the runtime.Expand evaluator handles in Phase A+B: literals, $(X),
+    // $(X.Method(args)) chains with whitelisted methods and simple args,
+    // @(Y) (no transforms), and %(Z).
     static bool IsSimpleExpressionTemplate(string? template) {
         if (string.IsNullOrEmpty(template)) return true;
         for (int i = 0; i < template.Length; i++) {
             var c = template[i];
             if (c == '$' || c == '@' || c == '%') {
                 if (i + 1 >= template.Length || template[i + 1] != '(') continue;
-                var end = FindMatchingParen(template, i + 1);
+                var end = FindMatchingParenQuoteAware(template, i + 1);
                 if (end < 0) return false;
                 var inner = template.Substring(i + 2, end - i - 2);
-                if (c == '$' && inner.IndexOfAny(new[] { '.', '(', '[', ':' }) >= 0) return false;
-                if (c == '@' && inner.Contains("->")) return false;
+                if (c == '$') {
+                    if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
+                    if (!IsSimplePropertyExpression(inner)) return false;
+                } else if (c == '@') {
+                    if (inner.Contains("->")) return false;
+                    // Allow @(X) and @(X, 'sep'); reject anything else.
+                    var parts = SplitArgsQuoteAware(inner);
+                    if (parts.Length == 0) return false;
+                    if (!IsSimpleIdentifierName(parts[0].Trim())) return false;
+                    if (parts.Length == 2) {
+                        var sep = parts[1].Trim();
+                        if (sep.Length < 2) return false;
+                        var q = sep[0];
+                        if ((q != '\'' && q != '"') || sep[sep.Length - 1] != q) return false;
+                    } else if (parts.Length != 1) {
+                        return false;
+                    }
+                }
                 i = end;
             }
         }
         return true;
+    }
+
+    // IsSimplePropertyExpression accepts either a bare identifier or a property
+    // function chain $(Var.M1(...).M2(...).Prop). Mirrors the runtime's
+    // evalPropertyExpression. Methods are whitelisted.
+    static bool IsSimplePropertyExpression(string inner) {
+        inner = inner.Trim();
+        if (inner.Length == 0) return true;
+        var dot = IndexOfTopLevel(inner, '.');
+        if (dot < 0) return IsSimpleIdentifierName(inner);
+        var varName = inner.Substring(0, dot).Trim();
+        if (!IsSimpleIdentifierName(varName)) return false;
+        var rest = inner.Substring(dot + 1);
+        while (rest.Length > 0) {
+            int nameEnd = 0;
+            while (nameEnd < rest.Length) {
+                var c = rest[nameEnd];
+                var isIdent = char.IsLetterOrDigit(c) || c == '_';
+                if (!isIdent) break;
+                nameEnd++;
+            }
+            if (nameEnd == 0) return false;
+            var method = rest.Substring(0, nameEnd);
+            rest = rest.Substring(nameEnd);
+            bool hasArgs = false;
+            string[] args = Array.Empty<string>();
+            if (rest.Length > 0 && rest[0] == '(') {
+                var close = FindMatchingParenQuoteAware(rest, 0);
+                if (close < 0) return false;
+                hasArgs = true;
+                args = SplitArgsQuoteAware(rest.Substring(1, close - 1));
+                rest = rest.Substring(close + 1);
+            }
+            if (!IsWhitelistedPropertyMethod(method, args.Length, hasArgs)) return false;
+            foreach (var arg in args) {
+                if (!IsSimplePropertyFunctionArg(arg.Trim())) return false;
+            }
+            rest = rest.Trim();
+            if (rest.Length == 0) break;
+            if (rest[0] != '.') return false;
+            rest = rest.Substring(1);
+        }
+        return true;
+    }
+
+    static bool IsWhitelistedPropertyMethod(string method, int argCount, bool hasArgs) {
+        switch (method.ToLowerInvariant()) {
+            case "tolower":
+            case "tolowerinvariant":
+            case "toupper":
+            case "toupperinvariant":
+            case "tostring":
+            case "length":
+                return !hasArgs || argCount == 0;
+            case "trim":
+            case "trimstart":
+            case "trimend":
+                return !hasArgs || argCount <= 1;
+            case "replace":
+                return hasArgs && argCount == 2;
+            case "substring":
+                return hasArgs && (argCount == 1 || argCount == 2);
+            case "startswith":
+            case "endswith":
+            case "contains":
+            case "indexof":
+                return hasArgs && argCount == 1;
+            default:
+                return false;
+        }
+    }
+
+    static bool IsSimplePropertyFunctionArg(string arg) {
+        if (arg.Length == 0) return true;
+        if ((arg[0] == '\'' || arg[0] == '"') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
+            // Quoted string literal — inner must not contain expansions (Phase B keeps args atomic).
+            return !arg.AsSpan(1, arg.Length - 2).ContainsAny("$@%");
+        }
+        if (arg.StartsWith("$(", StringComparison.Ordinal) && arg.EndsWith(")", StringComparison.Ordinal)) {
+            var inner = arg.Substring(2, arg.Length - 3).Trim();
+            return IsSimpleIdentifierName(inner);
+        }
+        return IsIntegerLiteral(arg);
+    }
+
+    static bool IsIntegerLiteral(string s) {
+        if (string.IsNullOrEmpty(s)) return false;
+        int start = 0;
+        if (s[0] == '-' || s[0] == '+') {
+            if (s.Length == 1) return false;
+            start = 1;
+        }
+        for (int i = start; i < s.Length; i++) {
+            if (s[i] < '0' || s[i] > '9') return false;
+        }
+        return true;
+    }
+
+    static int IndexOfTopLevel(string s, char target) {
+        int depth = 0;
+        char quote = '\0';
+        for (int i = 0; i < s.Length; i++) {
+            var c = s[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            switch (c) {
+                case '\'': case '"': quote = c; break;
+                case '(': depth++; break;
+                case ')': if (depth > 0) depth--; break;
+                default:
+                    if (depth == 0 && c == target) return i;
+                    break;
+            }
+        }
+        return -1;
+    }
+
+    static string[] SplitArgsQuoteAware(string s) {
+        if (string.IsNullOrWhiteSpace(s)) return Array.Empty<string>();
+        var parts = new List<string>();
+        int depth = 0; char quote = '\0'; int start = 0;
+        for (int i = 0; i < s.Length; i++) {
+            var c = s[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            switch (c) {
+                case '\'': case '"': quote = c; break;
+                case '(': depth++; break;
+                case ')': depth--; break;
+                case ',':
+                    if (depth == 0) {
+                        parts.Add(s.Substring(start, i - start));
+                        start = i + 1;
+                    }
+                    break;
+            }
+        }
+        parts.Add(s.Substring(start));
+        return parts.ToArray();
     }
 
     static bool IsSimpleConditionTemplate(string? condition) {
         if (string.IsNullOrWhiteSpace(condition)) return true;
-        // Reject any of the well-known Phase B+ markers.
-        if (condition.IndexOf("Exists", StringComparison.OrdinalIgnoreCase) >= 0) return false;
-        if (condition.IndexOf("HasTrailingSlash", StringComparison.OrdinalIgnoreCase) >= 0) return false;
-        if (condition.IndexOf("MSBuild::", StringComparison.Ordinal) >= 0) return false;
+        // Reject explicit Phase C+ markers.
+        if (condition!.IndexOf("MSBuild::", StringComparison.Ordinal) >= 0) return false;
         if (condition.IndexOf("System.", StringComparison.Ordinal) >= 0) return false;
         if (condition.IndexOf("::", StringComparison.Ordinal) >= 0) return false;
-        // Allow only $(Prop) / @(Items) / %(Meta) and quoted strings; reject
-        // property functions like $(X.ToLower()).
-        for (int i = 0; i < condition.Length; i++) {
-            if (condition[i] == '$' && i + 1 < condition.Length && condition[i + 1] == '(') {
-                var end = FindMatchingParen(condition, i + 1);
-                if (end < 0) return false;
-                var inner = condition.Substring(i + 2, end - i - 2);
-                if (inner.IndexOfAny(new[] { '.', '(' }) >= 0) return false;
-                i = end;
+        // Reject ANY batching reference anywhere in the condition — `%()` in
+        // an operand (even inside quotes) silently expands to "" and matches
+        // nothing, which would be wrong-not-loud. Batched conditions need
+        // Phase D's batching infrastructure to evaluate correctly.
+        if (condition.Contains("%(", StringComparison.Ordinal)) return false;
+        // Walk top-level constructs: $(...) must be a simple property expression
+        // (Phase A or B form); bare identifiers must be And/Or/Not/True/False or
+        // Exists/HasTrailingSlash followed by '('.
+        var allowedIdents = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "and", "or", "not", "true", "false", "exists", "hastrailingslash"
+        };
+        int i = 0;
+        char quote = '\0';
+        while (i < condition.Length) {
+            var c = condition[i];
+            if (quote != '\0') {
+                if (c == quote) quote = '\0';
+                i++;
+                continue;
+            }
+            switch (c) {
+                case '\'': case '"': quote = c; i++; continue;
+                case '$':
+                    if (i + 1 < condition.Length && condition[i + 1] == '(') {
+                        var end = FindMatchingParenQuoteAware(condition, i + 1);
+                        if (end < 0) return false;
+                        var inner = condition.Substring(i + 2, end - i - 2);
+                        if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
+                        if (!IsSimplePropertyExpression(inner)) return false;
+                        i = end + 1;
+                        continue;
+                    }
+                    i++;
+                    continue;
+                case '%':
+                    return false; // batching in conditions is Phase D+
+                case '@':
+                    if (i + 1 < condition.Length && condition[i + 1] == '(') {
+                        // Allow @(X) and @(X,'sep') in conditions (mirrors expression rules).
+                        var end = FindMatchingParenQuoteAware(condition, i + 1);
+                        if (end < 0) return false;
+                        var inner = condition.Substring(i + 2, end - i - 2);
+                        if (inner.Contains("->", StringComparison.Ordinal)) return false;
+                        i = end + 1;
+                        continue;
+                    }
+                    i++;
+                    continue;
+                default:
+                    if (char.IsLetter(c) || c == '_') {
+                        int wstart = i;
+                        while (i < condition.Length && (char.IsLetterOrDigit(condition[i]) || condition[i] == '_')) i++;
+                        var word = condition.Substring(wstart, i - wstart);
+                        if (!allowedIdents.Contains(word)) return false;
+                        // If it's Exists/HasTrailingSlash it must be followed by '('.
+                        if (word.Equals("exists", StringComparison.OrdinalIgnoreCase)
+                            || word.Equals("hastrailingslash", StringComparison.OrdinalIgnoreCase)) {
+                            int j = i;
+                            while (j < condition.Length && (condition[j] == ' ' || condition[j] == '\t')) j++;
+                            if (j >= condition.Length || condition[j] != '(') return false;
+                            var end = FindMatchingParenQuoteAware(condition, j);
+                            if (end < 0) return false;
+                            // Reject @() / %() inside Exists/HasTrailingSlash args.
+                            var argSrc = condition.Substring(j + 1, end - j - 1);
+                            if (argSrc.Contains("@(", StringComparison.Ordinal)) return false;
+                            if (argSrc.Contains("%(", StringComparison.Ordinal)) return false;
+                            i = end + 1;
+                        }
+                        continue;
+                    }
+                    i++;
+                    continue;
             }
         }
-        return true;
+        return quote == '\0';
     }
 
-    static int FindMatchingParen(string s, int openIdx) {
+    static int FindMatchingParenQuoteAware(string s, int openIdx) {
         var depth = 0;
+        char quote = '\0';
         for (int i = openIdx; i < s.Length; i++) {
-            if (s[i] == '(') depth++;
-            else if (s[i] == ')') { depth--; if (depth == 0) return i; }
+            var c = s[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            switch (c) {
+                case '\'': case '"': quote = c; break;
+                case '(': depth++; break;
+                case ')': depth--; if (depth == 0) return i; break;
+            }
         }
         return -1;
     }
+
+    static int FindMatchingParen(string s, int openIdx) => FindMatchingParenQuoteAware(s, openIdx);
 
     static bool ContainsBatching(string? value) {
         if (string.IsNullOrEmpty(value)) return false;
@@ -399,8 +830,14 @@ internal static class GoEmitter {
 
     static void EmitMain(StringBuilder sb, ProjectInstance instance, IReadOnlyList<string>? requestedTargets) {
         var defaultEntry = requestedTargets is { Count: > 0 } ? requestedTargets[0] : (instance.DefaultTargets.FirstOrDefault() ?? "Build");
+        var projectDir = instance.Directory ?? Path.GetDirectoryName(instance.FullPath) ?? ".";
         sb.AppendLine("func main() {");
         sb.AppendLine("\trt.Log.Level = rt.ParseVerbosity(os.Getenv(\"BSHARP_VERBOSITY\"))");
+        sb.AppendLine("\trt.ProjectDir = " + GoStringLiteral(projectDir));
+        sb.AppendLine("\tif err := os.Chdir(rt.ProjectDir); err != nil {");
+        sb.AppendLine("\t\tfmt.Fprintf(os.Stderr, \"bsharp-go-host: chdir(%q) failed: %v\\n\", rt.ProjectDir, err)");
+        sb.AppendLine("\t\tos.Exit(2)");
+        sb.AppendLine("\t}");
         sb.AppendLine("\tentry := " + GoStringLiteral(defaultEntry));
         sb.AppendLine("\tif len(os.Args) > 1 { entry = os.Args[1] }");
         sb.AppendLine("\tif !dispatchTarget(entry) {");
