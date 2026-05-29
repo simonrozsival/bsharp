@@ -26,23 +26,10 @@ echo "==> AOT-publish the launcher"
 ( cd "$BSHARP_ROOT/tools/bsharp" && dotnet publish -c Release -r osx-arm64 --nologo -v q > /dev/null )
 BSHARP_BIN="$BSHARP_ROOT/tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp"
 
-echo "==> Build Go launcher (experiment)"
-if command -v go > /dev/null 2>&1; then
-    ( cd "$BSHARP_ROOT/tools/bsharp-go" && go build -ldflags="-s -w" -trimpath -o bsharp-go . )
-    BSHARP_GO_BIN="$BSHARP_ROOT/tools/bsharp-go/bsharp-go"
-else
-    echo "    (go not installed; skipping bsharp-go)"
-    BSHARP_GO_BIN=""
-fi
-
-
 echo "==> Stage daemon next to the launcher"
 TASKD_PUBLISH_DIR="$BSHARP_ROOT/tools/bsharp-taskd/bin/Release/net11.0/osx-arm64/publish"
 LAUNCHER_DIR="$(dirname "$BSHARP_BIN")"
 cp -f "$TASKD_PUBLISH_DIR"/* "$LAUNCHER_DIR/" || true
-if [ -n "$BSHARP_GO_BIN" ] && [ -f "$BSHARP_GO_BIN" ]; then
-    cp -f "$BSHARP_GO_BIN" "$LAUNCHER_DIR/bsharp-go"
-fi
 
 echo "==> Done. Try:"
 echo "    cd $(dirname "$PROJECT")"
