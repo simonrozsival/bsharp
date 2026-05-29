@@ -1,24 +1,31 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 )
 
+// ProjectDir is the absolute path to the project directory. Emitted main()
+// sets this before invoking targets so Exists() and other relative-path
+// helpers resolve against the project root rather than the process cwd.
+var ProjectDir string
+
 // EvalCondition evaluates an MSBuild Condition string against the supplied
-// property and item bags. Supported Phase A grammar:
+// property and item bags. Supported grammar (Phase A + B):
 //
 //	cond     := orExpr
 //	orExpr   := andExpr ('Or' andExpr)*
 //	andExpr  := notExpr ('And' notExpr)*
 //	notExpr  := '!' notExpr | primary
-//	primary  := '(' cond ')' | comparison | boolLit
+//	primary  := '(' cond ')' | call | comparison | boolLit
+//	call     := ('Exists' | 'HasTrailingSlash') '(' operand ')'
 //	comparison := operand ('==' | '!=') operand
 //	operand  := stringLiteral | expansion
 //
-// Property functions, Exists(), HasTrailingSlash(), regex match operators,
-// numeric < > <= >=, etc. are all NOT supported in Phase A. Encountering one
-// makes EvalCondition return (false, false) so the emitter can fall back to
-// a stub for that target.
+// Property functions, regex match operators, numeric < > <= >=, MSBuild::F
+// intrinsics, etc. are NOT supported. Encountering one makes EvalCondition
+// return (false, false) so the emitter can fall back to a stub.
 //
 // Empty condition is treated as true (matches MSBuild semantics).
 func EvalCondition(condition string, p PropertyBag, i ItemBag) (result bool, ok bool) {
@@ -63,6 +70,7 @@ const (
 	condTokBareExp // unquoted expansion-bearing operand (e.g. `$(X)`)
 	condTokTrue
 	condTokFalse
+	condTokCall // function call e.g. Exists(arg) or HasTrailingSlash(arg)
 )
 
 type condToken struct {
@@ -122,7 +130,7 @@ func tokenizeCondition(s string) ([]condToken, bool) {
 				return nil, false
 			}
 		default:
-			// Try to read a keyword (And/Or/True/False) or reject.
+			// Try to read a keyword (And/Or/True/False) or function call name.
 			word, n := readBareWord(s[i:])
 			if n == 0 {
 				return nil, false
@@ -130,18 +138,36 @@ func tokenizeCondition(s string) ([]condToken, bool) {
 			switch strings.ToLower(word) {
 			case "and":
 				out = append(out, condToken{kind: condTokAnd})
+				i += n
 			case "or":
 				out = append(out, condToken{kind: condTokOr})
+				i += n
 			case "true":
 				out = append(out, condToken{kind: condTokTrue})
+				i += n
 			case "false":
 				out = append(out, condToken{kind: condTokFalse})
+				i += n
+			case "exists", "hastrailingslash":
+				// Must be followed by '(' (skipping whitespace) to be a call.
+				rest := i + n
+				for rest < len(s) && (s[rest] == ' ' || s[rest] == '\t') {
+					rest++
+				}
+				if rest >= len(s) || s[rest] != '(' {
+					return nil, false
+				}
+				closeIdx := findMatchingParenQuoteAware(s, rest)
+				if closeIdx < 0 {
+					return nil, false
+				}
+				// Pack the call as "fnname(args)" — the parser will split it.
+				out = append(out, condToken{kind: condTokCall, text: word + s[rest : closeIdx+1]})
+				i = closeIdx + 1
 			default:
-				// Anything else (Exists, HasTrailingSlash, MSBuild::Foo, numbers
-				// outside quotes, identifiers in comparison position) → unsupported.
+				// Anything else (MSBuild::Foo, numbers outside quotes, etc.) → unsupported.
 				return nil, false
 			}
-			i += n
 		}
 	}
 	return out, true
@@ -243,6 +269,35 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 	case condTokFalse:
 		cp.pos++
 		return false, true
+	case condTokCall:
+		t := cp.tokens[cp.pos]
+		cp.pos++
+		left, ok := evalCondCall(t.text, cp.p, cp.i)
+		if !ok {
+			return false, false
+		}
+		// A call result can be compared to a string (rare but allowed) or
+		// treated as a bool literal.
+		switch cp.peek() {
+		case condTokEq, condTokNeq:
+			op := cp.tokens[cp.pos].kind
+			cp.pos++
+			right, rok := cp.parseOperand()
+			if !rok {
+				return false, false
+			}
+			if op == condTokEq {
+				return strings.EqualFold(left, right), true
+			}
+			return !strings.EqualFold(left, right), true
+		}
+		switch strings.ToLower(strings.TrimSpace(left)) {
+		case "true", "1":
+			return true, true
+		case "", "false", "0":
+			return false, true
+		}
+		return false, false
 	case condTokString, condTokBareExp:
 		left, ok := cp.parseOperand()
 		if !ok {
@@ -273,6 +328,70 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 		return false, false
 	}
 	return false, false
+}
+
+// evalCondCall evaluates a single "fnname(args)" condition call. The token
+// text is the literal source, e.g. `Exists('$(X)')` or `HasTrailingSlash($(Y))`.
+// The argument list is a single operand (string literal or expansion); deeper
+// shapes (item refs, property functions, comma-separated args) are unsupported.
+func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
+	openIdx := strings.IndexByte(src, '(')
+	if openIdx < 0 {
+		return "", false
+	}
+	closeIdx := findMatchingParenQuoteAware(src, openIdx)
+	if closeIdx != len(src)-1 {
+		return "", false
+	}
+	fn := strings.ToLower(strings.TrimSpace(src[:openIdx]))
+	argSrc := strings.TrimSpace(src[openIdx+1 : closeIdx])
+	// Reject item refs and metadata refs inside Exists/HasTrailingSlash args.
+	if strings.Contains(argSrc, "@(") || strings.Contains(argSrc, "%(") {
+		return "", false
+	}
+	arg, ok := readSingleOperand(argSrc, p, i)
+	if !ok {
+		return "", false
+	}
+	switch fn {
+	case "exists":
+		path := arg
+		if path == "" {
+			return "False", true
+		}
+		if !filepath.IsAbs(path) && ProjectDir != "" {
+			path = filepath.Join(ProjectDir, path)
+		}
+		_, err := os.Stat(path)
+		if err == nil {
+			return "True", true
+		}
+		return "False", true
+	case "hastrailingslash":
+		if strings.HasSuffix(arg, "/") || strings.HasSuffix(arg, "\\") {
+			return "True", true
+		}
+		return "False", true
+	}
+	return "", false
+}
+
+// readSingleOperand parses one operand for a condition function argument.
+// Accepts a single quoted string literal (with $(X) / %(Y) expansion inside),
+// or a single bare expansion like `$(Foo)` (NOT item or batch refs).
+func readSingleOperand(s string, p PropertyBag, i ItemBag) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", true
+	}
+	if (s[0] == '\'' || s[0] == '"') && len(s) >= 2 && s[len(s)-1] == s[0] {
+		inner := s[1 : len(s)-1]
+		return Expand(inner, p, i, nil)
+	}
+	if strings.HasPrefix(s, "$(") {
+		return Expand(s, p, i, nil)
+	}
+	return "", false
 }
 
 func (cp *condParser) parseOperand() (string, bool) {

@@ -1,6 +1,10 @@
 package runtime
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func evalOK(t *testing.T, cond string, p *stubPB, want bool) {
 	t.Helper()
@@ -74,13 +78,59 @@ func TestCondParens(t *testing.T) {
 	evalOK(t, "('$(A)' == '1' Or '$(B)' == '0') And '$(C)' == '0'", p, true)
 }
 
-func TestCondUnsupportedExists(t *testing.T) {
-	evalUnsupported(t, "Exists('foo.cs')", &stubPB{})
+func TestCondExistsTrueAndFalse(t *testing.T) {
+	dir := t.TempDir()
+	prev := ProjectDir
+	ProjectDir = dir
+	defer func() { ProjectDir = prev }()
+
+	if err := os.WriteFile(filepath.Join(dir, "exists.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	evalOK(t, "Exists('exists.txt')", &stubPB{}, true)
+	evalOK(t, "Exists('missing.txt')", &stubPB{}, false)
+	evalOK(t, "Exists('')", &stubPB{}, false)
+	// $(X) in arg expands and then resolves relative to ProjectDir.
+	p := &stubPB{m: map[string]string{"F": "exists.txt"}}
+	evalOK(t, "Exists('$(F)')", p, true)
+	// absolute path
+	abs := filepath.Join(dir, "exists.txt")
+	evalOK(t, "Exists('"+abs+"')", &stubPB{}, true)
+}
+
+func TestCondHasTrailingSlash(t *testing.T) {
+	p := &stubPB{m: map[string]string{
+		"WithSlash":   "bin/Debug/",
+		"WithBack":    "bin\\Debug\\",
+		"WithoutSep":  "bin/Debug",
+		"EmptyString": "",
+	}}
+	evalOK(t, "HasTrailingSlash('$(WithSlash)')", p, true)
+	evalOK(t, "HasTrailingSlash('$(WithBack)')", p, true)
+	evalOK(t, "HasTrailingSlash('$(WithoutSep)')", p, false)
+	evalOK(t, "HasTrailingSlash('$(EmptyString)')", p, false)
+	evalOK(t, "HasTrailingSlash('foo/')", &stubPB{}, true)
+	evalOK(t, "!HasTrailingSlash('$(WithoutSep)')", p, true)
+}
+
+func TestCondCallRejectsItemRef(t *testing.T) {
+	evalUnsupported(t, "Exists('@(Compile)')", &stubPB{})
+	evalUnsupported(t, "Exists('%(Compile.Identity)')", &stubPB{})
+}
+
+func TestCondCallRejectsUnknownFunction(t *testing.T) {
+	evalUnsupported(t, "Foo('x')", &stubPB{})
 }
 
 func TestCondUnsupportedPropertyFunc(t *testing.T) {
-	p := &stubPB{m: map[string]string{"X": "foo"}}
-	evalUnsupported(t, "'$(X.ToLower())' == 'foo'", p)
+	// Property functions inside condition operands are still unsupported.
+	// (Phase B adds them to Expand, but conditions evaluate them by going
+	// through Expand which would reject the `.` inside `$(X.ToLower())` only
+	// if Expand has not been extended. Now that Expand supports them, the
+	// condition will accept the form too — verify behavior.)
+	p := &stubPB{m: map[string]string{"X": "FOO"}}
+	evalOK(t, "'$(X.ToLower())' == 'foo'", p, true)
 }
 
 func TestCondUnsupportedNumeric(t *testing.T) {

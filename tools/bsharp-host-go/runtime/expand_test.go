@@ -54,10 +54,11 @@ func TestExpandItemsCustomSep(t *testing.T) {
 	}
 }
 
-func TestExpandPropertyFunctionUnsupported(t *testing.T) {
-	_, ok := Expand("$(Configuration.ToLower())", &stubPB{}, &stubIB{}, nil)
-	if ok {
-		t.Error("property functions must be reported as unsupported")
+func TestExpandPropertyFunctionToLower(t *testing.T) {
+	p := &stubPB{m: map[string]string{"Config": "Release"}}
+	got, ok := Expand("$(Config.ToLower())", p, &stubIB{}, nil)
+	if !ok || got != "release" {
+		t.Errorf("got %q ok=%v", got, ok)
 	}
 }
 
@@ -104,5 +105,88 @@ func TestMustExpandPanicsOnUnsupported(t *testing.T) {
 			t.Error("expected panic on unsupported template")
 		}
 	}()
-	_ = MustExpand("$(X.ToLower())", &stubPB{}, &stubIB{}, nil)
+	_ = MustExpand("$(X[0])", &stubPB{}, &stubIB{}, nil)
 }
+
+func TestExpandPropertyFunctionsBasic(t *testing.T) {
+	p := &stubPB{m: map[string]string{
+		"S":   "Hello World",
+		"V":   "v11.0",
+		"Cfg": "Debug",
+		"TFM": "net11.0",
+	}}
+	cases := []struct {
+		tmpl string
+		want string
+	}{
+		{"$(S.ToUpper())", "HELLO WORLD"},
+		{"$(S.ToLowerInvariant())", "hello world"},
+		{"$(V.TrimStart('vV'))", "11.0"},
+		{"$(S.Replace(' ', '_'))", "Hello_World"},
+		{"$(S.Substring(6))", "World"},
+		{"$(S.Substring(0, 5))", "Hello"},
+		{"$(S.StartsWith('Hello'))", "True"},
+		{"$(S.EndsWith('World'))", "True"},
+		{"$(S.Contains('lo Wo'))", "True"},
+		{"$(S.Contains('xyz'))", "False"},
+		{"$(S.IndexOf('World'))", "6"},
+		{"$(S.Length)", "11"},
+		{"$(Cfg.ToString())", "Debug"},
+	}
+	for _, tc := range cases {
+		got, ok := Expand(tc.tmpl, p, &stubIB{}, nil)
+		if !ok || got != tc.want {
+			t.Errorf("Expand(%q): got %q ok=%v, want %q", tc.tmpl, got, ok, tc.want)
+		}
+	}
+}
+
+func TestExpandPropertyFunctionChain(t *testing.T) {
+	p := &stubPB{m: map[string]string{"TFI": "net.coreapp"}}
+	got, ok := Expand("$(TFI.Replace('.', '').ToUpperInvariant())", p, &stubIB{}, nil)
+	if !ok || got != "NETCOREAPP" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandPropertyFunctionWithPropertyArg(t *testing.T) {
+	p := &stubPB{m: map[string]string{"S": "abc.def", "Sep": "."}}
+	got, ok := Expand("$(S.Replace($(Sep), '_'))", p, &stubIB{}, nil)
+	if !ok || got != "abc_def" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandPropertyFunctionUnknownMethod(t *testing.T) {
+	p := &stubPB{m: map[string]string{"X": "foo"}}
+	_, ok := Expand("$(X.UnknownMethod())", p, &stubIB{}, nil)
+	if ok {
+		t.Error("expected unsupported method to fail")
+	}
+}
+
+func TestExpandPropertyFunctionTrimStartIsCharSet(t *testing.T) {
+	// MSBuild/.NET TrimStart('vV') removes leading 'v' or 'V' chars, not the
+	// substring "vV". Verify the char-set semantics.
+	p := &stubPB{m: map[string]string{"V": "vvV11.0"}}
+	got, ok := Expand("$(V.TrimStart('vV'))", p, &stubIB{}, nil)
+	if !ok || got != "11.0" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandPropertyFunctionRejectsNestedFunction(t *testing.T) {
+	p := &stubPB{m: map[string]string{"X": "foo", "Y": "BAR"}}
+	_, ok := Expand("$(X.Replace($(Y.ToLower()), 'z'))", p, &stubIB{}, nil)
+	if ok {
+		t.Error("nested property functions in args should be unsupported")
+	}
+}
+
+func TestExpandPropertyFunctionRejectsIndexer(t *testing.T) {
+	_, ok := Expand("$(X[0])", &stubPB{m: map[string]string{"X": "abc"}}, &stubIB{}, nil)
+	if ok {
+		t.Error("indexer syntax should be unsupported")
+	}
+}
+
