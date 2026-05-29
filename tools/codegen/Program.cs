@@ -6416,9 +6416,10 @@ static partial class Tasks {
 
     static bool ShouldUseGroupedTaskBatching(ProjectTaskInstance task) {
         if (task.Outputs.Count == 0) return false;
+        if (!string.Equals(task.Name, "CreateItem", StringComparison.OrdinalIgnoreCase)) return false;
         if (!EnumerateMetadataRefs(task.Condition).Any()
             && !task.Parameters.Any(p => EnumerateMetadataRefs(p.Value).Any())) return false;
-        return string.Equals(task.Name, "CreateItem", StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
     static TaskBatchPlan? CreateTaskBatchPlan(IEnumerable<string?> exprs) {

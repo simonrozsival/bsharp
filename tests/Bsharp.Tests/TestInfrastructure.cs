@@ -67,20 +67,10 @@ internal static class BsharpTestEnvironment
             // the universal task daemon and copy it (and its companions) next to the
             // launcher so generated hosts can spawn it without an explicit BSHARP_TASKD_PATH.
             // This mirrors what build.sh does for normal development workflows.
-            CommandRunner
-                .Run("dotnet",
-                    ["publish", Path.Combine(RepoRoot, "tools", "bsharp-taskd", "BsharpTaskd.csproj"),
-                        "-c", "Release", "-r", RuntimeInformation.RuntimeIdentifier,
-                        "--no-self-contained", "-p:PublishReadyToRun=true", "--nologo", "-v:q"],
-                    RepoRoot,
-                    DotnetEnvironment,
-                    CommandTimeout)
-                .AssertSuccess("publish bsharp-taskd daemon");
+            PublishTaskDaemon();
 
             var launcherDir = Path.GetDirectoryName(BsharpPath)!;
-            var daemonPublishDir = Path.Combine(RepoRoot, "tools", "bsharp-taskd", "bin", "Release", "net11.0",
-                RuntimeInformation.RuntimeIdentifier, "publish");
-            foreach (var file in Directory.EnumerateFiles(daemonPublishDir))
+            foreach (var file in Directory.EnumerateFiles(BsharpTaskdPublishDirectory))
             {
                 File.Copy(file, Path.Combine(launcherDir, Path.GetFileName(file)), overwrite: true);
             }
@@ -117,20 +107,23 @@ internal static class BsharpTestEnvironment
             if (s_taskDaemonReady)
                 return;
 
-            CommandRunner
-                .Run("dotnet",
-                    ["publish", Path.Combine(RepoRoot, "tools", "bsharp-taskd", "BsharpTaskd.csproj"),
-                        "-c", "Release", "-r", RuntimeInformation.RuntimeIdentifier,
-                        "--no-self-contained", "-p:PublishReadyToRun=true", "--nologo", "-v:q"],
-                    RepoRoot,
-                    DotnetEnvironment,
-                    CommandTimeout)
-                .AssertSuccess("publish bsharp-taskd daemon");
+            PublishTaskDaemon();
 
             Assert.IsTrue(File.Exists(BsharpTaskdPublishPath), $"Expected bsharp-taskd at {BsharpTaskdPublishPath}");
             s_taskDaemonReady = true;
         }
     }
+
+    private static void PublishTaskDaemon() =>
+        CommandRunner
+            .Run("dotnet",
+                ["publish", Path.Combine(RepoRoot, "tools", "bsharp-taskd", "BsharpTaskd.csproj"),
+                    "-c", "Release", "-r", RuntimeInformation.RuntimeIdentifier,
+                    "--no-self-contained", "-p:PublishReadyToRun=true", "--nologo", "-v:q"],
+                RepoRoot,
+                DotnetEnvironment,
+                CommandTimeout)
+            .AssertSuccess("publish bsharp-taskd daemon");
 
     private static void EnsureCodegenCore()
     {
