@@ -268,6 +268,36 @@ func TestExpandPropertyFunctionRejectsIndexer(t *testing.T) {
 	}
 }
 
+func TestExpandPropertyFunctionSplit(t *testing.T) {
+	// MSBuild's String.Split returns a string[] which the codegen consumes
+	// via SplitSemicolon downstream. We model that as a ';'-joined string.
+	cases := []struct {
+		expr string
+		val  string
+		want string
+	}{
+		{"$(X.Split(';'))", "a;b;c", "a;b;c"},
+		{"$(X.Split(','))", "a,b,c", "a;b;c"},
+		{"$(X.Split('%3B'))", "x;y", "x;y"}, // %3B == ;
+		{"$(X.Split(';'))", "", ""},
+	}
+	for _, c := range cases {
+		got, ok := Expand(c.expr, &stubPB{m: map[string]string{"X": c.val}}, &stubIB{}, nil)
+		if !ok || got != c.want {
+			t.Errorf("Expand(%q, X=%q) = %q ok=%v, want %q", c.expr, c.val, got, ok, c.want)
+		}
+	}
+}
+
+func TestExpandPropertyFunctionSplitRejectsEmptySeparator(t *testing.T) {
+	// Splitting on an empty separator is degenerate and not modeled. We
+	// reject loudly rather than silently returning the whole string.
+	_, ok := Expand("$(X.Split(''))", &stubPB{m: map[string]string{"X": "abc"}}, &stubIB{}, nil)
+	if ok {
+		t.Error("Split with empty separator should be rejected")
+	}
+}
+
 
 func TestExpandItemCountEmpty(t *testing.T) {
 	items := &stubIB{m: map[string][]*Item{}}

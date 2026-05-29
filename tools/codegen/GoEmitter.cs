@@ -442,13 +442,39 @@ internal static class GoEmitter {
 
         var include = item.Include ?? "";
         var remove = item.Remove ?? "";
+        var exclude = item.Exclude ?? "";
         var itemType = item.ItemType;
 
         if (include.Length > 0) {
+            // If Exclude is present, build a string-set of excluded identities
+            // up-front so the include loop can filter in O(1) per candidate.
+            // Identities are compared case-sensitively (MSBuild's actual
+            // semantics are case-insensitive on Windows / case-sensitive on
+            // Unix, but our closed-world targets exclude via either literal
+            // paths or @() lists where the source identities are already
+            // canonical, so case-sensitive is safe for the current fixtures).
+            //
+            // The whole Exclude+Include emission is wrapped in its own Go
+            // block so the `excluded` local doesn't collide when the same
+            // target body contains multiple <ItemGroup>s that each use
+            // Exclude (e.g. IncrementalClean).
+            var hasExclude = exclude.Length > 0;
+            if (hasExclude) {
+                sb.Append(bodyIndent).AppendLine("{");
+                bodyIndent = bodyIndent + "\t";
+                sb.Append(bodyIndent).Append("excluded := make(map[string]struct{})").AppendLine();
+                sb.Append(bodyIndent).Append("for _, ex := range rt.SplitSemicolon(rt.MustExpand(")
+                  .Append(GoStringLiteral(exclude)).AppendLine(", P, I, nil)) {");
+                sb.Append(bodyIndent).AppendLine("\tif ex != \"\" { excluded[ex] = struct{}{} }");
+                sb.Append(bodyIndent).AppendLine("}");
+            }
             var kind = ClassifyItemIncludeSpec(include);
             if (kind == ItemIncludeKind.ItemListCopy) {
                 var sourceType = include.Trim().Substring(2, include.Trim().Length - 3).Trim();
                 sb.Append(bodyIndent).Append("for _, src := range I.Get(").Append(GoStringLiteral(sourceType)).AppendLine(") {");
+                if (hasExclude) {
+                    sb.Append(bodyIndent).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
+                }
                 sb.Append(bodyIndent).AppendLine("\titem := src.Clone()");
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
                 sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
@@ -457,9 +483,16 @@ internal static class GoEmitter {
                 // Literal/expansion path: expand, split, create items with metadata.
                 sb.Append(bodyIndent).Append("for _, id := range rt.SplitSemicolon(rt.MustExpand(")
                   .Append(GoStringLiteral(include)).AppendLine(", P, I, nil)) {");
+                if (hasExclude) {
+                    sb.Append(bodyIndent).AppendLine("\tif _, skip := excluded[id]; skip { continue }");
+                }
                 sb.Append(bodyIndent).AppendLine("\titem := rt.NewItem(id)");
                 EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
                 sb.Append(bodyIndent).Append("\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+                sb.Append(bodyIndent).AppendLine("}");
+            }
+            if (hasExclude) {
+                bodyIndent = bodyIndent.Substring(0, bodyIndent.Length - 1);
                 sb.Append(bodyIndent).AppendLine("}");
             }
         } else if (remove.Length > 0) {
@@ -691,7 +724,18 @@ internal static class GoEmitter {
             if (!IsSimpleIdentifierName(item.ItemType)) return "ig-complex-item-type";
             if (!IsSimpleConditionTemplate(item.Condition)) return "ig-complex-item-condition";
             // Reject advanced item attributes that we don't model.
-            if (!string.IsNullOrEmpty(item.Exclude)) return "ig-exclude-not-supported";
+            if (!string.IsNullOrEmpty(item.Exclude)) {
+                // Exclude must be an expression the runtime can evaluate
+                // (no batching, no transforms outside @() — same rules as
+                // Include/Remove). The emitter expands it once at runtime
+                // and filters the include loop against the resulting set.
+                if (ContainsBatching(item.Exclude)) return "ig-exclude-batching";
+                if (!IsSimpleExpressionTemplate(item.Exclude)) return "ig-exclude-complex";
+                // Exclude semantics only make sense with an Include. MSBuild
+                // tolerates the lone form but it's a no-op; reject so silent
+                // no-ops don't slip through.
+                if (string.IsNullOrEmpty(item.Include)) return "ig-exclude-without-include";
+            }
             if (!string.IsNullOrEmpty(item.KeepDuplicates)) return "ig-keep-duplicates-not-supported";
             if (!string.IsNullOrEmpty(item.KeepMetadata)) return "ig-keep-metadata-not-supported";
             if (!string.IsNullOrEmpty(item.RemoveMetadata)) return "ig-remove-metadata-not-supported";
@@ -1010,6 +1054,7 @@ internal static class GoEmitter {
         { "AllowEmptyTelemetry", "AllowEmptyTelemetry" },
         { "CheckForDuplicateNuGetItemsTask", "CheckForDuplicateNuGetItemsTask" },
         { "Exec", "Exec" },
+        { "FindUnderPath", "FindUnderPath" },
     };
     static string? LocalTaskGoFunc(string taskName) =>
         _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;
@@ -1022,7 +1067,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> _tasksNeedingItemBag = new(StringComparer.OrdinalIgnoreCase) {
         "MakeDir", "RemoveDir", "Touch", "Delete", "Copy",
         "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
-        "CheckForDuplicateNuGetItemsTask", "Exec",
+        "CheckForDuplicateNuGetItemsTask", "Exec", "FindUnderPath",
     };
     static bool TaskNeedsItemBag(string taskName) => _tasksNeedingItemBag.Contains(taskName);
 
@@ -1033,7 +1078,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
         "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
         "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
-        "CheckForDuplicateNuGetItemsTask", "Exec",
+        "CheckForDuplicateNuGetItemsTask", "Exec", "FindUnderPath",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs
@@ -1295,6 +1340,8 @@ internal static class GoEmitter {
             case "endswith":
             case "contains":
             case "indexof":
+                return hasArgs && argCount == 1;
+            case "split":
                 return hasArgs && argCount == 1;
             default:
                 return false;

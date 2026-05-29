@@ -737,6 +737,23 @@ func applyPropertyFunction(value, method string, args []string, hasArgs bool) (s
 			return "", false
 		}
 		return strconv.Itoa(len(value)), true
+	case "split":
+		// MSBuild's String.Split(separator) returns a string[] which is
+		// idiomatically consumed via SplitSemicolon downstream (e.g.
+		// `<ItemGroup><X Include="$(Y.Split(';'))" /></ItemGroup>`). We
+		// represent the array as a `;`-joined string so any caller that
+		// runs the result through rt.SplitSemicolon sees the expected
+		// individual entries. `%3B` literals in the arg are unescaped to
+		// `;` first to match MSBuild's escape-aware separator handling.
+		if len(args) != 1 {
+			return "", false
+		}
+		sep := strings.ReplaceAll(args[0], "%3B", ";")
+		if sep == "" {
+			return "", false
+		}
+		parts := strings.Split(value, sep)
+		return strings.Join(parts, ";"), true
 	case "tostring":
 		if hasArgs && len(args) > 0 {
 			return "", false

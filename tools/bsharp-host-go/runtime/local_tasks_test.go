@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -360,4 +361,80 @@ func TestExecWorkingDirectory(t *testing.T) {
 	if !strings.HasSuffix(got, strings.TrimPrefix(tmp, "/private")) && got != tmp {
 		t.Errorf("expected Pwd ending in %q, got %q", tmp, got)
 	}
+}
+
+func TestFindUnderPathPartitions(t *testing.T) {
+	tmp := t.TempDir()
+	inside := filepath.Join(tmp, "a.txt")
+	outside := filepath.Join(filepath.Dir(tmp), "outside-"+filepath.Base(tmp)+".txt")
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "InPath", ItemName: "_In"},
+		Output{Key: "OutOfPath", ItemName: "_Out"},
+	)
+	plist := NewParamList(
+		Param{Key: "Path", Value: tmp},
+		Param{Key: "Files", Value: inside + ";" + outside},
+	)
+	if err := FindUnderPath(plist, outputs, items, props); err != nil {
+		t.Fatalf("FindUnderPath: %v", err)
+	}
+	in := items.Get("_In")
+	out := items.Get("_Out")
+	if len(in) != 1 || in[0].Identity != inside {
+		t.Errorf("InPath: got %v, want [%s]", identities(in), inside)
+	}
+	if len(out) != 1 || out[0].Identity != outside {
+		t.Errorf("OutOfPath: got %v, want [%s]", identities(out), outside)
+	}
+}
+
+func TestFindUnderPathUpdateToAbsolutePaths(t *testing.T) {
+	tmp := t.TempDir()
+	// macOS resolves /var/folders/... via a /private/var/... symlink, so the
+	// caller-visible TempDir path and a freshly-resolved cwd may differ.
+	// Canonicalize both before computing Path so HasPrefix matches.
+	resolvedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(resolvedTmp); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "InPath", ItemName: "_In"})
+	plist := NewParamList(
+		Param{Key: "Path", Value: resolvedTmp},
+		Param{Key: "Files", Value: "rel.txt"},
+		Param{Key: "UpdateToAbsolutePaths", Value: "true"},
+	)
+	if err := FindUnderPath(plist, outputs, items, props); err != nil {
+		t.Fatalf("FindUnderPath: %v", err)
+	}
+	got := items.Get("_In")
+	if len(got) != 1 || !filepath.IsAbs(got[0].Identity) {
+		t.Errorf("expected single absolute identity, got %v", identities(got))
+	}
+}
+
+func TestFindUnderPathRequiresPath(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "InPath", ItemName: "_In"})
+	plist := NewParamList(Param{Key: "Files", Value: "foo"})
+	if err := FindUnderPath(plist, outputs, items, props); err == nil {
+		t.Error("expected error when Path is missing")
+	}
+}
+
+func identities(it []*Item) []string {
+	r := make([]string, len(it))
+	for i, x := range it {
+		r[i] = x.Identity
+	}
+	return r
 }

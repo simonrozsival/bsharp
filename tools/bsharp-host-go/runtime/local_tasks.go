@@ -264,6 +264,71 @@ func RemoveDuplicates(p ParamList, outputs *OutputList, items ItemBag, props Pro
 	return nil
 }
 
+// FindUnderPath partitions the "Files" identities into items rooted under
+// "Path" (InPath) and everything else (OutOfPath). MSBuild's
+// case-insensitive prefix match on resolved absolute paths is preserved
+// so the Clean / IncrementalClean / publish file-write filters land in
+// the same buckets they would under MSBuild itself.
+//
+// MSBuild also exposes UpdateToAbsolutePaths which, when "true", replaces
+// matched identities with their canonical absolute form. We honor it for
+// the InPath bucket only — OutOfPath always keeps the caller's input
+// identity verbatim (same as MSBuild).
+//
+// Files arriving via ParamList have been collapsed to a `;`-joined
+// identity string by the caller, so the task only sees raw paths and not
+// the original ITaskItem metadata. The Clean targets that consume
+// FindUnderPath only read Identity downstream, so the metadata loss is
+// fine for the closed-world subset.
+func FindUnderPath(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	root := strings.TrimSpace(p.GetValueOrDefault("Path"))
+	if root == "" {
+		// Path is [Required] on MSBuild — surface the same failure shape
+		// here instead of silently treating every file as OutOfPath.
+		return fmt.Errorf("FindUnderPath: Path parameter is required")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("FindUnderPath: invalid Path %q: %w", root, err)
+	}
+	absRoot = ensureTrailingSeparator(absRoot)
+	rootLower := strings.ToLower(absRoot)
+	update := strings.EqualFold(p.GetValueOrDefault("UpdateToAbsolutePaths"), "true")
+	files := SplitSemicolon(p.GetValueOrDefault("Files"))
+	var inPath, outOfPath []*Item
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		absF, err := filepath.Abs(f)
+		if err != nil {
+			return fmt.Errorf("FindUnderPath: invalid Files entry %q: %w", f, err)
+		}
+		if strings.HasPrefix(strings.ToLower(absF), rootLower) {
+			id := f
+			if update {
+				id = absF
+			}
+			inPath = append(inPath, NewItem(id))
+		} else {
+			outOfPath = append(outOfPath, NewItem(f))
+		}
+	}
+	writeItemOutput(outputs, items, "InPath", inPath)
+	writeItemOutput(outputs, items, "OutOfPath", outOfPath)
+	return nil
+}
+
+func ensureTrailingSeparator(p string) string {
+	if p == "" {
+		return p
+	}
+	if p[len(p)-1] == os.PathSeparator || p[len(p)-1] == '/' {
+		return p
+	}
+	return p + string(os.PathSeparator)
+}
+
 func boolStr(v bool) string {
 	if v {
 		return "True"
