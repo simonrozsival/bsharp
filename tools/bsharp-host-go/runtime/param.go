@@ -61,11 +61,12 @@ func (p ParamList) Has(key string) bool {
 // Len returns the number of (key, value) pairs.
 func (p ParamList) Len() int { return len(p.items) }
 
-// OutputSpec describes one task output: the item-list name to populate plus
-// an optional metadata-name selector (the latter is non-nil iff the codegen
-// used `<Output ItemName="..." MetadataName="..."/>` syntax).
+// OutputSpec describes one task output binding. Exactly one of ItemName or
+// PropertyName is non-empty; HasMetadata + MetadataName apply to ItemName
+// bindings using `<Output ItemName="..." MetadataName="..."/>` syntax.
 type OutputSpec struct {
 	ItemName     string
+	PropertyName string
 	MetadataName string
 	HasMetadata  bool
 }
@@ -76,10 +77,12 @@ type OutputList struct {
 	items map[string]OutputSpec
 }
 
-// Output builds an OutputSpec for use in NewOutputList.
+// Output builds an OutputSpec for use in NewOutputList. Set either ItemName
+// (for `<Output TaskParameter="K" ItemName="X"/>`) or PropertyName (for
+// `<Output TaskParameter="K" PropertyName="P"/>`) — not both.
 type Output struct {
-	Key, ItemName, MetadataName string
-	HasMetadata                 bool
+	Key, ItemName, PropertyName, MetadataName string
+	HasMetadata                               bool
 }
 
 // NewOutputList constructs an OutputList from one or more Output entries.
@@ -91,6 +94,7 @@ func NewOutputList(entries ...Output) *OutputList {
 	for _, e := range entries {
 		out.items[strings.ToLower(e.Key)] = OutputSpec{
 			ItemName:     e.ItemName,
+			PropertyName: e.PropertyName,
 			MetadataName: e.MetadataName,
 			HasMetadata:  e.HasMetadata,
 		}

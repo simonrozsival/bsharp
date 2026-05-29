@@ -505,12 +505,13 @@ internal static class GoEmitter {
         }
         sb.Append("));");
 
-        // Tasks that take ItemBag/OutputList come in two flavors: with or
-        // without <Output/> bindings. If there are item-list outputs we
-        // construct an *OutputList literal; otherwise pass nil.
+        // Tasks that take ItemBag/PropertyBag come in two flavors: with or
+        // without <Output/> bindings. If there are outputs we construct an
+        // *OutputList literal; otherwise pass nil. PropertyBag is always
+        // available so property-bound outputs can be written back to P.
         if (TaskNeedsItemBag(task.Name)) {
             sb.Length -= 2;
-            sb.Append(", ").Append(EmitTaskOutputList(task)).Append(", I);");
+            sb.Append(", ").Append(EmitTaskOutputList(task)).Append(", I, P);");
         }
         sb.AppendLine(" err != nil { rt.GetErrorList().Add(\"" + EscapeForGo(target.Name) + "\", err) }");
 
@@ -521,20 +522,32 @@ internal static class GoEmitter {
 
     // EmitTaskOutputList emits the second argument to a task helper —
     // either `nil` (no <Output/> children) or `rt.NewOutputList(rt.Output{...})`
-    // populated with the task's item-list output bindings. Property-output
-    // bindings are rejected at classifier level so we don't see them here.
+    // populated with the task's output bindings (both item and property).
     static string EmitTaskOutputList(ProjectTaskInstance task) {
         if (task.Outputs.Count == 0) return "nil";
         var sb = new StringBuilder();
         sb.Append("rt.NewOutputList(");
         var first = true;
         foreach (var o in task.Outputs) {
-            if (o is ProjectTaskOutputItemInstance oi) {
-                if (!first) sb.Append(", ");
-                first = false;
-                sb.Append("rt.Output{Key: ").Append(GoStringLiteral(oi.TaskParameter))
-                  .Append(", ItemName: ").Append(GoStringLiteral(oi.ItemType))
-                  .Append("}");
+            if (!first) sb.Append(", ");
+            first = false;
+            switch (o) {
+                case ProjectTaskOutputItemInstance oi:
+                    sb.Append("rt.Output{Key: ").Append(GoStringLiteral(oi.TaskParameter))
+                      .Append(", ItemName: ").Append(GoStringLiteral(oi.ItemType))
+                      .Append("}");
+                    break;
+                case ProjectTaskOutputPropertyInstance op:
+                    sb.Append("rt.Output{Key: ").Append(GoStringLiteral(op.TaskParameter))
+                      .Append(", PropertyName: ").Append(GoStringLiteral(op.PropertyName))
+                      .Append("}");
+                    break;
+                default:
+                    // Unknown output binding type — emit a dummy entry so the
+                    // generated source still compiles but the runtime will
+                    // ignore it.
+                    sb.Append("rt.Output{}");
+                    break;
             }
         }
         sb.Append(")");
@@ -601,16 +614,22 @@ internal static class GoEmitter {
                     }
                     if (LocalTaskGoFunc(task.Name) == null) return "task:" + task.Name;
                     if (task.Outputs.Count > 0) {
-                        // Item-list outputs are wired through OutputList in the
-                        // runtime helpers; property outputs require runtime
-                        // changes (no PropertyBag arg today). Reject any task
-                        // that has a property-output binding, plus any task that
-                        // isn't on the OutputCapableLocalTasks whitelist.
+                        // Both item-list and property outputs are wired
+                        // through OutputList in the runtime helpers. Reject
+                        // any task that isn't on the OutputCapableLocalTasks
+                        // whitelist, and any output binding whose target
+                        // ItemName/PropertyName isn't a simple identifier.
                         if (!OutputCapableLocalTasks.Contains(task.Name)) return "task-has-outputs:" + task.Name;
                         foreach (var output in task.Outputs) {
-                            if (output is ProjectTaskOutputPropertyInstance) return "task-has-property-output:" + task.Name;
-                            if (output is ProjectTaskOutputItemInstance oi) {
-                                if (!IsSimpleIdentifierName(oi.ItemType)) return "task-output-complex-itemtype:" + task.Name;
+                            switch (output) {
+                                case ProjectTaskOutputItemInstance oi:
+                                    if (!IsSimpleIdentifierName(oi.ItemType)) return "task-output-complex-itemtype:" + task.Name;
+                                    break;
+                                case ProjectTaskOutputPropertyInstance op:
+                                    if (!IsSimpleIdentifierName(op.PropertyName)) return "task-output-complex-propname:" + task.Name;
+                                    break;
+                                default:
+                                    return "task-output-unknown:" + task.Name;
                             }
                         }
                     }
@@ -733,34 +752,47 @@ internal static class GoEmitter {
 
     // LocalTaskGoFunc maps an MSBuild task name to the Go runtime helper name.
     // Returns null for tasks we don't have a local implementation for yet.
-    static string? LocalTaskGoFunc(string taskName) => taskName switch {
-        "Message" => "Message",
-        "Warning" => "Warning",
-        "Error"   => "Error",
-        "MakeDir" => "MakeDir",
-        "RemoveDir" => "RemoveDir",
-        "Touch"   => "Touch",
-        "Delete"  => "Delete",
-        "Copy"    => "Copy",
-        "WriteLinesToFile" => "WriteLinesToFile",
-        "ReadLinesFromFile" => "ReadLinesFromFile",
-        "NETSdkError" => "NETSdkError",
-        "NETSdkWarning" => "NETSdkWarning",
-        "NETSdkInformation" => "NETSdkInformation",
-        "MSBuildInternalMessage" => "MSBuildInternalMessage",
-        _ => null,
+    // Matching is case-insensitive — MSBuild treats task names that way and
+    // SDK sources use both "NETSdkError" and "NetSdkError" in different files.
+    static readonly Dictionary<string, string> _localTaskGoFunc = new(StringComparer.OrdinalIgnoreCase) {
+        { "Message", "Message" },
+        { "Warning", "Warning" },
+        { "Error",   "Error" },
+        { "MakeDir", "MakeDir" },
+        { "RemoveDir", "RemoveDir" },
+        { "Touch",   "Touch" },
+        { "Delete",  "Delete" },
+        { "Copy",    "Copy" },
+        { "WriteLinesToFile", "WriteLinesToFile" },
+        { "ReadLinesFromFile", "ReadLinesFromFile" },
+        { "Hash", "Hash" },
+        { "ConvertToAbsolutePath", "ConvertToAbsolutePath" },
+        { "NETSdkError", "NETSdkError" },
+        { "NETSdkWarning", "NETSdkWarning" },
+        { "NETSdkInformation", "NETSdkInformation" },
+        { "MSBuildInternalMessage", "MSBuildInternalMessage" },
     };
+    static string? LocalTaskGoFunc(string taskName) =>
+        _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;
 
-    static bool TaskNeedsItemBag(string taskName) => taskName switch {
-        "MakeDir" or "RemoveDir" or "Touch" or "Delete" or "Copy" or "ReadLinesFromFile" => true,
-        _ => false,
+    // TaskNeedsItemBag returns true for tasks whose Go signature has the
+    // shape (ParamList, *OutputList, ItemBag, PropertyBag). The emitter
+    // appends ", outputs, I, P" to the call site for these. Tasks NOT in
+    // this set (Message/Warning/Error/WriteLinesToFile/NETSdk*) take only
+    // ParamList.
+    static readonly HashSet<string> _tasksNeedingItemBag = new(StringComparer.OrdinalIgnoreCase) {
+        "MakeDir", "RemoveDir", "Touch", "Delete", "Copy",
+        "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath",
     };
+    static bool TaskNeedsItemBag(string taskName) => _tasksNeedingItemBag.Contains(taskName);
 
     // OutputCapableLocalTasks names the tasks whose runtime helper already
-    // accepts an *OutputList and writes results into ItemBag. We can wire
-    // up <Output ItemName=".../> bindings for these (no PropertyName).
+    // accepts an *OutputList and writes results into ItemBag and/or
+    // PropertyBag. We wire up both <Output ItemName="..."/> and
+    // <Output PropertyName="..."/> bindings for these.
     static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
         "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
+        "Hash", "ConvertToAbsolutePath",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs

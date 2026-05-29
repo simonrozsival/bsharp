@@ -20,7 +20,7 @@ import (
 // MakeDir creates directories listed in the "Directories" parameter and
 // records any newly created directories under the output item list keyed
 // by "DirectoriesCreated".
-func MakeDir(p ParamList, outputs *OutputList, items ItemBag) error {
+func MakeDir(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	var created []*Item
 	for _, d := range SplitSemicolon(p.GetValueOrDefault("Directories")) {
 		if _, err := os.Stat(d); err == nil {
@@ -31,11 +31,7 @@ func MakeDir(p ParamList, outputs *OutputList, items ItemBag) error {
 		}
 		created = append(created, NewItem(d))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("DirectoriesCreated"); ok {
-			items.AppendTo(spec.ItemName, created)
-		}
-	}
+	writeItemOutput(outputs, items, "DirectoriesCreated", created)
 	return nil
 }
 
@@ -77,7 +73,7 @@ func WriteLinesToFile(p ParamList) error {
 
 // Touch updates the mtime of each file in "Files". Creates empty files if
 // AlwaysCreate=true. Records touched files under TouchedFiles output.
-func Touch(p ParamList, outputs *OutputList, items ItemBag) error {
+func Touch(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	alwaysCreate := strings.EqualFold(p.GetValueOrDefault("AlwaysCreate"), "true")
 	var touched []*Item
 	now := timeNow()
@@ -98,17 +94,13 @@ func Touch(p ParamList, outputs *OutputList, items ItemBag) error {
 		}
 		touched = append(touched, NewItem(f))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("TouchedFiles"); ok {
-			items.AppendTo(spec.ItemName, touched)
-		}
-	}
+	writeItemOutput(outputs, items, "TouchedFiles", touched)
 	return nil
 }
 
 // Delete removes each file in "Files" and records removed files under
 // DeletedFiles output.
-func Delete(p ParamList, outputs *OutputList, items ItemBag) error {
+func Delete(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	var deleted []*Item
 	for _, f := range SplitSemicolon(p.GetValueOrDefault("Files")) {
 		if _, err := os.Stat(f); err != nil {
@@ -119,18 +111,14 @@ func Delete(p ParamList, outputs *OutputList, items ItemBag) error {
 		}
 		deleted = append(deleted, NewItem(f))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("DeletedFiles"); ok {
-			items.AppendTo(spec.ItemName, deleted)
-		}
-	}
+	writeItemOutput(outputs, items, "DeletedFiles", deleted)
 	return nil
 }
 
 // Copy copies SourceFiles to DestinationFiles 1:1. SkipUnchangedFiles=true
 // skips copies where source content already matches the destination.
 // CopiedFiles output receives the destination items.
-func Copy(p ParamList, outputs *OutputList, items ItemBag) error {
+func Copy(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	src := SplitSemicolon(p.GetValueOrDefault("SourceFiles"))
 	dst := SplitSemicolon(p.GetValueOrDefault("DestinationFiles"))
 	skipUnchanged := strings.EqualFold(p.GetValueOrDefault("SkipUnchangedFiles"), "true")
@@ -149,17 +137,13 @@ func Copy(p ParamList, outputs *OutputList, items ItemBag) error {
 		}
 		copied = append(copied, NewItem(d))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("CopiedFiles"); ok {
-			items.AppendTo(spec.ItemName, copied)
-		}
-	}
+	writeItemOutput(outputs, items, "CopiedFiles", copied)
 	return nil
 }
 
 // ReadLinesFromFile reads the file at "File" and returns lines as items in
 // the "Lines" output item list. Missing files yield no items (no error).
-func ReadLinesFromFile(p ParamList, outputs *OutputList, items ItemBag) error {
+func ReadLinesFromFile(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	file := p.GetValueOrDefault("File")
 	if file == "" {
 		return nil
@@ -174,17 +158,13 @@ func ReadLinesFromFile(p ParamList, outputs *OutputList, items ItemBag) error {
 	for scanner.Scan() {
 		lines = append(lines, NewItem(scanner.Text()))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("Lines"); ok {
-			items.AppendTo(spec.ItemName, lines)
-		}
-	}
+	writeItemOutput(outputs, items, "Lines", lines)
 	return nil
 }
 
 // RemoveDir recursively deletes each directory in "Directories" and records
 // removed paths under RemovedDirectories output.
-func RemoveDir(p ParamList, outputs *OutputList, items ItemBag) error {
+func RemoveDir(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	var removed []*Item
 	for _, d := range SplitSemicolon(p.GetValueOrDefault("Directories")) {
 		if _, err := os.Stat(d); err != nil {
@@ -195,18 +175,14 @@ func RemoveDir(p ParamList, outputs *OutputList, items ItemBag) error {
 		}
 		removed = append(removed, NewItem(d))
 	}
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("RemovedDirectories"); ok {
-			items.AppendTo(spec.ItemName, removed)
-		}
-	}
+	writeItemOutput(outputs, items, "RemovedDirectories", removed)
 	return nil
 }
 
 // Hash computes a stable hash of all "ItemsToHash" identities. Result goes
 // to "HashResult" output (a property assignment in the generated host).
 // The C# implementation uses SHA256 of joined identities; we mirror.
-func Hash(p ParamList, outputs *OutputList, props PropertyBag) error {
+func Hash(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
 	identities := SplitSemicolon(p.GetValueOrDefault("ItemsToHash"))
 	if len(identities) == 0 {
 		return nil
@@ -217,13 +193,38 @@ func Hash(p ParamList, outputs *OutputList, props PropertyBag) error {
 		h.Write([]byte{0})
 	}
 	digest := hex.EncodeToString(h.Sum(nil))
-	if outputs != nil {
-		if spec, ok := outputs.TryGetValue("HashResult"); ok {
-			// The C# host emits Hash output as a property assignment, but the
-			// generated codegen invokes the typed-task path for it. We expose
-			// both: if the spec carries a metadata key, treat as property.
-			_ = spec
-			props.Set("HashResult", digest)
+	writeStringOutput(outputs, items, props, "HashResult", digest)
+	return nil
+}
+
+// ConvertToAbsolutePath resolves the "Paths" parameter to absolute paths.
+// Results are emitted under the "AbsolutePaths" output (either as items
+// when ItemName is bound, or as a property when PropertyName is bound).
+// Property bindings are joined with `;` to mirror MSBuild semantics for an
+// ITaskItem[]-typed output assigned to a string property.
+func ConvertToAbsolutePath(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	paths := SplitSemicolon(p.GetValueOrDefault("Paths"))
+	resolved := make([]*Item, 0, len(paths))
+	resolvedStrings := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		if raw == "" {
+			continue
+		}
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			return fmt.Errorf("ConvertToAbsolutePath: %s: %w", raw, err)
+		}
+		resolved = append(resolved, NewItem(abs))
+		resolvedStrings = append(resolvedStrings, abs)
+	}
+	if outputs == nil {
+		return nil
+	}
+	if spec, ok := outputs.TryGetValue("AbsolutePaths"); ok {
+		if spec.PropertyName != "" {
+			props.Set(spec.PropertyName, strings.Join(resolvedStrings, ";"))
+		} else if spec.ItemName != "" {
+			items.AppendTo(spec.ItemName, resolved)
 		}
 	}
 	return nil
@@ -422,3 +423,41 @@ func copyFile(src, dst string) error {
 
 // timeNow is var to allow tests to override.
 var timeNow = func() time.Time { return time.Now() }
+
+// writeItemOutput writes the given items slice to the configured output for
+// `key`. If the spec is property-bound rather than item-bound, the items'
+// identities are joined with `;` (matching MSBuild's behavior when an
+// ITaskItem[] output is bound to a string property). No-ops if outputs is
+// nil or `key` is unbound.
+func writeItemOutput(outputs *OutputList, items ItemBag, key string, vals []*Item) {
+	if outputs == nil {
+		return
+	}
+	spec, ok := outputs.TryGetValue(key)
+	if !ok {
+		return
+	}
+	if spec.ItemName != "" {
+		items.AppendTo(spec.ItemName, vals)
+	}
+}
+
+// writeStringOutput writes a scalar string to the configured output for
+// `key`. If the spec is item-bound rather than property-bound, the string is
+// promoted to a single Item (matching MSBuild's behavior when a string
+// output is bound to an ITaskItem[]). No-ops if outputs is nil or `key`
+// is unbound.
+func writeStringOutput(outputs *OutputList, items ItemBag, props PropertyBag, key, value string) {
+	if outputs == nil {
+		return
+	}
+	spec, ok := outputs.TryGetValue(key)
+	if !ok {
+		return
+	}
+	if spec.PropertyName != "" {
+		props.Set(spec.PropertyName, value)
+	} else if spec.ItemName != "" {
+		items.AppendTo(spec.ItemName, []*Item{NewItem(value)})
+	}
+}
