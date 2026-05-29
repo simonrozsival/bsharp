@@ -915,6 +915,8 @@ internal static class GoEmitter {
         { "NETSdkWarning", "NETSdkWarning" },
         { "NETSdkInformation", "NETSdkInformation" },
         { "MSBuildInternalMessage", "MSBuildInternalMessage" },
+        { "AllowEmptyTelemetry", "AllowEmptyTelemetry" },
+        { "CheckForDuplicateNuGetItemsTask", "CheckForDuplicateNuGetItemsTask" },
     };
     static string? LocalTaskGoFunc(string taskName) =>
         _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;
@@ -927,6 +929,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> _tasksNeedingItemBag = new(StringComparer.OrdinalIgnoreCase) {
         "MakeDir", "RemoveDir", "Touch", "Delete", "Copy",
         "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
+        "CheckForDuplicateNuGetItemsTask",
     };
     static bool TaskNeedsItemBag(string taskName) => _tasksNeedingItemBag.Contains(taskName);
 
@@ -937,6 +940,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
         "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
         "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
+        "CheckForDuplicateNuGetItemsTask",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs

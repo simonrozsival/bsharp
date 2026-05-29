@@ -454,6 +454,49 @@ func copyFile(src, dst string) error {
 // timeNow is var to allow tests to override.
 var timeNow = func() time.Time { return time.Now() }
 
+// AllowEmptyTelemetry is a no-op in the closed-world build. Real MSBuild
+// uses this to emit telemetry events to BuildEngine's IBuildEngine5 hook;
+// our host does not collect telemetry, so EventName + EventData are
+// ignored entirely.
+func AllowEmptyTelemetry(p ParamList) error {
+	return nil
+}
+
+// CheckForDuplicateNuGetItemsTask dedupes ITaskItem[] inputs by ItemSpec
+// (case-insensitive). NuGet wires this for PackageReference + PackageVersion
+// to surface NU1504/NU1506 warnings. In the closed-world build we don't have
+// the metadata-rich item objects flowing through ParamList (only their
+// semicolon-joined identities), so we cannot reproduce the warning text
+// or preserve per-item metadata in the output. Behavior here:
+//   - Identities are split, deduped by lowercased value.
+//   - If no duplicates exist, DeduplicatedItems is left empty so the
+//     conditional ItemGroup downstream (Condition="'@(X)' != ''") skips.
+//   - If duplicates exist, DeduplicatedItems is set to the deduped
+//     identities; downstream Remove/Include cycle replaces the original
+//     list. (Metadata is lost, but the resolved package set is correct
+//     for our research fixture which has no metadata-bearing dupes.)
+func CheckForDuplicateNuGetItemsTask(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	seen := map[string]bool{}
+	var deduped []*Item
+	hadDup := false
+	for _, id := range SplitSemicolon(p.GetValueOrDefault("Items")) {
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if seen[key] {
+			hadDup = true
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, NewItem(id))
+	}
+	if hadDup {
+		writeItemOutput(outputs, items, "DeduplicatedItems", deduped)
+	}
+	return nil
+}
+
 // writeItemOutput writes the given items slice to the configured output for
 // `key`. If the spec is property-bound rather than item-bound, the items'
 // identities are joined with `;` (matching MSBuild's behavior when an

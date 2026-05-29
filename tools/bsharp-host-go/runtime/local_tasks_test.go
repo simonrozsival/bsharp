@@ -177,3 +177,61 @@ func TestRemoveDuplicatesNoDuplicates(t *testing.T) {
 		t.Errorf("HadAnyDuplicates = %q; want False", props.Get("HadDup"))
 	}
 }
+
+func TestAllowEmptyTelemetryIsNoop(t *testing.T) {
+	plist := NewParamList(
+		Param{Key: "EventName", Value: "BuildFinished"},
+		Param{Key: "EventData", Value: "Key1=Value1;Key2=Value2"},
+	)
+	if err := AllowEmptyTelemetry(plist); err != nil {
+		t.Fatalf("AllowEmptyTelemetry returned %v; want nil", err)
+	}
+}
+
+func TestCheckForDuplicateNuGetItemsTaskNoDuplicates(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "DeduplicatedItems", ItemName: "_Dedup"})
+	plist := NewParamList(Param{Key: "Items", Value: "Pkg.A;Pkg.B;Pkg.C"})
+	if err := CheckForDuplicateNuGetItemsTask(plist, outputs, items, props); err != nil {
+		t.Fatalf("returned %v", err)
+	}
+	// No duplicates ⇒ DeduplicatedItems left empty so downstream
+	// Condition="'@(_Dedup)' != ''" skips.
+	if got := items.Get("_Dedup"); len(got) != 0 {
+		t.Errorf("expected empty output on no duplicates, got %d items", len(got))
+	}
+}
+
+func TestCheckForDuplicateNuGetItemsTaskWithDuplicates(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "DeduplicatedItems", ItemName: "_Dedup"})
+	plist := NewParamList(Param{Key: "Items", Value: "Pkg.A;Pkg.B;pkg.a;Pkg.C;PKG.B"})
+	if err := CheckForDuplicateNuGetItemsTask(plist, outputs, items, props); err != nil {
+		t.Fatalf("returned %v", err)
+	}
+	got := items.Get("_Dedup")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 deduped items, got %d: %v", len(got), got)
+	}
+	wantIdents := []string{"Pkg.A", "Pkg.B", "Pkg.C"}
+	for i, want := range wantIdents {
+		if got[i].Identity != want {
+			t.Errorf("got[%d].Identity = %q; want %q (first-wins order)", i, got[i].Identity, want)
+		}
+	}
+}
+
+func TestCheckForDuplicateNuGetItemsTaskEmptyInput(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "DeduplicatedItems", ItemName: "_Dedup"})
+	plist := NewParamList(Param{Key: "Items", Value: ""})
+	if err := CheckForDuplicateNuGetItemsTask(plist, outputs, items, props); err != nil {
+		t.Fatalf("returned %v", err)
+	}
+	if got := items.Get("_Dedup"); len(got) != 0 {
+		t.Errorf("expected empty output on empty input, got %d items", len(got))
+	}
+}
