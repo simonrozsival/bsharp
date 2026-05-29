@@ -478,6 +478,13 @@ internal static class GoEmitter {
     }
 
     static void EmitLocalTaskCall(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
+        // CallTarget is special — it doesn't have a runtime helper; it
+        // dispatches to other targets emitted in this same file.
+        if (string.Equals(task.Name, "CallTarget", StringComparison.OrdinalIgnoreCase)) {
+            EmitCallTargetTask(sb, target, task);
+            return;
+        }
+
         var fn = LocalTaskGoFunc(task.Name);
         if (fn == null) {
             sb.Append("\trt.NotImplemented(").Append(GoStringLiteral(target.Name + ":" + task.Name)).AppendLine(")");
@@ -498,17 +505,59 @@ internal static class GoEmitter {
         }
         sb.Append("));");
 
-        // Tasks that take ItemBag/OutputList come in two flavors. Our Phase A
-        // classifier rejected any task with an <Output/>, so we know there are
-        // no outputs to wire — pass nil/empty for ItemBag.
+        // Tasks that take ItemBag/OutputList come in two flavors: with or
+        // without <Output/> bindings. If there are item-list outputs we
+        // construct an *OutputList literal; otherwise pass nil.
         if (TaskNeedsItemBag(task.Name)) {
-            // Replace closing paren with the extra args. The last char written
-            // was ");" — strip the trailing ");" and re-emit with outputs nil.
             sb.Length -= 2;
-            sb.Append(", nil, I);");
+            sb.Append(", ").Append(EmitTaskOutputList(task)).Append(", I);");
         }
         sb.AppendLine(" err != nil { rt.GetErrorList().Add(\"" + EscapeForGo(target.Name) + "\", err) }");
 
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.AppendLine("\t}");
+        }
+    }
+
+    // EmitTaskOutputList emits the second argument to a task helper —
+    // either `nil` (no <Output/> children) or `rt.NewOutputList(rt.Output{...})`
+    // populated with the task's item-list output bindings. Property-output
+    // bindings are rejected at classifier level so we don't see them here.
+    static string EmitTaskOutputList(ProjectTaskInstance task) {
+        if (task.Outputs.Count == 0) return "nil";
+        var sb = new StringBuilder();
+        sb.Append("rt.NewOutputList(");
+        var first = true;
+        foreach (var o in task.Outputs) {
+            if (o is ProjectTaskOutputItemInstance oi) {
+                if (!first) sb.Append(", ");
+                first = false;
+                sb.Append("rt.Output{Key: ").Append(GoStringLiteral(oi.TaskParameter))
+                  .Append(", ItemName: ").Append(GoStringLiteral(oi.ItemType))
+                  .Append("}");
+            }
+        }
+        sb.Append(")");
+        return sb.ToString();
+    }
+
+    // EmitCallTargetTask emits a `<CallTarget Targets="..." />` task as a
+    // runtime loop that splits the expanded Targets attribute and dispatches
+    // each non-empty name through dispatchTarget. Mirrors the dynamic-
+    // DependsOnTargets emission. RunEachTargetSeparately and ContinueOnError
+    // are ignored (single-pass sequential dispatch — the runtime currently
+    // panics on any task error anyway).
+    static void EmitCallTargetTask(StringBuilder sb, ProjectTargetInstance target, ProjectTaskInstance task) {
+        if (!string.IsNullOrWhiteSpace(task.Condition)) {
+            sb.Append("\tif rt.MustEvalCondition(").Append(GoStringLiteral(task.Condition)).AppendLine(", P, I) {");
+        }
+        var targetsAttr = task.Parameters.TryGetValue("Targets", out var t) ? t : "";
+        sb.Append("\t\tfor _, _ct := range rt.SplitSemicolon(rt.MustExpand(")
+          .Append(GoStringLiteral(targetsAttr)).AppendLine(", P, I, nil)) {");
+        sb.AppendLine("\t\t\tif _ct == \"\" { continue }");
+        sb.Append("\t\t\tif !dispatchTarget(_ct) { panic(\"CallTarget: unknown target referenced by ")
+          .Append(EscapeForGo(target.Name)).AppendLine("\") }");
+        sb.AppendLine("\t\t}");
         if (!string.IsNullOrWhiteSpace(task.Condition)) {
             sb.AppendLine("\t}");
         }
@@ -537,8 +586,34 @@ internal static class GoEmitter {
         foreach (var child in target.Children) {
             switch (child) {
                 case ProjectTaskInstance task:
+                    if (string.Equals(task.Name, "CallTarget", StringComparison.OrdinalIgnoreCase)) {
+                        // CallTarget has no <Output/> bindings worth modelling;
+                        // its only effect is the side-effect of dispatching
+                        // the listed targets. We accept any condition that
+                        // passes the standard simple-condition check, and any
+                        // Targets expression that passes IsSimpleExpression.
+                        if (!IsSimpleConditionTemplate(task.Condition)) return "complex-task-condition";
+                        if (task.Parameters.TryGetValue("Targets", out var ctTargets)) {
+                            if (!IsSimpleExpressionTemplate(ctTargets)) return "complex-task-param:CallTarget.Targets";
+                            if (ContainsBatching(ctTargets)) return "task-batching";
+                        }
+                        break;
+                    }
                     if (LocalTaskGoFunc(task.Name) == null) return "task:" + task.Name;
-                    if (task.Outputs.Count > 0) return "task-has-outputs:" + task.Name;
+                    if (task.Outputs.Count > 0) {
+                        // Item-list outputs are wired through OutputList in the
+                        // runtime helpers; property outputs require runtime
+                        // changes (no PropertyBag arg today). Reject any task
+                        // that has a property-output binding, plus any task that
+                        // isn't on the OutputCapableLocalTasks whitelist.
+                        if (!OutputCapableLocalTasks.Contains(task.Name)) return "task-has-outputs:" + task.Name;
+                        foreach (var output in task.Outputs) {
+                            if (output is ProjectTaskOutputPropertyInstance) return "task-has-property-output:" + task.Name;
+                            if (output is ProjectTaskOutputItemInstance oi) {
+                                if (!IsSimpleIdentifierName(oi.ItemType)) return "task-output-complex-itemtype:" + task.Name;
+                            }
+                        }
+                    }
                     if (!IsSimpleConditionTemplate(task.Condition)) return "complex-task-condition";
                     foreach (var p in task.Parameters) {
                         if (!IsSimpleExpressionTemplate(p.Value)) return "complex-task-param:" + task.Name + "." + p.Key;
@@ -679,6 +754,13 @@ internal static class GoEmitter {
     static bool TaskNeedsItemBag(string taskName) => taskName switch {
         "MakeDir" or "RemoveDir" or "Touch" or "Delete" or "Copy" or "ReadLinesFromFile" => true,
         _ => false,
+    };
+
+    // OutputCapableLocalTasks names the tasks whose runtime helper already
+    // accepts an *OutputList and writes results into ItemBag. We can wire
+    // up <Output ItemName=".../> bindings for these (no PropertyName).
+    static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
+        "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs
