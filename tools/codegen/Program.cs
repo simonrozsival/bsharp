@@ -2806,18 +2806,50 @@ static partial class TaskRunner {
 
         void SpawnDaemon(string daemonExe, string fingerprint, string socketPath) {
             var idleMin = Environment.GetEnvironmentVariable("BSHARP_TASKD_IDLE_MIN") ?? "10";
-            var psi = new ProcessStartInfo(daemonExe) {
+            // Spawn through /bin/sh so we can redirect stdin/stdout/stderr at
+            // shell level. The host's stdout/stderr are typically a pipe to a
+            // parent process (e.g. `bsharp build | tail`); without this
+            // redirect the daemon would inherit those fds and keep the parent
+            // pipeline alive long after the host exits.
+            if (!OperatingSystem.IsWindows()) {
+                var cmd = "exec " + ShellQuote(daemonExe)
+                          + " --sdk-fingerprint " + ShellQuote(fingerprint)
+                          + " --idle-min " + ShellQuote(idleMin)
+                          + " </dev/null >/dev/null 2>/dev/null";
+                var psi = new ProcessStartInfo("/bin/sh") {
+                    UseShellExecute = false,
+                    RedirectStandardInput = false,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false,
+                    CreateNoWindow = true,
+                };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(cmd);
+                try { Process.Start(psi); } catch (Exception ex) { throw new InvalidOperationException($"failed to spawn '{daemonExe}': {ex.Message}", ex); }
+                return;
+            }
+            var winPsi = new ProcessStartInfo(daemonExe) {
                 UseShellExecute = false,
                 RedirectStandardInput = false,
                 RedirectStandardOutput = false,
                 RedirectStandardError = false,
                 CreateNoWindow = true,
             };
-            psi.ArgumentList.Add("--sdk-fingerprint");
-            psi.ArgumentList.Add(fingerprint);
-            psi.ArgumentList.Add("--idle-min");
-            psi.ArgumentList.Add(idleMin);
-            try { Process.Start(psi); } catch (Exception ex) { throw new InvalidOperationException($"failed to spawn '{daemonExe}': {ex.Message}", ex); }
+            winPsi.ArgumentList.Add("--sdk-fingerprint");
+            winPsi.ArgumentList.Add(fingerprint);
+            winPsi.ArgumentList.Add("--idle-min");
+            winPsi.ArgumentList.Add(idleMin);
+            try { Process.Start(winPsi); } catch (Exception ex) { throw new InvalidOperationException($"failed to spawn '{daemonExe}': {ex.Message}", ex); }
+        }
+
+        static string ShellQuote(string s) {
+            if (s.Length == 0) return "''";
+            foreach (var c in s) {
+                if (char.IsLetterOrDigit(c)) continue;
+                if (c is '/' or '.' or '_' or '-' or '+' or '=' or ':' or '@') continue;
+                return "'" + s.Replace("'", "'\\''") + "'";
+            }
+            return s;
         }
 
         static void WriteFrame(Stream output, byte[] payload) {
@@ -4409,10 +4441,14 @@ static partial class Tasks {
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi) ?? throw new InvalidOperationException($"failed to start {fileName}");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+        // Drain stdout + stderr concurrently to avoid the classic deadlock:
+        // if the child fills its stderr pipe buffer (~64 KiB) before we finish
+        // reading stdout, both ends block forever. ReadToEndAsync on both
+        // streams in parallel keeps the pipes drained.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
-        return (process.ExitCode, stdout, stderr);
+        return (process.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
     }
 
     public static void SetRidAgnosticValueForProjects(ParamList p) { }
