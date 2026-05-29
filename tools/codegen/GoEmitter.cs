@@ -580,6 +580,9 @@ internal static class GoEmitter {
             if (IsSimpleIdentifierName(ident)) return ident;
         } else if (rawInc.Length == 0 && rawRem.Length == 0) {
             return item.ItemType;
+        } else if (rawInc.Length > 0) {
+            var fromTransform = TryGetTransformIncludeSrcList(rawInc);
+            if (fromTransform != null) return fromTransform;
         }
         var fromCond = ExtractSingleBatchQualifier(item.Condition ?? "");
         if (fromCond != null) return fromCond;
@@ -623,8 +626,10 @@ internal static class GoEmitter {
 
         // Is the Include literal-shaped (not @(SrcList))? Only meaningful when
         // isInclude. Detected by checking the classified include kind.
-        var includeIsLiteral = isInclude
-            && ClassifyItemIncludeSpec(include) != ItemIncludeKind.ItemListCopy;
+        var includeKind = isInclude ? ClassifyItemIncludeSpec(include) : ItemIncludeKind.Unsupported;
+        var includeIsTransform = isInclude && includeKind != ItemIncludeKind.ItemListCopy
+            && TryGetTransformIncludeSrcList(include) != null;
+        var includeIsLiteral = isInclude && includeKind != ItemIncludeKind.ItemListCopy && !includeIsTransform;
 
         sb.Append(indent).AppendLine("{");
         var bi = indent + "\t";
@@ -668,6 +673,23 @@ internal static class GoEmitter {
         if (isModifyMeta) {
             sb.Append(bi).AppendLine("\titem := src");
             EmitItemMetadata(sb, item, bi + "\t", "item", "meta");
+        } else if (includeIsTransform) {
+            // Include="@(SrcList->'tpl')" — evaluate the template alone
+            // against src's meta to produce the identity string (matches
+            // MSBuild's per-item transform). Split on ';' to support
+            // templates that may produce multiple identities (rare but
+            // legal). New items don't inherit src's metadata (the
+            // transform produces only Identity); explicit <Meta> children
+            // are applied below via EmitItemMetadata.
+            var tpl = TryGetTransformIncludeTemplate(include)
+                ?? throw new InvalidOperationException("transform-include re-parse failed: " + include);
+            sb.Append(bi).Append("\tfor _, id := range rt.SplitSemicolon(rt.MustExpand(")
+              .Append(GoStringLiteral(tpl)).AppendLine(", P, I, meta)) {");
+            sb.Append(bi).AppendLine("\t\tif id == \"\" { continue }");
+            sb.Append(bi).AppendLine("\t\titem := rt.NewItem(id)");
+            EmitItemMetadata(sb, item, bi + "\t\t", "item", "meta");
+            sb.Append(bi).Append("\t\tI.AppendTo(").Append(GoStringLiteral(itemType)).AppendLine(", []*rt.Item{item})");
+            sb.Append(bi).AppendLine("\t}");
         } else if (includeIsLiteral) {
             // Expand the Include per source item, splitting on ';' to support
             // expressions like `"a;b"` that should produce multiple items.
@@ -915,6 +937,52 @@ internal static class GoEmitter {
         return null;
     }
 
+    // TryGetTransformIncludeSrcList returns the source item-list name when
+    // include is exactly `@(SimpleIdent->'tpl')` (no chained methods, no
+    // sep). The transform's per-item iteration drives batching when the
+    // ItemGroup also has `%()` references in cond/meta. Returns null for
+    // any other shape (including chained transforms and Distinct(); those
+    // remain ig-include-complex).
+    static string? TryGetTransformIncludeSrcList(string include) {
+        if (string.IsNullOrEmpty(include)) return null;
+        var trimmed = include.Trim();
+        if (!trimmed.StartsWith("@(", StringComparison.Ordinal)) return null;
+        if (!trimmed.EndsWith(")", StringComparison.Ordinal)) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3);
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) return null;
+        var name = inner.Substring(0, arrow).Trim();
+        if (!IsSimpleIdentifierName(name)) return null;
+        var rhs = inner.Substring(arrow + 2).TrimStart();
+        if (rhs.Length < 2) return null;
+        var q = rhs[0];
+        if (q != '\'' && q != '"') return null;
+        if (!IsSimpleTransformRhs(rhs)) return null;
+        return name;
+    }
+
+    // TryGetTransformIncludeTemplate returns the template string from
+    // `@(SimpleIdent->'tpl')` for use in per-iteration MustExpand. Returns
+    // null for any other shape. Caller is responsible for verifying the
+    // include is a transform-include via TryGetTransformIncludeSrcList
+    // first; this helper is the second step for the emitter only.
+    static string? TryGetTransformIncludeTemplate(string include) {
+        if (string.IsNullOrEmpty(include)) return null;
+        var trimmed = include.Trim();
+        if (!trimmed.StartsWith("@(", StringComparison.Ordinal)) return null;
+        if (!trimmed.EndsWith(")", StringComparison.Ordinal)) return null;
+        var inner = trimmed.Substring(2, trimmed.Length - 3);
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) return null;
+        var rhs = inner.Substring(arrow + 2).TrimStart();
+        if (rhs.Length < 2) return null;
+        var q = rhs[0];
+        if (q != '\'' && q != '"') return null;
+        var end = rhs.IndexOf(q, 1);
+        if (end < 0) return null;
+        return rhs.Substring(1, end - 1);
+    }
+
     static string? ClassifyItemGroup(ProjectItemGroupTaskInstance ig) {
         if (!IsSimpleConditionTemplate(ig.Condition)) return "ig-complex-condition";
         foreach (var item in ig.Items) {
@@ -941,6 +1009,10 @@ internal static class GoEmitter {
                 if (IsSimpleIdentifierName(ident)) srcList = ident;
             } else if (rawInc.Length == 0 && rawRem.Length == 0) {
                 srcList = item.ItemType;
+            } else if (rawInc.Length > 0) {
+                // Transform include `@(SrcList->'tpl')` — SrcList drives the
+                // per-item batched iteration when cond/meta reference `%()`.
+                srcList = TryGetTransformIncludeSrcList(rawInc);
             }
             if (srcList == null) {
                 var fromCond = ExtractSingleBatchQualifier(item.Condition ?? "");
