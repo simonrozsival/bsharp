@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -227,8 +229,10 @@ func normalizePathJoin(args []string, dir bool) string {
 // pathIntrinsic handles [System.IO.Path]::* members.
 func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, bool) {
 	lower := strings.ToLower(name)
-	// Static properties (no parens).
-	if !hasArgs {
+	// "Parameterless" intrinsics may be invoked as `Name` (no parens) or
+	// as `Name()` (empty parens). Route both shapes through the same
+	// switch.
+	if !hasArgs || strings.TrimSpace(argsStr) == "" {
 		switch lower {
 		case "directoryseparatorchar":
 			return string(filepath.Separator), true
@@ -240,8 +244,28 @@ func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, b
 				return "/", true
 			}
 			return string(filepath.Separator), true
+		case "gettemppath":
+			// .NET returns the OS temp directory with a trailing separator.
+			// os.TempDir() does not guarantee a trailing separator.
+			tp := os.TempDir()
+			return ensureTrailingSlash(tp), true
+		case "getrandomfilename":
+			// .NET returns an 11-char cryptographically-random string with
+			// a dot-extension (e.g. "abc12345.xyz"). We just need a unique
+			// filename-safe token; build runs use it for tmp dir names.
+			var buf [6]byte
+			if _, err := rand.Read(buf[:]); err != nil {
+				return "", false
+			}
+			s := strings.ToLower(hex.EncodeToString(buf[:]))
+			return s[:8] + "." + s[8:11], true
 		}
-		return "", false
+		if !hasArgs {
+			return "", false
+		}
+		// Fall through: hasArgs=true but argsStr is empty — the parameterized
+		// dispatch below will reject with len(args) != N for any required-arg
+		// member, which is the correct loud-failure.
 	}
 	args, ok := splitIntrinsicArgs(argsStr, p)
 	if !ok {

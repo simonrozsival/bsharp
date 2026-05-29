@@ -1614,6 +1614,8 @@ internal static class GoEmitter {
                 new() { Name = "DirectorySeparatorChar", RequiresArgs = false },
                 new() { Name = "PathSeparator", RequiresArgs = false },
                 new() { Name = "AltDirectorySeparatorChar", RequiresArgs = false },
+                new() { Name = "GetTempPath", RequiresArgs = false },
+                new() { Name = "GetRandomFileName", RequiresArgs = false },
             },
             ["System.Text.RegularExpressions.Regex"] = new IntrinsicMember[] {
                 new() { Name = "Replace", RequiresArgs = true },
