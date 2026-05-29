@@ -235,3 +235,129 @@ func TestCheckForDuplicateNuGetItemsTaskEmptyInput(t *testing.T) {
 		t.Errorf("expected empty output on empty input, got %d items", len(got))
 	}
 }
+
+func TestExecSuccessZeroExitCode(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "ExitCode", PropertyName: "MyExitCode"})
+	plist := NewParamList(Param{Key: "Command", Value: "true"})
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec returned %v", err)
+	}
+	if got := props.Get("MyExitCode"); got != "0" {
+		t.Errorf("expected ExitCode 0, got %q", got)
+	}
+}
+
+func TestExecNonZeroExitCodeFailsByDefault(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "ExitCode", PropertyName: "MyExitCode"})
+	plist := NewParamList(Param{Key: "Command", Value: "exit 17"})
+	err := Exec(plist, outputs, items, props)
+	if err == nil {
+		t.Fatalf("expected Exec to fail on non-zero exit, got nil")
+	}
+	if got := props.Get("MyExitCode"); got != "17" {
+		t.Errorf("expected ExitCode 17 captured even on failure, got %q", got)
+	}
+}
+
+func TestExecIgnoreExitCodeSuppressesError(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "ExitCode", PropertyName: "MyExitCode"})
+	plist := NewParamList(
+		Param{Key: "Command", Value: "exit 42"},
+		Param{Key: "IgnoreExitCode", Value: "true"},
+	)
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec with IgnoreExitCode=true returned %v", err)
+	}
+	if got := props.Get("MyExitCode"); got != "42" {
+		t.Errorf("expected ExitCode 42, got %q", got)
+	}
+}
+
+func TestExecConsoleToMSBuildCapturesOutput(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "ExitCode", PropertyName: "ExitCodeOut"},
+		Output{Key: "ConsoleOutput", PropertyName: "CapturedLine"},
+	)
+	plist := NewParamList(
+		Param{Key: "Command", Value: "printf 'hello-from-exec\\n'"},
+		Param{Key: "ConsoleToMSBuild", Value: "true"},
+	)
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec returned %v", err)
+	}
+	if got := props.Get("ExitCodeOut"); got != "0" {
+		t.Errorf("expected ExitCode 0, got %q", got)
+	}
+	if got := props.Get("CapturedLine"); got != "hello-from-exec" {
+		t.Errorf("expected CapturedLine %q, got %q", "hello-from-exec", got)
+	}
+}
+
+func TestExecConsoleToMSBuildToItemBinding(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "ConsoleOutput", ItemName: "Lines"},
+	)
+	plist := NewParamList(
+		Param{Key: "Command", Value: "printf 'a\\nb\\nc\\n'"},
+		Param{Key: "ConsoleToMSBuild", Value: "true"},
+	)
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec returned %v", err)
+	}
+	got := items.Get("Lines")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d: %v", len(got), got)
+	}
+	want := []string{"a", "b", "c"}
+	for i, w := range want {
+		if got[i].Identity != w {
+			t.Errorf("Lines[%d]: want %q, got %q", i, w, got[i].Identity)
+		}
+	}
+}
+
+func TestExecEmptyCommandIsNoop(t *testing.T) {
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(Output{Key: "ExitCode", PropertyName: "Code"})
+	plist := NewParamList(Param{Key: "Command", Value: ""})
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec empty command returned %v", err)
+	}
+	if got := props.Get("Code"); got != "" {
+		t.Errorf("expected no ExitCode written for empty command, got %q", got)
+	}
+}
+
+func TestExecWorkingDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	props := newFakeProps()
+	items := newFakeItems()
+	outputs := NewOutputList(
+		Output{Key: "ConsoleOutput", PropertyName: "Pwd"},
+	)
+	plist := NewParamList(
+		Param{Key: "Command", Value: "pwd"},
+		Param{Key: "WorkingDirectory", Value: tmp},
+		Param{Key: "ConsoleToMSBuild", Value: "true"},
+	)
+	if err := Exec(plist, outputs, items, props); err != nil {
+		t.Fatalf("Exec returned %v", err)
+	}
+	got := props.Get("Pwd")
+	// Some platforms resolve symlinks (/var → /private/var on macOS); accept
+	// either the literal tmp or its realpath suffix.
+	if !strings.HasSuffix(got, strings.TrimPrefix(tmp, "/private")) && got != tmp {
+		t.Errorf("expected Pwd ending in %q, got %q", tmp, got)
+	}
+}

@@ -601,11 +601,28 @@ func resolveFunctionArg(arg string, p PropertyBag) (string, bool) {
 	if (arg[0] == '\'' || arg[0] == '"') && len(arg) >= 2 && arg[len(arg)-1] == arg[0] {
 		return arg[1 : len(arg)-1], true
 	}
-	// $(SimpleProp) — single-level expansion.
+	// $(...) — single bare expansion. The classic Phase B form requires the
+	// inner to be a simple identifier; we additionally allow the Phase G+
+	// shape `$(X.M(args).M2(args)...)` by routing the inner through
+	// evalPropertyExpression (which is the same evaluator the top-level
+	// `$` case in Expand uses). Nested property functions are common in
+	// SDK conditions like
+	// `$(RuntimeIdentifier.ToUpperInvariant().Contains($(PlatformTarget.ToUpperInvariant())))`.
 	if strings.HasPrefix(arg, "$(") && strings.HasSuffix(arg, ")") {
 		inner := strings.TrimSpace(arg[2 : len(arg)-1])
 		if isSimpleIdentifier(inner) {
 			return p.Get(inner), true
+		}
+		// `[TypeName]::Member(args)` intrinsic call wrapped in $(...).
+		if len(inner) > 0 && inner[0] == '[' {
+			if v, ok, handled := tryEvalIntrinsic(inner, p); handled {
+				return v, ok
+			}
+			return "", false
+		}
+		// Property method chain — let evalPropertyExpression do the work.
+		if v, ok := evalPropertyExpression(inner, p); ok {
+			return v, true
 		}
 		return "", false
 	}

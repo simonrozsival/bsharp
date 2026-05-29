@@ -246,11 +246,18 @@ func TestExpandPropertyFunctionTrimStartIsCharSet(t *testing.T) {
 	}
 }
 
-func TestExpandPropertyFunctionRejectsNestedFunction(t *testing.T) {
+func TestExpandPropertyFunctionNestedFunctionInArg(t *testing.T) {
+	// Phase H: nested property functions inside method args are evaluated
+	// via evalPropertyExpression. Common in SDK conditions like
+	// `$(X.Contains($(Y.ToUpperInvariant())))`.
 	p := &stubPB{m: map[string]string{"X": "foo", "Y": "BAR"}}
-	_, ok := Expand("$(X.Replace($(Y.ToLower()), 'z'))", p, &stubIB{}, nil)
-	if ok {
-		t.Error("nested property functions in args should be unsupported")
+	got, ok := Expand("$(X.Replace($(Y.ToLower()), 'z'))", p, &stubIB{}, nil)
+	if !ok || got != "foo" {
+		t.Errorf("got %q ok=%v (expected 'foo' because 'bar' is not in 'foo')", got, ok)
+	}
+	got2, ok2 := Expand("$(X.Contains($(Y.ToLower())))", &stubPB{m: map[string]string{"X": "barbaz", "Y": "BAR"}}, &stubIB{}, nil)
+	if !ok2 || got2 != "True" {
+		t.Errorf("got %q ok=%v (expected 'True')", got2, ok2)
 	}
 }
 

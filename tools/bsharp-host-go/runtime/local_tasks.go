@@ -2,12 +2,16 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -509,7 +513,20 @@ func CheckForDuplicateNuGetItemsTask(p ParamList, outputs *OutputList, items Ite
 // identities are joined with `;` (matching MSBuild's behavior when an
 // ITaskItem[] output is bound to a string property). No-ops if outputs is
 // nil or `key` is unbound.
+// writeItemOutput routes an item-list result through the OutputList
+// binding for `key`. When bound to an ItemName, items are appended to
+// that item type. When bound to a PropertyName instead, identities are
+// joined with `;` per standard MSBuild ITaskItem[]→string coercion.
+// No-ops if outputs is nil or `key` is unbound.
 func writeItemOutput(outputs *OutputList, items ItemBag, key string, vals []*Item) {
+	writeItemOutputProps(outputs, items, nil, key, vals)
+}
+
+// writeItemOutputProps is the props-aware variant used by tasks (Exec,
+// ConvertToAbsolutePath, …) that may have an item-list output bound to
+// either an ItemName or a PropertyName. When a PropertyName is wired,
+// identities are joined with `;` and written through PropertyBag.
+func writeItemOutputProps(outputs *OutputList, items ItemBag, props PropertyBag, key string, vals []*Item) {
 	if outputs == nil {
 		return
 	}
@@ -519,6 +536,14 @@ func writeItemOutput(outputs *OutputList, items ItemBag, key string, vals []*Ite
 	}
 	if spec.ItemName != "" {
 		items.AppendTo(spec.ItemName, vals)
+		return
+	}
+	if spec.PropertyName != "" && props != nil {
+		ids := make([]string, 0, len(vals))
+		for _, v := range vals {
+			ids = append(ids, v.Identity)
+		}
+		props.Set(spec.PropertyName, strings.Join(ids, ";"))
 	}
 }
 
@@ -540,4 +565,85 @@ func writeStringOutput(outputs *OutputList, items ItemBag, props PropertyBag, ke
 	} else if spec.ItemName != "" {
 		items.AppendTo(spec.ItemName, []*Item{NewItem(value)})
 	}
+}
+
+// Exec spawns a subprocess to run the "Command" string via the platform
+// shell (`sh -c` on Unix, `cmd /c` on Windows). It captures the exit code,
+// optionally captures stdout (when ConsoleToMSBuild is true), and binds
+// the well-known outputs:
+//   - ExitCode: integer exit code as a string property/item.
+//   - ConsoleOutput: only populated when ConsoleToMSBuild is true; each
+//     non-empty line becomes an item with that line as Identity. When
+//     bound to a PropertyName instead of an ItemName, OutputList collapses
+//     the items with `;` per standard MSBuild coercion.
+//
+// If IgnoreExitCode is "true", a non-zero exit produces no error (the
+// caller typically inspects ExitCode itself). Otherwise a non-zero exit
+// surfaces as an error so the build fails loudly.
+//
+// Output is forwarded to bsharp's stdout/stderr live so users see real-time
+// progress, even when ConsoleToMSBuild also captures into the output
+// buffer (via io.MultiWriter). When neither IgnoreStandardErrorWarningFormat
+// nor any of the regex-tuning parameters are honored — bsharp logs the
+// command's stderr verbatim and trusts the wrapping target Error="..."
+// guards (e.g. !Exists($(Tool))) to surface friendly diagnostics.
+func Exec(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) error {
+	command := p.GetValueOrDefault("Command")
+	if command == "" {
+		return nil
+	}
+	workDir := p.GetValueOrDefault("WorkingDirectory")
+	ignoreExitCode := strings.EqualFold(p.GetValueOrDefault("IgnoreExitCode"), "true")
+	consoleCapture := strings.EqualFold(p.GetValueOrDefault("ConsoleToMSBuild"), "true")
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd.exe", "/c", command)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+
+	var stdoutBuf bytes.Buffer
+	if consoleCapture {
+		cmd.Stdout = io.MultiWriter(&stdoutBuf, os.Stdout)
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+	cmd.Stderr = os.Stderr
+
+	runErr := cmd.Run()
+	exitCode := 0
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			// Spawn failure (binary not found, working dir missing, etc.) — never
+			// suppressed by IgnoreExitCode because no exit code was produced.
+			return fmt.Errorf("Exec: %s: %w", command, runErr)
+		}
+	}
+
+	writeStringOutput(outputs, items, props, "ExitCode", strconv.Itoa(exitCode))
+
+	if consoleCapture {
+		var lines []*Item
+		scanner := bufio.NewScanner(&stdoutBuf)
+		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+		for scanner.Scan() {
+			text := strings.TrimRight(scanner.Text(), "\r")
+			if text == "" {
+				continue
+			}
+			lines = append(lines, NewItem(text))
+		}
+		writeItemOutputProps(outputs, items, props, "ConsoleOutput", lines)
+	}
+
+	if !ignoreExitCode && exitCode != 0 {
+		return fmt.Errorf("Exec: command exited with code %d: %s", exitCode, command)
+	}
+	return nil
 }

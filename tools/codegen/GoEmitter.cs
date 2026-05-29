@@ -821,21 +821,24 @@ internal static class GoEmitter {
     static ItemIncludeKind ClassifyItemIncludeSpec(string include) {
         if (string.IsNullOrEmpty(include)) return ItemIncludeKind.Literal;
         var trimmed = include.Trim();
-        // Exactly @(SimpleIdent)
+        // Exactly @(SimpleIdent) — fast path that preserves source-item
+        // metadata via Item.Clone (Literal only carries Identity).
         if (trimmed.StartsWith("@(", StringComparison.Ordinal) && trimmed.EndsWith(")", StringComparison.Ordinal)) {
             var inner = trimmed.Substring(2, trimmed.Length - 3);
-            // No transforms or custom separators in the supported form.
             if (!inner.Contains("->", StringComparison.Ordinal) && !inner.Contains(",", StringComparison.Ordinal)
                 && IsSimpleIdentifierName(inner.Trim())) {
                 return ItemIncludeKind.ItemListCopy;
             }
-            return ItemIncludeKind.Unsupported;
+            // Single @() but not a simple ident — fall through to Literal
+            // evaluation below if IsSimpleExpressionTemplate accepts it
+            // (e.g. transforms `@(X->'tpl')` produce `;`-joined identities).
         }
-        // No @() at all → simple literal/expansion.
-        if (!include.Contains("@(", StringComparison.Ordinal)) {
-            if (IsSimpleExpressionTemplate(include)) return ItemIncludeKind.Literal;
-            return ItemIncludeKind.Unsupported;
-        }
+        // Any spec the expression evaluator can fully handle becomes a
+        // Literal: evaluate at runtime via MustExpand, split on `;`, and
+        // create new items. This covers literal text, plain `@(X)` mixed
+        // with literals (e.g. `@(A);foo;@(B)`), item transforms
+        // `@(X->'template')`, and property functions.
+        if (IsSimpleExpressionTemplate(include)) return ItemIncludeKind.Literal;
         return ItemIncludeKind.Unsupported;
     }
 
@@ -1006,6 +1009,7 @@ internal static class GoEmitter {
         { "MSBuildInternalMessage", "MSBuildInternalMessage" },
         { "AllowEmptyTelemetry", "AllowEmptyTelemetry" },
         { "CheckForDuplicateNuGetItemsTask", "CheckForDuplicateNuGetItemsTask" },
+        { "Exec", "Exec" },
     };
     static string? LocalTaskGoFunc(string taskName) =>
         _localTaskGoFunc.TryGetValue(taskName, out var fn) ? fn : null;
@@ -1018,7 +1022,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> _tasksNeedingItemBag = new(StringComparer.OrdinalIgnoreCase) {
         "MakeDir", "RemoveDir", "Touch", "Delete", "Copy",
         "ReadLinesFromFile", "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
-        "CheckForDuplicateNuGetItemsTask",
+        "CheckForDuplicateNuGetItemsTask", "Exec",
     };
     static bool TaskNeedsItemBag(string taskName) => _tasksNeedingItemBag.Contains(taskName);
 
@@ -1029,7 +1033,7 @@ internal static class GoEmitter {
     static readonly HashSet<string> OutputCapableLocalTasks = new(StringComparer.OrdinalIgnoreCase) {
         "Copy", "ReadLinesFromFile", "MakeDir", "RemoveDir", "Touch", "Delete",
         "Hash", "ConvertToAbsolutePath", "RemoveDuplicates",
-        "CheckForDuplicateNuGetItemsTask",
+        "CheckForDuplicateNuGetItemsTask", "Exec",
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs
@@ -1304,8 +1308,12 @@ internal static class GoEmitter {
             return !arg.AsSpan(1, arg.Length - 2).ContainsAny("$@%");
         }
         if (arg.StartsWith("$(", StringComparison.Ordinal) && arg.EndsWith(")", StringComparison.Ordinal)) {
-            var inner = arg.Substring(2, arg.Length - 3).Trim();
-            return IsSimpleIdentifierName(inner);
+            // Single bare $(...) — accept either a simple identifier (Phase B)
+            // or a property method chain / intrinsic (Phase H). The classifier
+            // mirrors the runtime resolveFunctionArg which now routes nested
+            // $() args through evalPropertyExpression/tryEvalIntrinsic.
+            var inner = arg.Substring(2, arg.Length - 3);
+            return IsSimpleExpressionInner(inner);
         }
         return IsIntegerLiteral(arg);
     }
