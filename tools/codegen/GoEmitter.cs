@@ -681,9 +681,10 @@ internal static class GoEmitter {
     };
 
     // IsSimpleExpressionTemplate returns true if `template` only uses constructs
-    // the runtime.Expand evaluator handles in Phase A+B: literals, $(X),
+    // the runtime.Expand evaluator handles in Phase A+B+G: literals, $(X),
     // $(X.Method(args)) chains with whitelisted methods and simple args,
-    // @(Y) (no transforms), and %(Z).
+    // $([MSBuild]::F(args)) supported intrinsics, @(Y) (no transforms),
+    // and %(Z).
     static bool IsSimpleExpressionTemplate(string? template) {
         if (string.IsNullOrEmpty(template)) return true;
         for (int i = 0; i < template.Length; i++) {
@@ -694,8 +695,7 @@ internal static class GoEmitter {
                 if (end < 0) return false;
                 var inner = template.Substring(i + 2, end - i - 2);
                 if (c == '$') {
-                    if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
-                    if (!IsSimplePropertyExpression(inner)) return false;
+                    if (!IsSimpleExpressionInner(inner)) return false;
                 } else if (c == '@') {
                     if (inner.Contains("->")) return false;
                     // Allow @(X) and @(X, 'sep'); reject anything else.
@@ -711,6 +711,134 @@ internal static class GoEmitter {
                         return false;
                     }
                 }
+                i = end;
+            }
+        }
+        return true;
+    }
+
+    // IsSimpleExpressionInner accepts either a Phase A/B property expression
+    // (bare identifier or whitelisted method chain on a property) OR a Phase G
+    // [MSBuild]::IntrinsicName(args) call with supported intrinsic + simple args.
+    // Mirrors what the Go runtime's Expand evaluator accepts inside `$(...)`.
+    static bool IsSimpleExpressionInner(string inner) {
+        var trimmed = inner.Trim();
+        const string prefix = "[MSBuild]::";
+        if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+            return IsSimpleMSBuildIntrinsicCall(trimmed.Substring(prefix.Length));
+        }
+        // Anything else containing `[` or `:` is an unsupported intrinsic
+        // (e.g. [System.IO.Path]::Combine, [System.String]::IsNullOrEmpty, …)
+        // or an indexer construct we haven't modelled.
+        if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
+        return IsSimplePropertyExpression(inner);
+    }
+
+    // IsSimpleMSBuildIntrinsicCall validates the shape `Name(args)` after the
+    // [MSBuild]:: prefix has already been stripped. Intrinsic name must be one
+    // of the supported set; argument list must be a comma-separated list of
+    // resolvable arguments (quoted strings, simple property refs, or bare
+    // literals). The runtime intrinsics defined in msbuild_intrinsics.go are
+    // the source of truth — this helper mirrors that whitelist.
+    static bool IsSimpleMSBuildIntrinsicCall(string s) {
+        var openParen = s.IndexOf('(');
+        if (openParen <= 0) return false;
+        var name = s.Substring(0, openParen).Trim();
+        if (!SupportedMSBuildIntrinsicNames.Contains(name)) return false;
+        var close = FindMatchingParenQuoteAware(s, openParen);
+        if (close < 0) return false;
+        // Nothing meaningful may follow the closing paren (no chains on intrinsics).
+        if (s.Substring(close + 1).Trim().Length != 0) return false;
+        var argsStr = s.Substring(openParen + 1, close - openParen - 1);
+        return AreSimpleMSBuildIntrinsicArgs(argsStr);
+    }
+
+    static readonly HashSet<string> SupportedMSBuildIntrinsicNames = new(StringComparer.OrdinalIgnoreCase) {
+        "VersionEquals",
+        "VersionGreaterThan",
+        "VersionGreaterThanOrEquals",
+        "VersionLessThan",
+        "VersionLessThanOrEquals",
+        "IsOSPlatform",
+        "IsOsPlatform",
+        "ValueOrDefault",
+        "Escape",
+    };
+
+    // AreSimpleMSBuildIntrinsicArgs splits `argsStr` on top-level commas and
+    // checks each argument is either a quoted string (whose interior may
+    // itself contain only simple $() references), a single $(SimpleProp)
+    // expansion, or a bare literal (digits/dots/identifier chars — used for
+    // bare version literals like `5.0`). Anything else fails.
+    static bool AreSimpleMSBuildIntrinsicArgs(string argsStr) {
+        if (string.IsNullOrWhiteSpace(argsStr)) return true;
+        var depth = 0;
+        char quote = '\0';
+        int start = 0;
+        var parts = new List<string>();
+        for (int i = 0; i < argsStr.Length; i++) {
+            var c = argsStr[i];
+            if (quote != '\0') {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+            switch (c) {
+                case '\'': case '"': quote = c; break;
+                case '(': depth++; break;
+                case ')': depth--; break;
+                case ',':
+                    if (depth == 0) {
+                        parts.Add(argsStr.Substring(start, i - start));
+                        start = i + 1;
+                    }
+                    break;
+            }
+        }
+        if (quote != '\0' || depth != 0) return false;
+        parts.Add(argsStr.Substring(start));
+        foreach (var raw in parts) {
+            if (!IsSimpleMSBuildIntrinsicArg(raw.Trim())) return false;
+        }
+        return true;
+    }
+
+    static bool IsSimpleMSBuildIntrinsicArg(string arg) {
+        if (arg.Length == 0) return true;
+        if ((arg[0] == '\'' || arg[0] == '"') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
+            // Inside a quoted intrinsic arg, only `$(SimpleProp)` references
+            // and literal text are allowed — mirrors splitIntrinsicArgs ->
+            // resolveIntrinsicArg in the runtime.
+            return AreSimpleExpansionsOnly(arg.Substring(1, arg.Length - 2));
+        }
+        if (arg.StartsWith("$(", StringComparison.Ordinal) && arg.EndsWith(")", StringComparison.Ordinal)) {
+            var inner = arg.Substring(2, arg.Length - 3).Trim();
+            // Allow a Phase A/B simple property expression (identifier or
+            // whitelisted method chain).
+            return IsSimpleExpressionInner(inner);
+        }
+        // Bare literal: digits, dots, letters, dashes — used for `5.0`, `net8.0`,
+        // etc. Reject anything containing `$`, `@`, `%`, parens, quotes.
+        foreach (var c in arg) {
+            if (c == '$' || c == '@' || c == '%' || c == '(' || c == ')' || c == '\'' || c == '"') return false;
+        }
+        return true;
+    }
+
+    // AreSimpleExpansionsOnly walks a string and ensures that every `$(...)`
+    // expansion in it is either a simple identifier or a Phase A/B property
+    // expression / Phase G intrinsic. Literal text (no expansions) is fine.
+    // `@(...)` and `%(...)` are NOT allowed.
+    static bool AreSimpleExpansionsOnly(string s) {
+        for (int i = 0; i < s.Length; i++) {
+            var c = s[i];
+            if (c == '@' || c == '%') {
+                if (i + 1 < s.Length && s[i + 1] == '(') return false;
+            }
+            if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return false;
+                var inner = s.Substring(i + 2, end - i - 2);
+                if (!IsSimpleExpressionInner(inner)) return false;
                 i = end;
             }
         }
@@ -856,15 +984,21 @@ internal static class GoEmitter {
 
     static bool IsSimpleConditionTemplate(string? condition) {
         if (string.IsNullOrWhiteSpace(condition)) return true;
-        // Reject explicit Phase C+ markers.
-        if (condition!.IndexOf("MSBuild::", StringComparison.Ordinal) >= 0) return false;
-        if (condition.IndexOf("System.", StringComparison.Ordinal) >= 0) return false;
-        if (condition.IndexOf("::", StringComparison.Ordinal) >= 0) return false;
+        // Reject explicit Phase C+ markers that we don't model. The
+        // `[MSBuild]::F(args)` shape is validated via IsSimpleExpressionInner
+        // when we walk $() constructs below, so we do NOT blanket-reject
+        // `MSBuild::` here.
+        if (condition!.IndexOf("System.", StringComparison.Ordinal) >= 0) return false;
         // Reject ANY batching reference anywhere in the condition — `%()` in
         // an operand (even inside quotes) silently expands to "" and matches
         // nothing, which would be wrong-not-loud. Batched conditions need
         // Phase D's batching infrastructure to evaluate correctly.
         if (condition.Contains("%(", StringComparison.Ordinal)) return false;
+        // Validate every $() expansion in the condition, including those
+        // inside quoted operands. The structural walk below skips quoted
+        // sections, so this pass guarantees no quoted intrinsic of an
+        // unsupported shape slips through.
+        if (!ValidateAllDollarExpansions(condition)) return false;
         // Walk top-level constructs: $(...) must be a simple property expression
         // (Phase A or B form); bare identifiers must be And/Or/Not/True/False or
         // Exists/HasTrailingSlash followed by '('.
@@ -882,32 +1016,32 @@ internal static class GoEmitter {
             }
             switch (c) {
                 case '<': case '>':
-                    // Numeric / version comparisons (>=, <=, >, <) are NOT
-                    // supported by the runtime cond_eval grammar (it only
-                    // handles == and !=). Rejecting these here prevents
-                    // runtime panics in targets that would otherwise pass
-                    // classification because the surrounding $() / @()
-                    // operands are themselves valid.
-                    return false;
-                case '!':
-                    // `!=` is fine (handled by the runtime); a lone `!`
-                    // followed by anything else is a bare boolean negation
-                    // (e.g. `!$(X.Contains(';'))`) which the runtime
-                    // condition parser does not accept. Reject early so the
-                    // target stubs out instead of panicking.
+                    // Phase G: numeric / version comparisons (>=, <=, >, <) are
+                    // supported by the runtime cond_eval grammar via
+                    // NumericCompare. Just skip the operator chars — the
+                    // surrounding $() / @() operands are validated separately.
                     if (i + 1 < condition.Length && condition[i + 1] == '=') {
                         i += 2;
-                        continue;
+                    } else {
+                        i++;
                     }
-                    return false;
+                    continue;
+                case '!':
+                    // Both `!=` and lone `!<primary>` are supported by the
+                    // runtime cond_eval grammar.
+                    if (i + 1 < condition.Length && condition[i + 1] == '=') {
+                        i += 2;
+                    } else {
+                        i++;
+                    }
+                    continue;
                 case '\'': case '"': quote = c; i++; continue;
                 case '$':
                     if (i + 1 < condition.Length && condition[i + 1] == '(') {
                         var end = FindMatchingParenQuoteAware(condition, i + 1);
                         if (end < 0) return false;
                         var inner = condition.Substring(i + 2, end - i - 2);
-                        if (inner.IndexOfAny(new[] { '[', ':' }) >= 0) return false;
-                        if (!IsSimplePropertyExpression(inner)) return false;
+                        if (!IsSimpleExpressionInner(inner)) return false;
                         i = end + 1;
                         continue;
                     }
@@ -954,6 +1088,42 @@ internal static class GoEmitter {
             }
         }
         return quote == '\0';
+    }
+
+    // ValidateAllDollarExpansions walks `s` (which may be a condition,
+    // expression template, or quoted operand) and returns true iff every
+    // `$(...)` / `@(...)` / `%(...)` occurrence — regardless of whether it
+    // sits inside quotes or outside — is shape-acceptable to the runtime.
+    // Specifically: `$(...)` must satisfy IsSimpleExpressionInner; `@(...)`
+    // must not contain `->` (transforms unsupported); `%(...)` is rejected
+    // anywhere (batching). This pass complements the structural validators
+    // by ensuring quoted operands like `'$([MSBuild]::UnsupportedF(...))' == 'x'`
+    // or `'@(X->Count())' != '0'` are caught before reaching the runtime
+    // (where they would panic).
+    static bool ValidateAllDollarExpansions(string s) {
+        for (int i = 0; i < s.Length; i++) {
+            var c = s[i];
+            if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return false;
+                var inner = s.Substring(i + 2, end - i - 2);
+                if (!IsSimpleExpressionInner(inner)) return false;
+                i = end;
+                continue;
+            }
+            if (c == '@' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return false;
+                var inner = s.Substring(i + 2, end - i - 2);
+                if (inner.Contains("->", StringComparison.Ordinal)) return false;
+                i = end;
+                continue;
+            }
+            if (c == '%' && i + 1 < s.Length && s[i + 1] == '(') {
+                return false;
+            }
+        }
+        return true;
     }
 
     static int FindMatchingParenQuoteAware(string s, int openIdx) {

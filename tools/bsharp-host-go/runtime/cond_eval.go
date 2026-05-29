@@ -12,7 +12,7 @@ import (
 var ProjectDir string
 
 // EvalCondition evaluates an MSBuild Condition string against the supplied
-// property and item bags. Supported grammar (Phase A + B):
+// property and item bags. Supported grammar (Phase A + B + G):
 //
 //	cond     := orExpr
 //	orExpr   := andExpr ('Or' andExpr)*
@@ -20,12 +20,15 @@ var ProjectDir string
 //	notExpr  := '!' notExpr | primary
 //	primary  := '(' cond ')' | call | comparison | boolLit
 //	call     := ('Exists' | 'HasTrailingSlash') '(' operand ')'
-//	comparison := operand ('==' | '!=') operand
+//	comparison := operand ('==' | '!=' | '<' | '>' | '<=' | '>=') operand
 //	operand  := stringLiteral | expansion
 //
-// Property functions, regex match operators, numeric < > <= >=, MSBuild::F
-// intrinsics, etc. are NOT supported. Encountering one makes EvalCondition
-// return (false, false) so the emitter can fall back to a stub.
+// Property functions of the supported subset (see expand.go), Exists/
+// HasTrailingSlash calls, and `[MSBuild]::F(args)` intrinsics (Version*,
+// IsOSPlatform, ValueOrDefault, Escape — see msbuild_intrinsics.go) work
+// because operands flow through Expand. Numeric/version `<`, `>`, `<=`, `>=`
+// promote through NumericCompare (int → version → case-insensitive string).
+// Regex match operators and other intrinsics are NOT supported.
 //
 // Empty condition is treated as true (matches MSBuild semantics).
 func EvalCondition(condition string, p PropertyBag, i ItemBag) (result bool, ok bool) {
@@ -66,6 +69,10 @@ const (
 	condTokNot
 	condTokEq
 	condTokNeq
+	condTokLt
+	condTokGt
+	condTokLe
+	condTokGe
 	condTokString  // quoted string literal (already unquoted)
 	condTokBareExp // unquoted expansion-bearing operand (e.g. `$(X)`)
 	condTokTrue
@@ -105,6 +112,22 @@ func tokenizeCondition(s string) ([]condToken, bool) {
 		case c == '=' && i+1 < len(s) && s[i+1] == '=':
 			out = append(out, condToken{kind: condTokEq})
 			i += 2
+		case c == '<':
+			if i+1 < len(s) && s[i+1] == '=' {
+				out = append(out, condToken{kind: condTokLe})
+				i += 2
+			} else {
+				out = append(out, condToken{kind: condTokLt})
+				i++
+			}
+		case c == '>':
+			if i+1 < len(s) && s[i+1] == '=' {
+				out = append(out, condToken{kind: condTokGe})
+				i += 2
+			} else {
+				out = append(out, condToken{kind: condTokGt})
+				i++
+			}
 		case c == '\'' || c == '"':
 			quote := c
 			end := i + 1
@@ -279,17 +302,8 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 		// A call result can be compared to a string (rare but allowed) or
 		// treated as a bool literal.
 		switch cp.peek() {
-		case condTokEq, condTokNeq:
-			op := cp.tokens[cp.pos].kind
-			cp.pos++
-			right, rok := cp.parseOperand()
-			if !rok {
-				return false, false
-			}
-			if op == condTokEq {
-				return strings.EqualFold(left, right), true
-			}
-			return !strings.EqualFold(left, right), true
+		case condTokEq, condTokNeq, condTokLt, condTokGt, condTokLe, condTokGe:
+			return cp.finishComparison(left)
 		}
 		switch strings.ToLower(strings.TrimSpace(left)) {
 		case "true", "1":
@@ -304,17 +318,8 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 			return false, false
 		}
 		switch cp.peek() {
-		case condTokEq, condTokNeq:
-			op := cp.tokens[cp.pos].kind
-			cp.pos++
-			right, rok := cp.parseOperand()
-			if !rok {
-				return false, false
-			}
-			if op == condTokEq {
-				return strings.EqualFold(left, right), true
-			}
-			return !strings.EqualFold(left, right), true
+		case condTokEq, condTokNeq, condTokLt, condTokGt, condTokLe, condTokGe:
+			return cp.finishComparison(left)
 		}
 		// Bare operand in primary position → treat as bool literal after
 		// expansion (matches MSBuild). 'true'/'1' truthy, anything else false.
@@ -326,6 +331,35 @@ func (cp *condParser) parsePrimary() (bool, bool) {
 		}
 		// Non-boolean bare operand is not supported.
 		return false, false
+	}
+	return false, false
+}
+
+// finishComparison consumes an operator token (already known to be a
+// comparison kind) and a right-hand operand, then returns the boolean result.
+// `==` and `!=` are case-insensitive string equality (matches MSBuild). The
+// numeric / version operators (`<`, `>`, `<=`, `>=`) use NumericCompare
+// which promotes integer then version then case-insensitive string.
+func (cp *condParser) finishComparison(left string) (bool, bool) {
+	op := cp.tokens[cp.pos].kind
+	cp.pos++
+	right, rok := cp.parseOperand()
+	if !rok {
+		return false, false
+	}
+	switch op {
+	case condTokEq:
+		return strings.EqualFold(left, right), true
+	case condTokNeq:
+		return !strings.EqualFold(left, right), true
+	case condTokLt:
+		return NumericCompare(left, right) < 0, true
+	case condTokGt:
+		return NumericCompare(left, right) > 0, true
+	case condTokLe:
+		return NumericCompare(left, right) <= 0, true
+	case condTokGe:
+		return NumericCompare(left, right) >= 0, true
 	}
 	return false, false
 }
@@ -406,6 +440,12 @@ func (cp *condParser) parseOperand() (string, bool) {
 		cp.pos++
 		expanded, ok := Expand(t.text, cp.p, cp.i, nil)
 		return expanded, ok
+	case condTokTrue:
+		cp.pos++
+		return "True", true
+	case condTokFalse:
+		cp.pos++
+		return "False", true
 	}
 	return "", false
 }

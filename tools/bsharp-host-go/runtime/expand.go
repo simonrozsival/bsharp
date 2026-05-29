@@ -39,12 +39,21 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 				sb.WriteByte('$')
 				continue
 			}
-			end := findMatchingParen(template, j+1)
+			end := findMatchingParenQuoteAware(template, j+1)
 			if end < 0 {
 				return sb.String(), false
 			}
 			inner := template[j+2 : end]
-			// Reject indexers (`[`) and namespace intrinsics (`::`) — Phase C land.
+			if value, ok, handled := tryEvalIntrinsic(inner, p); handled {
+				if !ok {
+					return sb.String(), false
+				}
+				sb.WriteString(value)
+				j = end
+				continue
+			}
+			// Reject indexers (`[`) and namespace intrinsics (`::`) that are NOT
+			// the supported `[MSBuild]::F(args)` shape. Phase C+ work.
 			if strings.ContainsAny(inner, "[:") {
 				return sb.String(), false
 			}
