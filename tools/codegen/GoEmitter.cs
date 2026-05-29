@@ -158,9 +158,14 @@ internal static class GoEmitter {
     }
 
     static void EmitTargetStubs(StringBuilder sb, ProjectInstance instance, EmitReport report) {
-        var targets = instance.Targets.Values
+        // Preserve declaration order BEFORE we sort for file layout — extender
+        // ordering depends on this (MSBuild docs: extenders run in the order
+        // their target was declared).
+        var targetsInDeclarationOrder = instance.Targets.Values.ToArray();
+        var targets = targetsInDeclarationOrder
             .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var (beforeExtenders, afterExtenders) = BuildExtenderMaps(targetsInDeclarationOrder);
         report.Targets.Total = targets.Length;
         report.Targets.RealBody = 0;
         report.Targets.StubBody = 0;
@@ -182,7 +187,7 @@ internal static class GoEmitter {
             var ident = targetIndex[target.Name];
             var reason = ClassifyTarget(target);
             if (reason == null) {
-                EmitRealTargetBody(sb, target, ident, targetIndex);
+                EmitRealTargetBody(sb, target, ident, targetIndex, beforeExtenders, afterExtenders);
                 report.Targets.RealBody++;
             } else {
                 EmitStubTargetBody(sb, target, ident, reason);
@@ -216,7 +221,17 @@ internal static class GoEmitter {
         sb.AppendLine();
     }
 
-    static void EmitRealTargetBody(StringBuilder sb, ProjectTargetInstance target, string ident, Dictionary<string, string> targetIndex) {
+    static void EmitRealTargetBody(StringBuilder sb, ProjectTargetInstance target, string ident,
+        Dictionary<string, string> targetIndex,
+        Dictionary<string, List<string>> beforeExtenders,
+        Dictionary<string, List<string>> afterExtenders)
+    {
+        beforeExtenders.TryGetValue(target.Name, out var befores);
+        afterExtenders.TryGetValue(target.Name, out var afters);
+        var hasBefores = befores is { Count: > 0 };
+        var hasAfters = afters is { Count: > 0 };
+        var hasCond = !string.IsNullOrWhiteSpace(target.Condition);
+
         sb.Append("// ").Append(target.Name).AppendLine(": real body");
         sb.Append("func ").Append(ident).AppendLine("() {");
         sb.Append("\tts := rt.GetTargetState(").Append(GoStringLiteral(target.Name)).AppendLine(")");
@@ -248,12 +263,63 @@ internal static class GoEmitter {
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(target.Condition)) {
-            sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
+        // Phase E: before-extenders (literal only — dynamic extender attrs are
+        // rejected by ClassifyTarget). They run unconditionally after the
+        // depends-on chain, regardless of this target's condition.
+        if (hasBefores) {
+            foreach (var be in befores!) {
+                if (targetIndex.TryGetValue(be, out var beIdent)) {
+                    sb.Append("\t").Append(beIdent).AppendLine("()");
+                }
+            }
         }
 
-        sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+        if (!hasBefores && !hasAfters) {
+            // Fast path: no extenders, keep the existing early-return shape.
+            if (hasCond) {
+                sb.Append("\tif !rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I) { ts.MarkSkipped(); return }");
+            }
+            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+            EmitTargetChildren(sb, target);
+            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+            sb.AppendLine("\tts.MarkDone()");
+        } else {
+            // Extender path: keep TargetState in `running` until after-extenders
+            // finish. Calling MarkSkipped before after-extenders would reset
+            // state to pending and allow an after-extender's DependsOnTargets to
+            // immediately re-enter the same target, producing recursion that
+            // MSBuild avoids.
+            if (hasCond) {
+                sb.Append("\tcondOk := rt.MustEvalCondition(").Append(GoStringLiteral(target.Condition)).AppendLine(", P, I)");
+                sb.AppendLine("\tif condOk {");
+            }
+            // Body emitted at \t (child emitters hardcode \t indent). When the
+            // condition wraps the body, the resulting code is visually
+            // mis-indented but valid Go.
+            sb.Append("\tstarted := rt.Log.TargetStarted(").Append(GoStringLiteral(target.Name)).AppendLine(")");
+            EmitTargetChildren(sb, target);
+            sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
+            sb.AppendLine("\tts.MarkDone()");
+            if (hasCond) {
+                sb.AppendLine("\t}");
+            }
+            if (hasAfters) {
+                foreach (var ae in afters!) {
+                    if (targetIndex.TryGetValue(ae, out var aeIdent)) {
+                        sb.Append("\t").Append(aeIdent).AppendLine("()");
+                    }
+                }
+            }
+            if (hasCond) {
+                sb.AppendLine("\tif !condOk { ts.MarkSkipped() }");
+            }
+        }
 
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    static void EmitTargetChildren(StringBuilder sb, ProjectTargetInstance target) {
         foreach (var child in target.Children) {
             switch (child) {
                 case ProjectTaskInstance task:
@@ -267,12 +333,9 @@ internal static class GoEmitter {
                     break;
             }
         }
-
-        sb.Append("\trt.Log.TargetFinished(").Append(GoStringLiteral(target.Name)).AppendLine(", started)");
-        sb.AppendLine("\tts.MarkDone()");
-        sb.AppendLine("}");
-        sb.AppendLine();
     }
+
+
 
     static void EmitPropertyGroup(StringBuilder sb, ProjectPropertyGroupTaskInstance pg) {
         var hasOuterCond = !string.IsNullOrWhiteSpace(pg.Condition);
@@ -410,9 +473,10 @@ internal static class GoEmitter {
         if (!string.IsNullOrWhiteSpace(target.Inputs) || !string.IsNullOrWhiteSpace(target.Outputs)) {
             return "target-inputs-outputs";
         }
-        if (target.BeforeTargets is { Length: > 0 } || target.AfterTargets is { Length: > 0 }) {
-            // Before/After hooks need a different dispatch model; defer.
-            return "before-after-targets";
+        if (HasDynamicExtenderAttr(target.BeforeTargets) || HasDynamicExtenderAttr(target.AfterTargets)) {
+            // Dynamic Before/AfterTargets ($/@/% in the attribute) would require
+            // runtime extender registration, which Phase E doesn't model.
+            return "before-after-dynamic";
         }
         if (!string.IsNullOrWhiteSpace(target.DependsOnTargets)) {
             var (ok, reason) = IsSimpleDependsOnTargetsTemplate(target.DependsOnTargets);
@@ -844,6 +908,41 @@ internal static class GoEmitter {
             if (value[i] == '%' && value[i + 1] == '(') return true;
         }
         return false;
+    }
+
+    static bool HasDynamicExtenderAttr(string? attr) {
+        if (string.IsNullOrEmpty(attr)) return false;
+        return attr!.IndexOfAny(new[] { '$', '@', '%' }) >= 0;
+    }
+
+    // BuildExtenderMaps walks targets in declaration order (the order MSBuild
+    // inserted them; later definitions of the same name win, which matches
+    // MSBuild's "last definition wins" rule) and constructs two maps:
+    //   beforeExtenders[X]: list of target names whose BeforeTargets contains X
+    //   afterExtenders[X]:  list of target names whose AfterTargets contains X
+    // Targets whose Before/AfterTargets are dynamic ($/@/%) are NOT registered;
+    // they get rejected by ClassifyTarget as `before-after-dynamic`. Keys are
+    // case-insensitive to match dispatchTarget's lowercase lookup.
+    static (Dictionary<string, List<string>> Before, Dictionary<string, List<string>> After)
+        BuildExtenderMaps(IEnumerable<ProjectTargetInstance> targetsInDeclarationOrder)
+    {
+        var before = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var after = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in targetsInDeclarationOrder) {
+            if (!string.IsNullOrEmpty(t.BeforeTargets) && !HasDynamicExtenderAttr(t.BeforeTargets)) {
+                foreach (var ext in t.BeforeTargets.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+                    if (!before.TryGetValue(ext, out var list)) before[ext] = list = new List<string>();
+                    list.Add(t.Name);
+                }
+            }
+            if (!string.IsNullOrEmpty(t.AfterTargets) && !HasDynamicExtenderAttr(t.AfterTargets)) {
+                foreach (var ext in t.AfterTargets.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) {
+                    if (!after.TryGetValue(ext, out var list)) after[ext] = list = new List<string>();
+                    list.Add(t.Name);
+                }
+            }
+        }
+        return (before, after);
     }
 
     // IsSimpleDependsOnTargetsTemplate validates that a DependsOnTargets template
