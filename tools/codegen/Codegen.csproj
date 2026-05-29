@@ -15,4 +15,13 @@
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="11.0.0-preview.4.26208.110" />
   </ItemGroup>
+  <!--
+    The generated host and bsharp-taskd share a wire protocol; we embed the canonical
+    source files from tools/bsharp-taskd/Protocol/ so codegen can write them verbatim
+    into .bsharp/ at generation time. Updating the daemon updates the host automatically.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\bsharp-taskd\Protocol\TaskModel.cs" LogicalName="Bsharp.Codegen.Embedded.TaskModel.cs" />
+    <EmbeddedResource Include="..\bsharp-taskd\Protocol\DaemonPaths.cs" LogicalName="Bsharp.Codegen.Embedded.DaemonPaths.cs" />
+  </ItemGroup>
 </Project>

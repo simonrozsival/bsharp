@@ -20,7 +20,7 @@ public sealed class ConsoleEndToEndTests
         cold.AssertSuccess("run a cold launcher build");
         StringAssert.Contains(cold.StandardError, "regenerating build binary");
         AssertGeneratedHostExists(project);
-        AssertGeneratedTaskServerUsesDirectExecution(project);
+        AssertGeneratedHostUsesDaemon(project);
         AssertBuiltAppRuns(project, ConsoleFixtureOutput);
 
         var originalShapeHash = ReadShapeHash(project);
@@ -355,28 +355,28 @@ public sealed class ConsoleEndToEndTests
         return File.ReadAllText(candidates.OrderBy(path => path, StringComparer.Ordinal).First());
     }
 
-    private static string ReadGeneratedTaskServerText(TempProject project)
+    private static string ReadGeneratedHostProgramText(TempProject project)
     {
-        var path = Path.Combine(project.DirectoryPath, ".bsharp", "task-server", "Program.cs");
-        Assert.IsTrue(File.Exists(path), "Expected generated task-server/Program.cs under .bsharp.");
+        var path = Path.Combine(project.DirectoryPath, ".bsharp", "Program.cs");
+        Assert.IsTrue(File.Exists(path), "Expected generated Program.cs under .bsharp.");
         return File.ReadAllText(path);
     }
 
-    private static void AssertGeneratedTaskServerUsesDirectExecution(TempProject project)
+    private static void AssertGeneratedHostUsesDaemon(TempProject project)
     {
-        var text = ReadGeneratedTaskServerText(project);
-        StringAssert.Contains(text, "extern alias taskasm");
-        StringAssert.Contains(text, "static TaskResult ExecuteTask");
-        StringAssert.Contains(text, "new taskasm");
-        StringAssert.Contains(text, "::Microsoft.CodeAnalysis.BuildTasks.Csc");
-        StringAssert.Contains(text, "TaskServer.PrepareTask(task);");
-        StringAssert.Contains(text, "var success = task.Execute();");
+        var taskServerDir = Path.Combine(project.DirectoryPath, ".bsharp", "task-server");
+        Assert.IsFalse(
+            Directory.Exists(taskServerDir),
+            "Per-project task-server has been replaced by the universal daemon; .bsharp/task-server should not be generated.");
 
-        Assert.IsFalse(text.Contains("Activator.CreateInstance", StringComparison.Ordinal), "Task server should instantiate task types directly.");
-        Assert.IsFalse(text.Contains("execute.Invoke", StringComparison.Ordinal), "Task server should call task.Execute() directly.");
-        Assert.IsFalse(text.Contains("MethodInfo", StringComparison.Ordinal), "Task server should not reflectively find Execute().");
-        Assert.IsFalse(text.Contains("GetProperty(", StringComparison.Ordinal), "Task server should not reflectively get task properties.");
-        Assert.IsFalse(text.Contains("using System.Reflection;", StringComparison.Ordinal), "Task server should not import reflection.");
+        var program = ReadGeneratedHostProgramText(project);
+        StringAssert.Contains(program, "DaemonClient", "Generated host should talk to the universal daemon.");
+        StringAssert.Contains(program, "HandshakeRequest", "Generated host should send the protocol handshake to the daemon.");
+        StringAssert.Contains(program, "BSHARP_TASKD_PATH", "Generated host should honour the daemon path env override.");
+        StringAssert.Contains(program, "UnixDomainSocketEndPoint", "Generated host should connect to the daemon over a Unix domain socket.");
+
+        Assert.IsFalse(program.Contains("Activator.CreateInstance", StringComparison.Ordinal), "Generated host should not reflectively construct tasks.");
+        Assert.IsFalse(program.Contains("execute.Invoke", StringComparison.Ordinal), "Generated host should not reflectively invoke Execute().");
     }
 
     private static void AssertCumulativeTasksEqualToZero(CommandResult result, string message) =>

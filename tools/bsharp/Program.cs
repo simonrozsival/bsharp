@@ -689,12 +689,14 @@ static class Launcher {
         var genDir = bsharpDir; // Generate directly into .bsharp/ root
 
         // Clean old generated files if they exist (but preserve shape.hash, build symlink)
-        var filesToClean = new[] { "Program.cs", "TaskModel.cs", "BsharpGenerated.csproj", "tasks.report.txt" };
+        var filesToClean = new[] { "Program.cs", "TaskModel.cs", "DaemonPaths.cs", "BsharpGenerated.csproj", "tasks.report.txt" };
         foreach (var f in filesToClean) {
             var path = Path.Combine(genDir, f);
             if (File.Exists(path)) File.Delete(path);
         }
-        var dirsToClean = new[] { "task-server", "bin", "obj", "src" }; // Include old 'src/' for migration
+        // task-server/ and tasks/ are legacy from earlier per-project sidecar; codegen will
+        // also scrub them but cleaning here guards against stale binaries from older runs.
+        var dirsToClean = new[] { "task-server", "tasks", "bin", "obj", "src" };
         foreach (var d in dirsToClean) {
             var path = Path.Combine(genDir, d);
             if (Directory.Exists(path)) Directory.Delete(path, true);
@@ -726,9 +728,9 @@ static class Launcher {
         }
         Console.Error.WriteLine($"bsharp: codegen done in {codegenSw.ElapsedMilliseconds}ms");
 
-        var taskServerProject = Path.Combine(genDir, "task-server", "BsharpTaskServer.csproj");
-        if (!File.Exists(taskServerProject)) {
-            Console.Error.WriteLine("bsharp: codegen output is missing task-server/BsharpTaskServer.csproj.");
+        var generatedHostCsproj = Path.Combine(genDir, "BsharpGenerated.csproj");
+        if (!File.Exists(generatedHostCsproj)) {
+            Console.Error.WriteLine("bsharp: codegen output is missing BsharpGenerated.csproj.");
             Console.Error.WriteLine("bsharp: this usually means BSHARP_CODEGEN points to an older Codegen.dll/executable.");
             Console.Error.WriteLine("bsharp: rebuild tools/codegen and point BSHARP_CODEGEN at tools/codegen/bin/Debug/net11.0/Codegen or Codegen.dll.");
             return 5;
@@ -736,8 +738,10 @@ static class Launcher {
 
         var rid = RuntimeInformation.RuntimeIdentifier;
 
-        // Final architecture: keep the generated build host NativeAOT, but delegate
-        // real SDK tasks to a CoreCLR ReadyToRun sidekick with direct task references.
+        // The generated build host stays NativeAOT and self-contained. Real SDK tasks
+        // are delegated to the universal `bsharp-taskd` daemon, which is installed
+        // alongside the bsharp launcher (and discovered by the host via sibling path
+        // / BSHARP_TASKD_PATH).
         var modes = new (string Label, string[] ExtraProps)[] {
             ("NativeAOTHost", new[] {
                 "-p:PublishAot=true",
@@ -780,27 +784,6 @@ static class Launcher {
         }
 
         var publishDir = Path.GetDirectoryName(publishedBin)!;
-        var taskServerRootDst = Path.Combine(publishDir, "tasks");
-        {
-            var serverDst = Path.Combine(taskServerRootDst, "server");
-            Directory.CreateDirectory(serverDst);
-            Console.Error.WriteLine("bsharp: publishing direct-reference task sidekick (CoreCLR R2R)...");
-            var serverSw = Stopwatch.StartNew();
-            var serverArgs = new List<string> {
-                "publish", taskServerProject, "-c", "Release", "-r", rid, "-o", serverDst, "--nologo", "-v:q",
-                "-p:PublishAot=false",
-                "-p:PublishReadyToRun=true",
-                "-p:SelfContained=false",
-                "-p:NoWarn=CS8012%3BCS8602%3BIL2026",
-            };
-            var serverRc = RunProcess("dotnet", serverArgs);
-            serverSw.Stop();
-            if (serverRc != 0) {
-                Console.Error.WriteLine($"bsharp: task sidekick publish failed (exit {serverRc})");
-                return 7;
-            }
-            Console.Error.WriteLine($"bsharp: task sidekick publish done in {serverSw.ElapsedMilliseconds}ms");
-        }
 
         // Single-file publishes keep the app and runtime in the apphost. Prefer a link, but
         // fall back to copying because Windows may disallow symlink creation.
@@ -808,7 +791,7 @@ static class Launcher {
         ReplaceFileLinkOrCopy(binFile, publishedBin);
 
         var hashFile = Path.Combine(bsharpDir, "shape.hash");
-        var fullMode = $"{usedMode}+CoreCLRReadyToRunDirectTaskSidekick";
+        var fullMode = $"{usedMode}+UniversalTaskDaemon";
         File.WriteAllText(hashFile, currentHash + "\n" + fullMode + "\n");
         Console.Error.WriteLine($"bsharp: build binary ready (mode={fullMode}) at {binFile} -> {publishedBin}");
         return 0;
@@ -1320,12 +1303,34 @@ static class Launcher {
 
     static int ExecBuildBinary(string binFile, List<string> forwardArgs) {
         var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
-        if (!string.IsNullOrEmpty(Environment.ProcessPath))
+        if (!string.IsNullOrEmpty(Environment.ProcessPath)) {
             psi.Environment["BSHARP_LAUNCHER_PATH"] = Environment.ProcessPath;
+            // Daemon binary is staged alongside the launcher. The host looks up sibling
+            // first, but BSHARP_TASKD_PATH lets us also support odd layouts (link to the
+            // launcher from a different directory than the daemon publish, dev tree, ...).
+            if (Environment.GetEnvironmentVariable("BSHARP_TASKD_PATH") is null) {
+                var launcherDir = Path.GetDirectoryName(ResolveLauncherRealPath(Environment.ProcessPath));
+                if (!string.IsNullOrEmpty(launcherDir)) {
+                    var exe = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "bsharp-taskd.exe" : "bsharp-taskd";
+                    var candidate = Path.Combine(launcherDir, exe);
+                    if (File.Exists(candidate))
+                        psi.Environment["BSHARP_TASKD_PATH"] = candidate;
+                }
+            }
+        }
         foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
         var proc = Process.Start(psi)!;
         proc.WaitForExit();
         return proc.ExitCode;
+    }
+
+    static string ResolveLauncherRealPath(string launcherPath) {
+        try {
+            var info = new FileInfo(launcherPath);
+            if (!string.IsNullOrEmpty(info.LinkTarget))
+                return Path.GetFullPath(info.LinkTarget, Path.GetDirectoryName(launcherPath)!);
+        } catch { }
+        return launcherPath;
     }
 
     static int ExecBuildBinaryAndRefreshShapeHash(string binFile, List<string> forwardArgs, string projectPath, List<KeyValuePair<string, string>> globalProps, IReadOnlyList<string> requestedTargets, string hashFile) {
