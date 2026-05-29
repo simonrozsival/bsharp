@@ -73,6 +73,17 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 				return sb.String(), false
 			}
 			inner := template[j+2 : end]
+			// `@(ItemName->FuncName())` -- supported intrinsic item functions
+			// (currently just Count()). Evaluated against the items bag.
+			if strings.Contains(inner, "->") {
+				value, ok := evalItemFunc(inner, i)
+				if !ok {
+					return sb.String(), false
+				}
+				sb.WriteString(value)
+				j = end
+				continue
+			}
 			name, sep, ok := parseItemRef(inner)
 			if !ok {
 				return sb.String(), false
@@ -188,6 +199,41 @@ func isSimpleIdentifier(s string) bool {
 		}
 	}
 	return true
+}
+
+// evalItemFunc evaluates `ItemName -> FuncName(args)` inside an @(...)
+// expansion. Currently the only supported function is Count(), which returns
+// the integer count of items in the named collection as a decimal string
+// (matches MSBuild's @(X->Count()) semantics). Returns ok=false for any
+// other shape so unsupported transforms (e.g. @(X->'%(Identity)'),
+// @(X->WithMetadataValue(...)), @(X->AnyHaveMetadataValue(...)),
+// chained calls) panic loudly via MustExpand instead of silently
+// returning the wrong value.
+func evalItemFunc(inner string, items ItemBag) (string, bool) {
+	arrow := strings.Index(inner, "->")
+	if arrow < 0 {
+		return "", false
+	}
+	name := strings.TrimSpace(inner[:arrow])
+	rhs := strings.TrimSpace(inner[arrow+2:])
+	if !isSimpleIdentifier(name) {
+		return "", false
+	}
+	// Expect FuncName(...) with no trailing chained calls/metadata.
+	openIdx := strings.IndexByte(rhs, '(')
+	if openIdx < 0 || !strings.HasSuffix(rhs, ")") {
+		return "", false
+	}
+	fn := strings.TrimSpace(rhs[:openIdx])
+	argsSrc := rhs[openIdx+1 : len(rhs)-1]
+	switch strings.ToLower(fn) {
+	case "count":
+		if strings.TrimSpace(argsSrc) != "" {
+			return "", false
+		}
+		return fmt.Sprintf("%d", len(items.Get(name))), true
+	}
+	return "", false
 }
 
 // evalPropertyExpression evaluates the inside of a `$(...)` expression. It

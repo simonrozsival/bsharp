@@ -153,6 +153,19 @@ func tokenizeCondition(s string) ([]condToken, bool) {
 				return nil, false
 			}
 		default:
+			// Bare numeric literals — common pattern in SDK conditions like
+			// `@(X->Count()) > 0`. Treat as a quoted-string token so the
+			// existing comparison/equality logic kicks in (NumericCompare
+			// for </> and string-equality for ==/!=).
+			if c >= '0' && c <= '9' {
+				end := i
+				for end < len(s) && ((s[end] >= '0' && s[end] <= '9') || s[end] == '.') {
+					end++
+				}
+				out = append(out, condToken{kind: condTokString, text: s[i:end]})
+				i = end
+				continue
+			}
 			// Try to read a keyword (And/Or/True/False) or function call name.
 			word, n := readBareWord(s[i:])
 			if n == 0 {

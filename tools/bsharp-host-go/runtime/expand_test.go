@@ -190,3 +190,48 @@ func TestExpandPropertyFunctionRejectsIndexer(t *testing.T) {
 	}
 }
 
+
+func TestExpandItemCountEmpty(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{}}
+	got, ok := Expand("@(Compile->Count())", &stubPB{}, items, nil)
+	if !ok || got != "0" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemCountMultiple(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{
+		"PackageReference": {NewItem("Foo"), NewItem("Bar"), NewItem("Baz")},
+	}}
+	got, ok := Expand("@(PackageReference->Count())", &stubPB{}, items, nil)
+	if !ok || got != "3" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemCountInQuotedExpr(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{
+		"Using": {NewItem("System"), NewItem("System.IO")},
+	}}
+	// As used by GenerateGlobalUsings: '@(Using->Count())' != '0'
+	got, ok := Expand("'@(Using->Count())' != '0'", &stubPB{}, items, nil)
+	if !ok || got != "'2' != '0'" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemFuncRejectsUnsupportedFunc(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{"X": {NewItem("a")}}}
+	_, ok := Expand("@(X->WithMetadataValue('Foo','bar'))", &stubPB{}, items, nil)
+	if ok {
+		t.Error("unsupported item function should be rejected (so MustExpand panics loudly)")
+	}
+}
+
+func TestExpandItemFuncRejectsChainedCall(t *testing.T) {
+	items := &stubIB{m: map[string][]*Item{"X": {NewItem("a")}}}
+	_, ok := Expand("@(X->Count().ToLower())", &stubPB{}, items, nil)
+	if ok {
+		t.Error("chained item function should be rejected")
+	}
+}

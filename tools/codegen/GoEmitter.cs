@@ -834,6 +834,36 @@ internal static class GoEmitter {
         return true;
     }
 
+    // Returns true if `inner` (the body of an @(...) reference, without the
+    // surrounding parens) is in a shape the runtime can evaluate:
+    //   - "Name"                — simple identifier
+    //   - "Name, 'sep'"         — identifier with explicit separator
+    //   - "Name->Count()"       — intrinsic item function (no args)
+    // Anything else (transforms returning items, WithMetadataValue,
+    // AnyHaveMetadataValue, chained calls, batching `%()` refs, etc.) is
+    // rejected so the codegen + classifier never produce silently-wrong
+    // output.
+    static bool IsSimpleItemRefInner(string inner) {
+        if (inner.Contains("%(", StringComparison.Ordinal)) return false;
+        var arrow = inner.IndexOf("->", StringComparison.Ordinal);
+        if (arrow < 0) {
+            var parts = SplitArgsQuoteAware(inner);
+            if (parts.Length == 0) return false;
+            if (!IsSimpleIdentifierName(parts[0].Trim())) return false;
+            if (parts.Length == 1) return true;
+            if (parts.Length != 2) return false;
+            var sep = parts[1].Trim();
+            if (sep.Length < 2) return false;
+            var q = sep[0];
+            return (q == '\'' || q == '"') && sep[sep.Length - 1] == q;
+        }
+        var name = inner.Substring(0, arrow).Trim();
+        var rhs = inner.Substring(arrow + 2).Trim();
+        if (!IsSimpleIdentifierName(name)) return false;
+        // Only `Count()` is supported; no chaining, no args.
+        return string.Equals(rhs, "Count()", StringComparison.OrdinalIgnoreCase);
+    }
+
     static bool ContainsGlobChar(string? s) {
         if (string.IsNullOrEmpty(s)) return false;
         // A `*` or `?` outside quotes signals a glob the emitter does not expand.
@@ -904,19 +934,7 @@ internal static class GoEmitter {
                 if (c == '$') {
                     if (!IsSimpleExpressionInner(inner)) return false;
                 } else if (c == '@') {
-                    if (inner.Contains("->")) return false;
-                    // Allow @(X) and @(X, 'sep'); reject anything else.
-                    var parts = SplitArgsQuoteAware(inner);
-                    if (parts.Length == 0) return false;
-                    if (!IsSimpleIdentifierName(parts[0].Trim())) return false;
-                    if (parts.Length == 2) {
-                        var sep = parts[1].Trim();
-                        if (sep.Length < 2) return false;
-                        var q = sep[0];
-                        if ((q != '\'' && q != '"') || sep[sep.Length - 1] != q) return false;
-                    } else if (parts.Length != 1) {
-                        return false;
-                    }
+                    if (!IsSimpleItemRefInner(inner)) return false;
                 }
                 i = end;
             }
@@ -1297,11 +1315,11 @@ internal static class GoEmitter {
                     return false; // batching in conditions is Phase D+
                 case '@':
                     if (i + 1 < condition.Length && condition[i + 1] == '(') {
-                        // Allow @(X) and @(X,'sep') in conditions (mirrors expression rules).
+                        // Allow @(X), @(X,'sep'), and @(X->Count()) in conditions.
                         var end = FindMatchingParenQuoteAware(condition, i + 1);
                         if (end < 0) return false;
                         var inner = condition.Substring(i + 2, end - i - 2);
-                        if (inner.Contains("->", StringComparison.Ordinal)) return false;
+                        if (!IsSimpleItemRefInner(inner)) return false;
                         i = end + 1;
                         continue;
                     }
@@ -1365,7 +1383,7 @@ internal static class GoEmitter {
                 var end = FindMatchingParenQuoteAware(s, i + 1);
                 if (end < 0) return false;
                 var inner = s.Substring(i + 2, end - i - 2);
-                if (inner.Contains("->", StringComparison.Ordinal)) return false;
+                if (!IsSimpleItemRefInner(inner)) return false;
                 i = end;
                 continue;
             }

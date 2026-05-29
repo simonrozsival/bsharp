@@ -174,6 +174,39 @@ func TestCondUnsupportedPropertyFunc(t *testing.T) {
 	evalOK(t, "'$(X.ToLower())' == 'foo'", p, true)
 }
 
-func TestCondUnsupportedNumeric(t *testing.T) {
-	evalUnsupported(t, "5 > 3", &stubPB{})
+func TestCondBareNumericLiterals(t *testing.T) {
+	// Bare numeric literals on either side of a numeric comparator should be
+	// accepted as decimal strings (matches SDK conditions like
+	// `@(X->Count()) > 0`).
+	evalOK(t, "5 > 3", &stubPB{}, true)
+	evalOK(t, "3 > 5", &stubPB{}, false)
+	evalOK(t, "5 == 5", &stubPB{}, true)
+	evalOK(t, "5 != 3", &stubPB{}, true)
+	evalOK(t, "5.5 >= 5", &stubPB{}, true)
+}
+
+func TestCondItemCount(t *testing.T) {
+	// @(X->Count()) used in numeric and string comparisons (matches the
+	// SDK's GenerateGlobalUsings and *NativeFileReference* tasks).
+	ib := &stubIB{m: map[string][]*Item{
+		"Using":            {{Identity: "System"}, {Identity: "System.IO"}},
+		"NoItems":          nil,
+		"NativeFileReference": {{Identity: "x"}, {Identity: "y"}, {Identity: "z"}},
+	}}
+	check := func(cond string, want bool) {
+		t.Helper()
+		got, ok := EvalCondition(cond, &stubPB{}, ib)
+		if !ok {
+			t.Errorf("%q: expected ok, got unsupported", cond)
+			return
+		}
+		if got != want {
+			t.Errorf("%q: got %v, want %v", cond, got, want)
+		}
+	}
+	check("@(Using->Count()) != 0", true)
+	check("@(NoItems->Count()) != 0", false)
+	check("@(NativeFileReference->Count()) > 0", true)
+	check("@(NoItems->Count()) > 0", false)
+	check("'@(NativeFileReference->Count())' > 1", true)
 }
