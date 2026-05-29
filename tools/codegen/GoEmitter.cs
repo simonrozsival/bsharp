@@ -171,6 +171,8 @@ internal static class GoEmitter {
         report.Targets.RealBody = 0;
         report.Targets.StubBody = 0;
         report.Targets.UnsupportedReasons = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var captureRejections = !string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable("BSHARP_DEBUG_REJECTIONS"));
 
         var targetIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var nameSet = new HashSet<string>(StringComparer.Ordinal);
@@ -195,6 +197,14 @@ internal static class GoEmitter {
                 report.Targets.StubBody++;
                 report.Targets.UnsupportedReasons.TryGetValue(reason, out var c);
                 report.Targets.UnsupportedReasons[reason] = c + 1;
+                if (captureRejections) {
+                    report.Targets.Rejected ??= new List<RejectedTarget>();
+                    report.Targets.Rejected.Add(new RejectedTarget {
+                        Name = target.Name,
+                        Reason = reason,
+                        Detail = DescribeRejection(target, reason),
+                    });
+                }
             }
         }
 
@@ -711,7 +721,84 @@ internal static class GoEmitter {
         return null;
     }
 
-    // ItemIncludeKind classifies the syntactic shape of an Include attribute
+    // DescribeRejection returns a human-readable hint about why a given target
+    // was classified as unsupported. Only used when BSHARP_DEBUG_REJECTIONS is
+    // set, to support pattern surveying for the next round of emitter work.
+    static string? DescribeRejection(ProjectTargetInstance target, string reason) {
+        switch (reason) {
+            case "complex-target-condition":
+                return target.Condition;
+            case "complex-task-condition":
+                foreach (var child in target.Children) {
+                    if (child is ProjectTaskInstance task && !IsSimpleConditionTemplate(task.Condition)) {
+                        return $"{task.Name}: {task.Condition}";
+                    }
+                }
+                return null;
+            case "pg-complex-prop-condition":
+                foreach (var child in target.Children) {
+                    if (child is ProjectPropertyGroupTaskInstance pg) {
+                        foreach (var prop in pg.Properties) {
+                            if (!IsSimpleConditionTemplate(prop.Condition)) {
+                                return $"{prop.Name}: {prop.Condition}";
+                            }
+                        }
+                    }
+                }
+                return null;
+            case "ig-complex-item-condition":
+                foreach (var child in target.Children) {
+                    if (child is ProjectItemGroupTaskInstance ig) {
+                        foreach (var item in ig.Items) {
+                            if (!IsSimpleConditionTemplate(item.Condition)) {
+                                return $"{item.ItemType}: {item.Condition}";
+                            }
+                        }
+                    }
+                }
+                return null;
+            case "ig-include-complex":
+                foreach (var child in target.Children) {
+                    if (child is ProjectItemGroupTaskInstance ig) {
+                        foreach (var item in ig.Items) {
+                            if (!string.IsNullOrEmpty(item.Include) &&
+                                ClassifyItemIncludeSpec(item.Include) == ItemIncludeKind.Unsupported) {
+                                return $"{item.ItemType}: Include='{item.Include}'";
+                            }
+                        }
+                    }
+                }
+                return null;
+            case "ig-meta-batching":
+                foreach (var child in target.Children) {
+                    if (child is ProjectItemGroupTaskInstance ig) {
+                        foreach (var item in ig.Items) {
+                            foreach (var meta in item.Metadata) {
+                                if (ContainsBatching(meta.Value)) {
+                                    return $"{item.ItemType}/{meta.Name}: {meta.Value}";
+                                }
+                            }
+                        }
+                    }
+                }
+                return null;
+            case "ig-empty-include-remove":
+                foreach (var child in target.Children) {
+                    if (child is ProjectItemGroupTaskInstance ig) {
+                        foreach (var item in ig.Items) {
+                            if (string.IsNullOrEmpty(item.Include) && string.IsNullOrEmpty(item.Remove)) {
+                                var metaList = string.Join(",", item.Metadata.Select(m => m.Name));
+                                return $"{item.ItemType}: meta=[{metaList}]";
+                            }
+                        }
+                    }
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
     // so the emitter can pick the right runtime call:
     //   - Literal: no @() refs at all; expand + split + new items
     //   - ItemListCopy: exactly one @(SimpleType) reference; clone source items
@@ -1234,9 +1321,13 @@ internal static class GoEmitter {
                             if (j >= condition.Length || condition[j] != '(') return false;
                             var end = FindMatchingParenQuoteAware(condition, j);
                             if (end < 0) return false;
-                            // Reject @() / %() inside Exists/HasTrailingSlash args.
+                            // The runtime expands @() inside Exists/HasTrailingSlash via
+                            // the standard Expand path (item lists get joined by ';'); we
+                            // only need to reject batching refs (`%()`) here, plus any
+                            // unsupported transforms inside an @() expansion. The
+                            // ValidateAllDollarExpansions pass above already enforced the
+                            // @() shape (no transforms, no custom separators).
                             var argSrc = condition.Substring(j + 1, end - j - 1);
-                            if (argSrc.Contains("@(", StringComparison.Ordinal)) return false;
                             if (argSrc.Contains("%(", StringComparison.Ordinal)) return false;
                             i = end + 1;
                         }
@@ -1470,5 +1561,11 @@ internal static class GoEmitter {
         public int RealBody { get; set; }
         public int StubBody { get; set; }
         public SortedDictionary<string, int> UnsupportedReasons { get; set; } = new(StringComparer.Ordinal);
+        public List<RejectedTarget>? Rejected { get; set; }
+    }
+    internal sealed class RejectedTarget {
+        public string Name { get; set; } = "";
+        public string Reason { get; set; } = "";
+        public string? Detail { get; set; }
     }
 }

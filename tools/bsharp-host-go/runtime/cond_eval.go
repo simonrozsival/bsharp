@@ -366,8 +366,10 @@ func (cp *condParser) finishComparison(left string) (bool, bool) {
 
 // evalCondCall evaluates a single "fnname(args)" condition call. The token
 // text is the literal source, e.g. `Exists('$(X)')` or `HasTrailingSlash($(Y))`.
-// The argument list is a single operand (string literal or expansion); deeper
-// shapes (item refs, property functions, comma-separated args) are unsupported.
+// Arguments may contain item refs (`@(X)`); for Exists this is expanded to a
+// semicolon-joined path list and returns True if ANY path exists (matches
+// MSBuild's IntrinsicFunctions.Exists behavior). Metadata refs (`%(...)`)
+// are batching constructs and remain unsupported.
 func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
 	openIdx := strings.IndexByte(src, '(')
 	if openIdx < 0 {
@@ -379,8 +381,8 @@ func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
 	}
 	fn := strings.ToLower(strings.TrimSpace(src[:openIdx]))
 	argSrc := strings.TrimSpace(src[openIdx+1 : closeIdx])
-	// Reject item refs and metadata refs inside Exists/HasTrailingSlash args.
-	if strings.Contains(argSrc, "@(") || strings.Contains(argSrc, "%(") {
+	// Metadata refs are batching and remain unsupported.
+	if strings.Contains(argSrc, "%(") {
 		return "", false
 	}
 	arg, ok := readSingleOperand(argSrc, p, i)
@@ -389,16 +391,26 @@ func evalCondCall(src string, p PropertyBag, i ItemBag) (string, bool) {
 	}
 	switch fn {
 	case "exists":
-		path := arg
-		if path == "" {
+		if arg == "" {
 			return "False", true
 		}
-		if !filepath.IsAbs(path) && ProjectDir != "" {
-			path = filepath.Join(ProjectDir, path)
+		// MSBuild semantics: if the expanded arg contains ';' (an item-list
+		// expansion or property whose value contains separators), test each
+		// entry and return True if ANY of them exists.
+		paths := []string{arg}
+		if strings.Contains(arg, ";") {
+			paths = SplitSemicolon(arg)
 		}
-		_, err := os.Stat(path)
-		if err == nil {
-			return "True", true
+		for _, path := range paths {
+			if path == "" {
+				continue
+			}
+			if !filepath.IsAbs(path) && ProjectDir != "" {
+				path = filepath.Join(ProjectDir, path)
+			}
+			if _, err := os.Stat(path); err == nil {
+				return "True", true
+			}
 		}
 		return "False", true
 	case "hastrailingslash":

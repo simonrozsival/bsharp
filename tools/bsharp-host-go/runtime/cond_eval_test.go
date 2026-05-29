@@ -114,9 +114,50 @@ func TestCondHasTrailingSlash(t *testing.T) {
 	evalOK(t, "!HasTrailingSlash('$(WithoutSep)')", p, true)
 }
 
-func TestCondCallRejectsItemRef(t *testing.T) {
-	evalUnsupported(t, "Exists('@(Compile)')", &stubPB{})
+func TestCondCallRejectsBatchingMetadata(t *testing.T) {
+	// %() is still batching and remains unsupported in condition calls.
 	evalUnsupported(t, "Exists('%(Compile.Identity)')", &stubPB{})
+}
+
+func TestCondExistsWithItemList(t *testing.T) {
+	// Build a temp dir with two files; reference them via an item list.
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.dll")
+	pathB := filepath.Join(dir, "b.dll")
+	pathMissing := filepath.Join(dir, "missing.dll")
+	if err := os.WriteFile(pathA, []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathB, []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ib := &stubIB{m: map[string][]*Item{
+		"IntermediateAssembly": {{Identity: pathA}},
+		"MultiPresent":         {{Identity: pathA}, {Identity: pathB}},
+		"MultiOneMissing":      {{Identity: pathMissing}, {Identity: pathA}},
+		"AllMissing":           {{Identity: pathMissing}},
+		"Empty":                nil,
+	}}
+	check := func(cond string, want bool) {
+		t.Helper()
+		got, ok := EvalCondition(cond, &stubPB{}, ib)
+		if !ok {
+			t.Errorf("%q: expected ok, got unsupported", cond)
+			return
+		}
+		if got != want {
+			t.Errorf("%q: got %v, want %v", cond, got, want)
+		}
+	}
+	check("Exists('@(IntermediateAssembly)')", true)
+	check("Exists('@(MultiPresent)')", true)
+	// At least one exists -> True (matches MSBuild IntrinsicFunctions.Exists).
+	check("Exists('@(MultiOneMissing)')", true)
+	check("Exists('@(AllMissing)')", false)
+	check("Exists('@(Empty)')", false)
+	// Negation should still parse.
+	check("!Exists('@(AllMissing)')", true)
 }
 
 func TestCondCallRejectsUnknownFunction(t *testing.T) {
