@@ -30,3 +30,19 @@ func TestIsTargetFrameworkCompatibleIntrinsic(t *testing.T) {
 		}
 	}
 }
+
+func TestRegexMatchIntrinsic(t *testing.T) {
+	cases := []struct {
+		expr string
+		want string
+	}{
+		{`$([System.Text.RegularExpressions.Regex]::Match('Xcode 15.2', '[1-9]\d*'))`, "15"},
+		{`$([System.Text.RegularExpressions.Regex]::Match('no digits', '\d+'))`, ""},
+	}
+	for _, c := range cases {
+		got, ok := Expand(c.expr, &stubPB{}, &stubIB{}, nil)
+		if !ok || got != c.want {
+			t.Errorf("Expand(%q) = %q ok=%v, want %q", c.expr, got, ok, c.want)
+		}
+	}
+}

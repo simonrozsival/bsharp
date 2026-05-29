@@ -633,6 +633,23 @@ func regexIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 			return "", false
 		}
 		return boolToMSBuild(re.MatchString(args[0])), true
+	case "match":
+		// `Regex.Match(input, pattern)` returns a System.Text.RegularExpressions.Match
+		// object. When MSBuild renders the result of an intrinsic call as a
+		// property value, it coerces non-string returns via ToString(), and
+		// `Match.ToString()` returns the matched substring (or the empty
+		// string when the match was unsuccessful). This is the contract
+		// SDK targets like _FindMachOToolchain rely on
+		// (`$([System.Text.RegularExpressions.Regex]::Match($(X), '[1-9]\d*'))`).
+		if len(args) != 2 {
+			return "", false
+		}
+		re, ok := compileRegex(args[1])
+		if !ok {
+			return "", false
+		}
+		m := re.FindString(args[0])
+		return m, true
 	}
 	return "", false
 }

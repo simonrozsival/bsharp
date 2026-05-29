@@ -1198,6 +1198,7 @@ internal static class GoEmitter {
             ["System.Text.RegularExpressions.Regex"] = new IntrinsicMember[] {
                 new() { Name = "Replace", RequiresArgs = true },
                 new() { Name = "IsMatch", RequiresArgs = true },
+                new() { Name = "Match", RequiresArgs = true },
             },
             ["System.Guid"] = new IntrinsicMember[] {
                 new() { Name = "NewGuid", RequiresArgs = true },
@@ -1353,8 +1354,18 @@ internal static class GoEmitter {
     static bool IsSimplePropertyFunctionArg(string arg) {
         if (arg.Length == 0) return true;
         if ((arg[0] == '\'' || arg[0] == '"') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
-            // Quoted string literal — inner must not contain expansions (Phase B keeps args atomic).
-            return !arg.AsSpan(1, arg.Length - 2).ContainsAny("$@%");
+            // Quoted string literal — inner must not contain expansions
+            // (`$(...)` / `@(...)` / batching `%(...)`). `%` alone is fine
+            // because it shows up in MSBuild's escape encoding (`%3B` == ';',
+            // `%24` == '$', etc.). Reject only `%(` since that's the batching
+            // metadata reference we don't model in a property-function arg.
+            var inner = arg.Substring(1, arg.Length - 2);
+            for (int i = 0; i < inner.Length; i++) {
+                var ch = inner[i];
+                if (ch == '$' || ch == '@') return false;
+                if (ch == '%' && i + 1 < inner.Length && inner[i + 1] == '(') return false;
+            }
+            return true;
         }
         if (arg.StartsWith("$(", StringComparison.Ordinal) && arg.EndsWith(")", StringComparison.Ordinal)) {
             // Single bare $(...) — accept either a simple identifier (Phase B)
