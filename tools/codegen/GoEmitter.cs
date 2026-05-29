@@ -467,6 +467,13 @@ internal static class GoEmitter {
               .Append(GoStringLiteral(remove)).AppendLine(", P, I, nil)) {");
             sb.Append(bodyIndent).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
             sb.Append(bodyIndent).AppendLine("}");
+        } else if (item.Metadata.Count > 0) {
+            // Modify-metadata path: <ItemGroup><X><Meta>v</Meta></X></ItemGroup>
+            // with no Include/Remove updates metadata on EVERY existing item
+            // of type X (MSBuild ItemGroupIntrinsicTask.ExecuteModify).
+            sb.Append(bodyIndent).Append("for _, item := range I.Get(").Append(GoStringLiteral(itemType)).AppendLine(") {");
+            EmitItemMetadata(sb, item, bodyIndent + "\t", "item");
+            sb.Append(bodyIndent).AppendLine("}");
         }
 
         if (hasCond) sb.Append(indent).AppendLine("}");
@@ -693,22 +700,28 @@ internal static class GoEmitter {
             var include = item.Include ?? "";
             var remove = item.Remove ?? "";
             if (include.Length > 0 && remove.Length > 0) return "ig-include-and-remove";
-            if (include.Length == 0 && remove.Length == 0) return "ig-empty-include-remove";
-
-            var spec = include.Length > 0 ? include : remove;
-            if (ContainsBatching(spec)) return "ig-spec-batching";
-            if (ContainsGlobChar(spec)) return "ig-spec-glob-not-supported";
-            // Classify the include/remove spec.
-            if (include.Length > 0) {
-                var includeKind = ClassifyItemIncludeSpec(include);
-                if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+            if (include.Length == 0 && remove.Length == 0) {
+                // <ItemGroup><X><Meta>v</Meta></X></ItemGroup> with no
+                // Include/Remove is a "modify metadata of all existing items
+                // of this type" operation (MSBuild ItemGroupIntrinsicTask.
+                // ExecuteModify). Accept it if there's metadata to apply;
+                // truly empty items (no metadata either) are still rejected.
+                if (item.Metadata.Count == 0) return "ig-empty-include-remove";
             } else {
-                // Remove="..." path: any expression that IsSimpleExpression
-                // can handle is fine here, including @(SomeItemList). The
-                // emitter passes Remove through rt.MustExpand which already
-                // joins @() lists by identity and SplitSemicolon-splits the
-                // result for per-identity removal.
-                if (!IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
+                var spec = include.Length > 0 ? include : remove;
+                if (ContainsBatching(spec)) return "ig-spec-batching";
+                if (ContainsGlobChar(spec)) return "ig-spec-glob-not-supported";
+                if (include.Length > 0) {
+                    var includeKind = ClassifyItemIncludeSpec(include);
+                    if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+                } else {
+                    // Remove="..." path: any expression that IsSimpleExpression
+                    // can handle is fine here, including @(SomeItemList). The
+                    // emitter passes Remove through rt.MustExpand which already
+                    // joins @() lists by identity and SplitSemicolon-splits the
+                    // result for per-identity removal.
+                    if (!IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
+                }
             }
 
             foreach (var meta in item.Metadata) {
@@ -844,9 +857,11 @@ internal static class GoEmitter {
     // chained calls, batching `%()` refs, etc.) is rejected so the codegen
     // + classifier never produce silently-wrong output.
     static bool IsSimpleItemRefInner(string inner) {
-        if (inner.Contains("%(", StringComparison.Ordinal)) return false;
         var arrow = inner.IndexOf("->", StringComparison.Ordinal);
         if (arrow < 0) {
+            // Plain @(X) or @(X, 'sep') — `%()` inside is meaningless and
+            // would silently expand to "" outside a transform context.
+            if (inner.Contains("%(", StringComparison.Ordinal)) return false;
             var parts = SplitArgsQuoteAware(inner);
             if (parts.Length == 0) return false;
             if (!IsSimpleIdentifierName(parts[0].Trim())) return false;
@@ -860,6 +875,12 @@ internal static class GoEmitter {
         var name = inner.Substring(0, arrow).Trim();
         var rhs = inner.Substring(arrow + 2).Trim();
         if (!IsSimpleIdentifierName(name)) return false;
+        // Item transform `@(X->'template'[, 'sep'])` — RHS starts with a
+        // quote. The template may contain `%()` (the whole point of a
+        // transform) but only simple metadata refs are accepted.
+        if (rhs.Length > 0 && (rhs[0] == '\'' || rhs[0] == '"')) {
+            return IsSimpleTransformRhs(rhs);
+        }
         // Count() — no args.
         if (string.Equals(rhs, "Count()", StringComparison.OrdinalIgnoreCase)) return true;
         // AnyHaveMetadataValue('MetaName', 'MetaValue') — two quoted args. The
@@ -884,6 +905,74 @@ internal static class GoEmitter {
             return true;
         }
         return false;
+    }
+
+    // IsSimpleTransformRhs validates an item-transform RHS: either
+    // `'template'` or `'template', 'sep'`. The template may freely use
+    // `%(Meta)` / `%(ItemName.Meta)` (per-item batch context), `$(P)`
+    // (validated via IsSimpleExpressionInner), and `@(Y)` for nested
+    // unbatched item-list refs (validated recursively). Literal text is
+    // accepted as-is.
+    static bool IsSimpleTransformRhs(string rhs) {
+        rhs = rhs.Trim();
+        if (rhs.Length < 2) return false;
+        var q = rhs[0];
+        if (q != '\'' && q != '"') return false;
+        var end = rhs.IndexOf(q, 1);
+        if (end < 0) return false;
+        var template = rhs.Substring(1, end - 1);
+        if (!IsSimpleTransformTemplate(template)) return false;
+        var rest = rhs.Substring(end + 1).TrimStart();
+        if (rest.Length == 0) return true;
+        if (rest[0] != ',') return false;
+        rest = rest.Substring(1).TrimStart();
+        if (rest.Length < 2) return false;
+        var q2 = rest[0];
+        if (q2 != '\'' && q2 != '"') return false;
+        var endSep = rest.IndexOf(q2, 1);
+        if (endSep != rest.Length - 1) return false;
+        return true;
+    }
+
+    // IsSimpleTransformTemplate validates the template body of an item
+    // transform. Walks `$(...)`, `@(...)`, `%(...)` and ensures each is a
+    // simple shape; rejects anything the runtime Expand can't evaluate.
+    static bool IsSimpleTransformTemplate(string template) {
+        for (int i = 0; i < template.Length; i++) {
+            var c = template[i];
+            if (c == '$' && i + 1 < template.Length && template[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(template, i + 1);
+                if (end < 0) return false;
+                var inner = template.Substring(i + 2, end - i - 2);
+                if (!IsSimpleExpressionInner(inner)) return false;
+                i = end;
+                continue;
+            }
+            if (c == '@' && i + 1 < template.Length && template[i + 1] == '(') {
+                // Nested @(Y) within a transform template — disallow further
+                // nested transforms to keep this bounded.
+                var end = FindMatchingParenQuoteAware(template, i + 1);
+                if (end < 0) return false;
+                var inner = template.Substring(i + 2, end - i - 2);
+                if (inner.Contains("->", StringComparison.Ordinal)) return false;
+                if (!IsSimpleItemRefInner(inner)) return false;
+                i = end;
+                continue;
+            }
+            if (c == '%' && i + 1 < template.Length && template[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(template, i + 1);
+                if (end < 0) return false;
+                var inner = template.Substring(i + 2, end - i - 2).Trim();
+                // Accept `Identifier` or `Item.Identifier`.
+                var dot = inner.IndexOf('.');
+                var name = dot >= 0 ? inner.Substring(dot + 1) : inner;
+                if (dot >= 0 && !IsSimpleIdentifierName(inner.Substring(0, dot))) return false;
+                if (!IsSimpleIdentifierName(name)) return false;
+                i = end;
+                continue;
+            }
+        }
+        return true;
     }
 
     static bool ContainsGlobChar(string? s) {
@@ -1452,10 +1541,30 @@ internal static class GoEmitter {
 
     static int FindMatchingParen(string s, int openIdx) => FindMatchingParenQuoteAware(s, openIdx);
 
+    // ContainsBatching returns true when the value contains a `%(...)`
+    // expansion OUTSIDE of an `@(...)` item transform RHS. `%()` inside
+    // a transform template (e.g. `@(X->'%(Identity)')`) is per-item
+    // metadata, not task/target batching, so it must not be treated as
+    // a batching marker. Top-level `$(...)` is also walked past to keep
+    // `findMatchingParenQuoteAware` semantics aligned with the runtime.
     static bool ContainsBatching(string? value) {
         if (string.IsNullOrEmpty(value)) return false;
-        for (int i = 0; i + 1 < value.Length; i++) {
-            if (value[i] == '%' && value[i + 1] == '(') return true;
+        var s = value!;
+        for (int i = 0; i < s.Length; i++) {
+            var c = s[i];
+            if (c == '@' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return true;
+                i = end;
+                continue;
+            }
+            if (c == '$' && i + 1 < s.Length && s[i + 1] == '(') {
+                var end = FindMatchingParenQuoteAware(s, i + 1);
+                if (end < 0) return true;
+                i = end;
+                continue;
+            }
+            if (c == '%' && i + 1 < s.Length && s[i + 1] == '(') return true;
         }
         return false;
     }

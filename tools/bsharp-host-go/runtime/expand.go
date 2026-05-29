@@ -68,15 +68,29 @@ func Expand(template string, p PropertyBag, i ItemBag, batchMeta map[string]stri
 				sb.WriteByte('@')
 				continue
 			}
-			end := findMatchingParen(template, j+1)
+			end := findMatchingParenQuoteAware(template, j+1)
 			if end < 0 {
 				return sb.String(), false
 			}
 			inner := template[j+2 : end]
-			// `@(ItemName->FuncName(args))` -- supported intrinsic item functions
-			// (currently Count() and AnyHaveMetadataValue()). Evaluated against
-			// the items bag (and properties for arg expansion).
-			if strings.Contains(inner, "->") {
+			if arrow := strings.Index(inner, "->"); arrow >= 0 {
+				name := strings.TrimSpace(inner[:arrow])
+				rhs := strings.TrimSpace(inner[arrow+2:])
+				// Item transform `@(Name->'template'[, 'sep'])`: per-item
+				// template expansion with item metadata as batch context.
+				if strings.HasPrefix(rhs, "'") || strings.HasPrefix(rhs, "\"") {
+					if !isSimpleIdentifier(name) {
+						return sb.String(), false
+					}
+					value, ok := evalItemTransform(name, rhs, i, p)
+					if !ok {
+						return sb.String(), false
+					}
+					sb.WriteString(value)
+					j = end
+					continue
+				}
+				// Otherwise: function call (Count, AnyHaveMetadataValue, etc.).
 				value, ok := evalItemFunc(inner, i, p)
 				if !ok {
 					return sb.String(), false
@@ -247,6 +261,86 @@ func evalItemFunc(inner string, items ItemBag, p PropertyBag) (string, bool) {
 		return "False", true
 	}
 	return "", false
+}
+
+// evalItemTransform evaluates `@(Name->'template'[, 'sep'])`. For each item
+// in the named list, expands `template` with the item's metadata as the
+// batch context, then joins with `sep` (default `;`). Matches MSBuild's
+// item-transform expansion. Returns ok=false if the transform shape is
+// malformed.
+func evalItemTransform(name, rhs string, items ItemBag, p PropertyBag) (string, bool) {
+	template, sep, ok := parseTransformRhs(rhs)
+	if !ok {
+		return "", false
+	}
+	list := items.Get(name)
+	parts := make([]string, 0, len(list))
+	for _, it := range list {
+		meta := itemBatchMeta(it)
+		v, ok := Expand(template, p, items, meta)
+		if !ok {
+			return "", false
+		}
+		parts = append(parts, v)
+	}
+	return strings.Join(parts, sep), true
+}
+
+// parseTransformRhs parses the post-`->` RHS of an @() item transform.
+// Forms: `'template'` (default sep `;`) and `'template', 'sep'`. Returns
+// template, sep, ok. Quotes may be single or double (MSBuild allows both).
+func parseTransformRhs(rhs string) (template, sep string, ok bool) {
+	rhs = strings.TrimSpace(rhs)
+	if len(rhs) < 2 {
+		return "", "", false
+	}
+	q := rhs[0]
+	if q != '\'' && q != '"' {
+		return "", "", false
+	}
+	end := strings.IndexByte(rhs[1:], q)
+	if end < 0 {
+		return "", "", false
+	}
+	template = rhs[1 : 1+end]
+	rest := strings.TrimSpace(rhs[1+end+1:])
+	if rest == "" {
+		return template, ";", true
+	}
+	if rest[0] != ',' {
+		return "", "", false
+	}
+	rest = strings.TrimSpace(rest[1:])
+	if len(rest) < 2 || (rest[0] != '\'' && rest[0] != '"') {
+		return "", "", false
+	}
+	q2 := rest[0]
+	endSep := strings.IndexByte(rest[1:], q2)
+	if endSep < 0 || endSep+2 != len(rest) {
+		return "", "", false
+	}
+	return template, rest[1 : 1+endSep], true
+}
+
+// itemBatchMeta materializes an item's well-known and custom metadata into
+// a lowercase-keyed map suitable for passing as `batchMeta` to Expand. The
+// transform template's `%(Key)` and `%(Item.Key)` references are resolved
+// against this map (the qualifier is stripped by Expand's `%` handler).
+func itemBatchMeta(it *Item) map[string]string {
+	m := make(map[string]string, 8)
+	m["identity"] = it.Identity
+	m["fullpath"] = it.GetMetadata("FullPath")
+	m["filename"] = it.GetMetadata("Filename")
+	m["extension"] = it.GetMetadata("Extension")
+	m["directory"] = it.GetMetadata("Directory")
+	m["relativedir"] = it.GetMetadata("RelativeDir")
+	m["rootdir"] = it.GetMetadata("RootDir")
+	if it.meta != nil {
+		for k, v := range it.meta {
+			m[k] = v
+		}
+	}
+	return m
 }
 
 // parseItemFuncArgs splits a comma-separated argument list (quote-aware),

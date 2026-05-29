@@ -62,10 +62,81 @@ func TestExpandPropertyFunctionToLower(t *testing.T) {
 	}
 }
 
-func TestExpandItemTransformUnsupported(t *testing.T) {
-	_, ok := Expand("@(Foo->'%(Identity).bak')", &stubPB{}, &stubIB{}, nil)
-	if ok {
-		t.Error("item transforms must be reported as unsupported")
+func TestExpandItemTransformBasic(t *testing.T) {
+	// `@(X->'template')` — per-item template expansion with metadata as
+	// batch context, joined with `;` by default.
+	ib := &stubIB{m: map[string][]*Item{
+		"Src": {
+			NewItemWithMetadata("a.cs", map[string]string{"TargetPath": "out/a.cs"}),
+			NewItemWithMetadata("b.cs", map[string]string{"TargetPath": "out/b.cs"}),
+		},
+	}}
+	got, ok := Expand("@(Src->'%(TargetPath)')", &stubPB{}, ib, nil)
+	if !ok || got != "out/a.cs;out/b.cs" {
+		t.Errorf("got %q ok=%v; want 'out/a.cs;out/b.cs'", got, ok)
+	}
+}
+
+func TestExpandItemTransformWithPropertyRef(t *testing.T) {
+	// Common SDK pattern: `@(X->'$(OutDir)%(TargetPath)')`.
+	pb := &stubPB{m: map[string]string{"OutDir": "bin/Debug/"}}
+	ib := &stubIB{m: map[string][]*Item{
+		"Src": {
+			NewItemWithMetadata("a.dll", map[string]string{"TargetPath": "lib/a.dll"}),
+		},
+	}}
+	got, ok := Expand("@(Src->'$(OutDir)%(TargetPath)')", pb, ib, nil)
+	if !ok || got != "bin/Debug/lib/a.dll" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemTransformCustomSep(t *testing.T) {
+	ib := &stubIB{m: map[string][]*Item{
+		"Items": {NewItem("a"), NewItem("b"), NewItem("c")},
+	}}
+	got, ok := Expand("@(Items->'%(Identity).x', ', ')", &stubPB{}, ib, nil)
+	if !ok || got != "a.x, b.x, c.x" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemTransformQualifiedMeta(t *testing.T) {
+	// `%(ItemName.Meta)` qualified — handler strips the qualifier and looks
+	// up `meta` against the per-item batch map.
+	ib := &stubIB{m: map[string][]*Item{
+		"Src": {NewItemWithMetadata("x", map[string]string{"Culture": "fr-FR"})},
+	}}
+	got, ok := Expand("@(Src->'%(Src.Culture)')", &stubPB{}, ib, nil)
+	if !ok || got != "fr-FR" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemTransformWellKnownMetadata(t *testing.T) {
+	// `%(Filename)`, `%(Extension)`, `%(Directory)` are derived from Identity.
+	ib := &stubIB{m: map[string][]*Item{
+		"Src": {NewItem("sub/foo.cs")},
+	}}
+	got, ok := Expand("@(Src->'%(Filename)%(Extension)')", &stubPB{}, ib, nil)
+	if !ok || got != "foo.cs" {
+		t.Errorf("got %q ok=%v", got, ok)
+	}
+}
+
+func TestExpandItemTransformEmptyList(t *testing.T) {
+	ib := &stubIB{m: map[string][]*Item{}}
+	got, ok := Expand("@(Nothing->'%(Identity).x')", &stubPB{}, ib, nil)
+	if !ok || got != "" {
+		t.Errorf("got %q ok=%v; want empty", got, ok)
+	}
+}
+
+func TestExpandItemTransformRejectsMalformedRhs(t *testing.T) {
+	ib := &stubIB{m: map[string][]*Item{"Src": {NewItem("a")}}}
+	// Missing closing quote on template.
+	if _, ok := Expand("@(Src->'tpl)", &stubPB{}, ib, nil); ok {
+		t.Error("unclosed transform template must be reported unsupported")
 	}
 }
 

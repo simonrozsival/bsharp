@@ -138,6 +138,13 @@ func Copy(p ParamList, outputs *OutputList, items ItemBag, props PropertyBag) er
 		copied = append(copied, NewItem(d))
 	}
 	writeItemOutput(outputs, items, "CopiedFiles", copied)
+	// MSBuild's Copy task lets <Output TaskParameter="DestinationFiles"/>
+	// reflect back the destination identities (MSBuild treats input
+	// parameters as bindable outputs). Mirror that so SDK patterns like
+	// `<Output TaskParameter="DestinationFiles" ItemName="FileWrites"/>`
+	// work — the runtime writes each binding independently and the
+	// OutputList only commits the ones the caller asked for.
+	writeItemOutput(outputs, items, "DestinationFiles", copied)
 	return nil
 }
 
