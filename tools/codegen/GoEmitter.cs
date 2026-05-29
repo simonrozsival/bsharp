@@ -591,7 +591,12 @@ internal static class GoEmitter {
                  ?? ExtractSingleBatchQualifier(meta.Condition ?? "");
             if (q != null) return q;
         }
-        return null;
+        // Fall back to qualifiers found in the Include/Remove spec itself —
+        // matches the classifier's spec-level qualifier extraction so
+        // `<X Remove="%(Q.M)"/>` and similar shapes resolve here too.
+        var fromSpec = rawInc.Length > 0 ? ExtractSingleBatchQualifier(rawInc) : null;
+        fromSpec ??= rawRem.Length > 0 ? ExtractSingleBatchQualifier(rawRem) : null;
+        return fromSpec;
     }
 
     // ComputeTaskBatchSrcList resolves the single source-list qualifier for
@@ -670,6 +675,11 @@ internal static class GoEmitter {
             sb.Append(bi).AppendLine("}");
         }
         if (isRemove) {
+            // Two shapes:
+            //   Remove="@(SrcList)"      → enumerate SrcList, remove each by Identity.
+            //   Remove="%(X.Y)" (batched)→ enumerate X, expand Remove per iteration
+            //                              to get the identity to remove.
+            var removeIsItemListCopy = ClassifyItemIncludeSpec(remove) == ItemIncludeKind.ItemListCopy;
             sb.Append(bi).AppendLine("var toRemove []string");
             sb.Append(bi).Append("for _, src := range I.Get(").Append(GoStringLiteral(srcList)).AppendLine(") {");
             sb.Append(bi).AppendLine("\tmeta := rt.ItemBatchMeta(src)");
@@ -682,7 +692,17 @@ internal static class GoEmitter {
             if (hasExclude) {
                 sb.Append(bi).AppendLine("\tif _, skip := excluded[src.Identity]; skip { continue }");
             }
-            sb.Append(bi).AppendLine("\ttoRemove = append(toRemove, src.Identity)");
+            if (removeIsItemListCopy) {
+                sb.Append(bi).AppendLine("\ttoRemove = append(toRemove, src.Identity)");
+            } else {
+                // Expand the Remove expression per source item (per-iteration meta).
+                // Split on ';' so a metadata value carrying multiple identities
+                // removes each one (matches MSBuild's coercion).
+                sb.Append(bi).Append("\tfor _, id := range rt.SplitSemicolon(rt.MustExpand(")
+                  .Append(GoStringLiteral(remove)).AppendLine(", P, I, meta)) {");
+                sb.Append(bi).AppendLine("\t\tif id != \"\" { toRemove = append(toRemove, id) }");
+                sb.Append(bi).AppendLine("\t}");
+            }
             sb.Append(bi).AppendLine("}");
             sb.Append(bi).AppendLine("for _, id := range toRemove {");
             sb.Append(bi).Append("\tI.RemoveByIdentity(").Append(GoStringLiteral(itemType)).AppendLine(", id)");
@@ -1250,13 +1270,21 @@ internal static class GoEmitter {
                     fromMeta ??= ExtractSingleBatchQualifier(meta.Value ?? "");
                     fromMeta ??= ExtractSingleBatchQualifier(meta.Condition ?? "");
                 }
-                if (fromCond != null && fromMeta != null
-                    && !string.Equals(fromCond, fromMeta, StringComparison.OrdinalIgnoreCase)) {
-                    // Conflicting qualifiers across cond and meta would require
-                    // cross-list batching — not supported.
-                    return "ig-meta-batching";
+                string? fromSpec = null;
+                if (rawInc.Length > 0) fromSpec = ExtractSingleBatchQualifier(rawInc);
+                fromSpec ??= rawRem.Length > 0 ? ExtractSingleBatchQualifier(rawRem) : null;
+                // Conflict detection across all sources (cond/meta/spec).
+                string? picked = null;
+                foreach (var cand in new[] { fromCond, fromMeta, fromSpec }) {
+                    if (cand == null) continue;
+                    if (picked == null) picked = cand;
+                    else if (!string.Equals(picked, cand, StringComparison.OrdinalIgnoreCase)) {
+                        // Conflicting qualifiers across cond/meta/spec would
+                        // require cross-list batching — not supported.
+                        return "ig-meta-batching";
+                    }
                 }
-                srcList = fromCond ?? fromMeta;
+                srcList = picked;
             }
 
             // Validate item condition. Without a srcList, %()-bearing conditions
@@ -1294,26 +1322,37 @@ internal static class GoEmitter {
                 if (item.Metadata.Count == 0) return "ig-empty-include-remove";
             } else {
                 var spec = include.Length > 0 ? include : remove;
-                if (ContainsBatching(spec)) {
+                var specIsBatched = ContainsBatching(spec);
+                if (specIsBatched) {
                     // Batched Include/Remove value (e.g. literal text with
                     // `%(L.M)`). Only accept when srcList is known and the
                     // spec validates against it. Transforms `@(X->'%(F)')`
                     // are still ig-include-complex.
                     if (srcList == null) return "ig-spec-batching";
-                    if (!IsSimpleExpressionTemplate(spec)) return "ig-spec-batching";
+                    if (!IsSimpleExpressionTemplate(spec, srcList)) return "ig-spec-batching";
                     if (!ValidateBatchMetaRefsInString(spec, srcList)) return "ig-spec-batching";
                 }
                 if (ContainsGlobChar(spec)) return "ig-spec-glob-not-supported";
                 if (include.Length > 0) {
-                    var includeKind = ClassifyItemIncludeSpec(include);
-                    if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+                    // For non-batched specs, classify with the strict
+                    // ClassifyItemIncludeSpec (which rejects `%()` since it
+                    // re-validates via IsSimpleExpressionTemplate without
+                    // qualifier context). Batched specs were already vetted
+                    // by the block above; skip the non-batched classifier
+                    // and let EmitBatchedItemGroupChild route between
+                    // ItemListCopy / transform-include / batched-literal
+                    // via its own dispatch.
+                    if (!specIsBatched) {
+                        var includeKind = ClassifyItemIncludeSpec(include);
+                        if (includeKind == ItemIncludeKind.Unsupported) return "ig-include-complex";
+                    }
                 } else {
                     // Remove="..." path: any expression that IsSimpleExpression
                     // can handle is fine here, including @(SomeItemList). The
                     // emitter passes Remove through rt.MustExpand which already
                     // joins @() lists by identity and SplitSemicolon-splits the
                     // result for per-identity removal.
-                    if (!IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
+                    if (!specIsBatched && !IsSimpleExpressionTemplate(remove)) return "ig-remove-complex";
                 }
             }
 
