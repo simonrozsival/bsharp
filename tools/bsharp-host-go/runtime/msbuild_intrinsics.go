@@ -104,8 +104,89 @@ func msbuildIntrinsic(name, argsStr string, p PropertyBag) (string, bool) {
 			return "", false
 		}
 		return msbuildEscape(args[0]), true
+	case "ensuretrailingslash":
+		if len(args) != 1 {
+			return "", false
+		}
+		return ensureTrailingSlash(args[0]), true
+	case "makerelative":
+		if len(args) != 2 {
+			return "", false
+		}
+		return makeRelative(args[0], args[1]), true
+	case "normalizepath":
+		if len(args) == 0 {
+			return "", false
+		}
+		return normalizePathJoin(args, false), true
+	case "normalizedirectory":
+		if len(args) == 0 {
+			return "", false
+		}
+		return normalizePathJoin(args, true), true
 	}
 	return "", false
+}
+
+// normalizeSlashes converts MSBuild-style mixed `/` and `\` paths to the
+// host-native separator so Go's `path/filepath` operations behave the same
+// regardless of input slash style. On Windows this is a no-op; on Unix it
+// converts backslashes to forward slashes.
+func normalizeSlashes(s string) string {
+	if filepath.Separator == '\\' {
+		return s
+	}
+	return strings.ReplaceAll(s, "\\", "/")
+}
+
+// ensureTrailingSlash matches `[MSBuild]::EnsureTrailingSlash`. Returns the
+// input with a single trailing path separator appended if it doesn't already
+// end with one (either `/` or `\\`). Empty input yields empty output.
+func ensureTrailingSlash(s string) string {
+	if s == "" {
+		return s
+	}
+	last := s[len(s)-1]
+	if last == '/' || last == '\\' {
+		return s
+	}
+	return s + string(filepath.Separator)
+}
+
+// makeRelative matches `[MSBuild]::MakeRelative(base, path)`. Returns `path`
+// relative to `base`. If the relative computation fails, returns `path`
+// unchanged (MSBuild's defensive fallback).
+func makeRelative(base, path string) string {
+	if base == "" || path == "" {
+		return path
+	}
+	base = normalizeSlashes(base)
+	path = normalizeSlashes(path)
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
+// normalizePathJoin matches `[MSBuild]::NormalizePath(...args)` and
+// `[MSBuild]::NormalizeDirectory(...args)`. Joins all args as path segments
+// and resolves `.`/`..`/duplicate separators. When `dir` is true, appends a
+// trailing separator (NormalizeDirectory semantics).
+func normalizePathJoin(args []string, dir bool) string {
+	parts := make([]string, 0, len(args))
+	for _, a := range args {
+		parts = append(parts, normalizeSlashes(a))
+	}
+	joined := filepath.Join(parts...)
+	abs, err := filepath.Abs(joined)
+	if err != nil {
+		abs = joined
+	}
+	if dir && abs != "" {
+		return ensureTrailingSlash(abs)
+	}
+	return abs
 }
 
 // pathIntrinsic handles [System.IO.Path]::* members.
@@ -130,6 +211,13 @@ func pathIntrinsic(name, argsStr string, hasArgs bool, p PropertyBag) (string, b
 	args, ok := splitIntrinsicArgs(argsStr, p)
 	if !ok {
 		return "", false
+	}
+	// .NET's System.IO.Path treats both '/' and '\\' as path separators
+	// regardless of host OS. Normalize so that Go's `path/filepath` (which
+	// only recognizes the OS-native separator on Unix) behaves consistently
+	// for MSBuild-style mixed-slash inputs like `$(D)\src\file.cs`.
+	for i := range args {
+		args[i] = normalizeSlashes(args[i])
 	}
 	switch lower {
 	case "combine":
@@ -368,7 +456,10 @@ func resolveIntrinsicArg(arg string, p PropertyBag) (string, bool) {
 		}
 		return expanded, true
 	}
-	if strings.HasPrefix(arg, "$(") && strings.HasSuffix(arg, ")") {
+	// Unquoted args may contain `$(...)` expansions concatenated with literal
+	// text (e.g. `$(_RuntimeSymbolsDir)\$(CrossgenSubOutputPath)`). Expand
+	// against the property bag — Expand handles plain literals correctly.
+	if strings.ContainsAny(arg, "$@%") {
 		expanded, ok := Expand(arg, p, emptyItemBag{}, nil)
 		if !ok {
 			return "", false

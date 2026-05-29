@@ -119,8 +119,9 @@ func TestEvalMSBuildIntrinsicEscape(t *testing.T) {
 
 func TestEvalMSBuildIntrinsicUnsupportedReturnsFalse(t *testing.T) {
 	p := newProps()
-	if _, ok := EvalMSBuildIntrinsic("MakeRelative", "'a','b'", p); ok {
-		t.Error("MakeRelative should not be supported in Phase G")
+	// GetAssemblyIdentityFromConfigFile etc. — anything we haven't ported.
+	if _, ok := EvalMSBuildIntrinsic("GetCurrentToolsDirectory", "", p); ok {
+		t.Error("Unknown intrinsic should be rejected")
 	}
 	if _, ok := EvalMSBuildIntrinsic("Unknown", "'a'", p); ok {
 		t.Error("Unknown intrinsic should be rejected")
@@ -139,9 +140,10 @@ func TestExpandWithMSBuildIntrinsics(t *testing.T) {
 		{"$([MSBuild]::VersionLessThan('$(TargetFrameworkVersion)', '4.0'))", "False", true},
 		{"$([MSBuild]::ValueOrDefault('$(Custom)', 'fallback'))", "hello", true},
 		{"prefix-$([MSBuild]::Escape('a;b'))-suffix", "prefix-a%3Bb-suffix", true},
-		// Unsupported intrinsics still propagate as ok=false.
-		{"$([MSBuild]::MakeRelative('a','b'))", "", false},
-		// System.IO.Path::* is now supported (Phase G batch 2).
+		// Unsupported intrinsics still propagate as ok=false (the runtime
+		// hasn't ported GetCurrentToolsDirectory etc.).
+		{"$([MSBuild]::GetCurrentToolsDirectory())", "", false},
+		// System.IO.Path::* is now supported (Phase H batch 2).
 		{"$([System.IO.Path]::Combine('a','b'))", "a/b", true},
 		// Unrelated System.* intrinsics remain rejected.
 		{"$([System.String]::IsNullOrEmpty('x'))", "", false},
@@ -246,6 +248,30 @@ func TestPathIntrinsics(t *testing.T) {
 	}
 }
 
+func TestIntrinsicArgsBareConcatWithExpansion(t *testing.T) {
+	// MSBuild allows unquoted intrinsic args that concatenate literal text with
+	// `$(...)` expansions, e.g. `$([System.IO.Path]::GetDirectoryName($(D)\sub))`.
+	p := newProps("D", "/opt/work", "Sub", "extra")
+	cases := []struct {
+		template string
+		want     string
+	}{
+		{`$([System.IO.Path]::GetDirectoryName($(D)\src\file.cs))`, "/opt/work/src"},
+		{`$([System.IO.Path]::Combine($(D), $(Sub)))`, "/opt/work/extra"},
+		{`$([MSBuild]::ValueOrDefault($(Missing), $(D)))`, "/opt/work"},
+	}
+	for _, tc := range cases {
+		got, ok := Expand(tc.template, p, testItems{}, nil)
+		if !ok {
+			t.Errorf("Expand(%q) ok=false (got=%q)", tc.template, got)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("Expand(%q) = %q; want %q", tc.template, got, tc.want)
+		}
+	}
+}
+
 func TestPathIntrinsicsRejectUnsupported(t *testing.T) {
 	p := newProps()
 	// Unsupported Path::* members and unknown types remain ok=false.
@@ -257,5 +283,50 @@ func TestPathIntrinsicsRejectUnsupported(t *testing.T) {
 		if _, ok := Expand(tmpl, p, testItems{}, nil); ok {
 			t.Errorf("Expand(%q) should be ok=false", tmpl)
 		}
+	}
+}
+
+func TestMSBuildPathIntrinsics(t *testing.T) {
+	p := newProps("Root", "/opt/work")
+	cases := []struct {
+		template string
+		want     string
+	}{
+		{`$([MSBuild]::EnsureTrailingSlash('/foo'))`, "/foo/"},
+		{`$([MSBuild]::EnsureTrailingSlash('/foo/'))`, "/foo/"},
+		{`$([MSBuild]::EnsureTrailingSlash(''))`, ""},
+		// MakeRelative when source has a trailing slash matches MSBuild's
+		// "treat base as a directory" expectation.
+		{`$([MSBuild]::MakeRelative('/a/b/', '/a/b/c/d'))`, "c/d"},
+	}
+	for _, tc := range cases {
+		got, ok := Expand(tc.template, p, testItems{}, nil)
+		if !ok {
+			t.Errorf("Expand(%q) ok=false (got=%q)", tc.template, got)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("Expand(%q) = %q; want %q", tc.template, got, tc.want)
+		}
+	}
+}
+
+func TestMSBuildNormalizePath(t *testing.T) {
+	p := newProps()
+	// NormalizePath / NormalizeDirectory resolve to absolute paths, so we
+	// only assert structural properties (rather than exact strings).
+	abs, ok := Expand(`$([MSBuild]::NormalizePath('/a', 'b', '..', 'c'))`, p, testItems{}, nil)
+	if !ok {
+		t.Fatalf("NormalizePath ok=false")
+	}
+	if abs != "/a/c" {
+		t.Errorf("NormalizePath = %q; want /a/c", abs)
+	}
+	dir, ok := Expand(`$([MSBuild]::NormalizeDirectory('/a', 'b'))`, p, testItems{}, nil)
+	if !ok {
+		t.Fatalf("NormalizeDirectory ok=false")
+	}
+	if dir != "/a/b/" {
+		t.Errorf("NormalizeDirectory = %q; want /a/b/", dir)
 	}
 }

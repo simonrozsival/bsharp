@@ -787,6 +787,10 @@ internal static class GoEmitter {
                 new() { Name = "IsOsPlatform", RequiresArgs = true },
                 new() { Name = "ValueOrDefault", RequiresArgs = true },
                 new() { Name = "Escape", RequiresArgs = true },
+                new() { Name = "EnsureTrailingSlash", RequiresArgs = true },
+                new() { Name = "MakeRelative", RequiresArgs = true },
+                new() { Name = "NormalizePath", RequiresArgs = true },
+                new() { Name = "NormalizeDirectory", RequiresArgs = true },
             },
             ["System.IO.Path"] = new IntrinsicMember[] {
                 new() { Name = "Combine", RequiresArgs = true },
@@ -842,24 +846,18 @@ internal static class GoEmitter {
 
     static bool IsSimpleMSBuildIntrinsicArg(string arg) {
         if (arg.Length == 0) return true;
-        if ((arg[0] == '\'' || arg[0] == '"') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
+        if ((arg[0] == '\'' || arg[0] == '"' || arg[0] == '`') && arg.Length >= 2 && arg[arg.Length - 1] == arg[0]) {
             // Inside a quoted intrinsic arg, only `$(SimpleProp)` references
             // and literal text are allowed — mirrors splitIntrinsicArgs ->
             // resolveIntrinsicArg in the runtime.
             return AreSimpleExpansionsOnly(arg.Substring(1, arg.Length - 2));
         }
-        if (arg.StartsWith("$(", StringComparison.Ordinal) && arg.EndsWith(")", StringComparison.Ordinal)) {
-            var inner = arg.Substring(2, arg.Length - 3).Trim();
-            // Allow a Phase A/B simple property expression (identifier or
-            // whitelisted method chain).
-            return IsSimpleExpressionInner(inner);
-        }
-        // Bare literal: digits, dots, letters, dashes — used for `5.0`, `net8.0`,
-        // etc. Reject anything containing `$`, `@`, `%`, parens, quotes.
-        foreach (var c in arg) {
-            if (c == '$' || c == '@' || c == '%' || c == '(' || c == ')' || c == '\'' || c == '"') return false;
-        }
-        return true;
+        // Bare unquoted arg: same shape rules as inside a quote — every
+        // expansion must be a simple property expression / supported intrinsic;
+        // mixed with literal text is fine. Reject `@()` / `%()` because the
+        // runtime resolver only passes an emptyItemBag.
+        if (arg.IndexOfAny(new[] { '\'', '"', '`' }) >= 0) return false;
+        return AreSimpleExpansionsOnly(arg);
     }
 
     // AreSimpleExpansionsOnly walks a string and ensures that every `$(...)`
