@@ -729,19 +729,44 @@ public static class TaskModelExt {
         => r.Outputs.TryGetValue(name, out var e) && e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
 
     static string NormalizeTaskString(string name, string value) {
-        if (value.IndexOf('\\') < 0 || !IsPathLikeName(name)) return value;
-        return value.Replace('\\', Path.DirectorySeparatorChar);
+        if (!IsPathLikeName(name)) return value;
+        return NormalizePathLike(value);
     }
     static string[] NormalizeTaskStrings(string name, string[] values) {
         if (!IsPathLikeName(name)) return values;
         string[]? normalized = null;
         for (int i = 0; i < values.Length; i++) {
             var value = values[i];
-            if (value.IndexOf('\\') < 0) continue;
+            var normalizedValue = NormalizePathLike(value);
+            if (ReferenceEquals(normalizedValue, value)) continue;
             normalized ??= (string[])values.Clone();
-            normalized[i] = value.Replace('\\', Path.DirectorySeparatorChar);
+            normalized[i] = normalizedValue;
         }
         return normalized ?? values;
+    }
+    static string NormalizePathLike(string value) {
+        var normalized = Path.DirectorySeparatorChar == '/'
+            ? value.Replace('\\', '/')
+            : value.Replace('/', '\\');
+        return CollapseDuplicateSeparators(normalized);
+    }
+    static string CollapseDuplicateSeparators(string value) {
+        var separator = Path.DirectorySeparatorChar;
+        var first = value.IndexOf(separator);
+        if (first < 0) return value;
+        StringBuilder? sb = null;
+        var previousWasSeparator = false;
+        for (int i = 0; i < value.Length; i++) {
+            var c = value[i];
+            var isSeparator = c == separator;
+            if (isSeparator && previousWasSeparator) {
+                sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                continue;
+            }
+            if (sb != null) sb.Append(c);
+            previousWasSeparator = isSeparator;
+        }
+        return sb?.ToString() ?? value;
     }
     static bool IsPathLikeName(string name) =>
         name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
@@ -750,7 +775,6 @@ public static class TaskModelExt {
         name.Contains("Manifest", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Jar", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Zip", StringComparison.OrdinalIgnoreCase) ||
-        name.Contains("Apk", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Archive", StringComparison.OrdinalIgnoreCase);
 }
 """;
@@ -952,7 +976,7 @@ public static class TaskModelExt {
         // Reserved properties (always present)
         Add("MSBuildProjectFullPath"); Add("MSBuildProjectFile"); Add("MSBuildProjectName");
         Add("MSBuildProjectExtension"); Add("MSBuildProjectDirectory"); Add("ProjectDir");
-        Add("MSBuildThisFile"); Add("MSBuildThisFileFullPath"); Add("MSBuildThisFileDirectory");
+        Add("MSBuildThisFile"); Add("MSBuildThisFileName"); Add("MSBuildThisFileExtension"); Add("MSBuildThisFileFullPath"); Add("MSBuildThisFileDirectory");
         Add("TargetFramework"); Add("TargetFrameworks"); Add("TargetPath"); Add("RuntimeFrameworkVersion");
         foreach (var p in project.AllEvaluatedProperties) Add(p.Name);
         foreach (var name in sequence) {
@@ -1181,6 +1205,26 @@ static class UsingTaskRegistry {
         foreach (var imp in project.Imports)
             if (imp.ImportedProject != null) sources.Add(imp.ImportedProject);
 
+        // Microsoft.Common.tasks is loaded implicitly by MSBuild from the toolset
+        // (no <Import/>), so it's never in `project.Imports`. Add it explicitly so the
+        // ~80 Microsoft.Build.Tasks.* intrinsics (AssignLinkMetadata, AssignCulture,
+        // AssignTargetPath, FindAppConfigFile, ...) get registered with proper
+        // AssemblyName resolution.
+        var toolsPath = instance.GetPropertyValue("MSBuildToolsPath");
+        if (!string.IsNullOrEmpty(toolsPath)) {
+            foreach (var tasksFile in new[] { "Microsoft.Common.tasks", "Microsoft.Common.CurrentVersion.tasks" }) {
+                var fullPath = Path.Combine(toolsPath, tasksFile);
+                if (File.Exists(fullPath)) {
+                    try {
+                        var pre = ProjectRootElement.Open(fullPath);
+                        if (pre != null && !sources.Any(s => string.Equals(s.FullPath, fullPath, StringComparison.OrdinalIgnoreCase))) {
+                            sources.Add(pre);
+                        }
+                    } catch { /* best effort */ }
+                }
+            }
+        }
+
         // Step 1: register MSBuild's built-in intrinsic tasks. MSBuild knows these by name
         // without any <UsingTask> declaration; we synthesize fake entries here so the
         // codegen typed-task path picks them up automatically. Microsoft.Build.Tasks.Core.dll
@@ -1237,8 +1281,20 @@ static class UsingTaskRegistry {
                         notes = $"AssemblyFile path does not exist after expansion: '{expanded}'";
                     }
                 } else if (!string.IsNullOrEmpty(ut.AssemblyName)) {
-                    status = "unresolved";
-                    notes = $"AssemblyName='{ut.AssemblyName}' (no AssemblyFile) — unsupported in v1";
+                    // AssemblyName-only resolution: AssemblyName loading from the GAC isn't
+                    // supported in v1. As a targeted unlock for SDK-task dispatch, accept
+                    // entries that name `Microsoft.Build.Tasks.Core` and route them at the
+                    // intrinsics DLL on disk. Without this, ~70 Microsoft.Build.Tasks.*
+                    // intrinsics (AssignLinkMetadata, AssignProjectConfiguration, ...) would
+                    // bypass the typed-dispatch path entirely.
+                    var asmFirst = ut.AssemblyName.Split(',')[0].Trim();
+                    if (string.Equals(asmFirst, "Microsoft.Build.Tasks.Core", StringComparison.OrdinalIgnoreCase)
+                        && TryResolveOnSearchPath(instance, "Microsoft.Build.Tasks.Core.dll") is string corePath) {
+                        resolvedPath = corePath;
+                    } else {
+                        status = "unresolved";
+                        notes = $"AssemblyName='{ut.AssemblyName}' (no AssemblyFile) — unsupported in v1";
+                    }
                 } else {
                     status = "unresolved";
                     notes = "no AssemblyFile or AssemblyName specified";
@@ -1999,6 +2055,10 @@ if (!noBuild) {
 if (command == "run") {
     if (!noBuild && Log.Level >= Log.Verbosity.Minimal)
         Console.WriteLine("---");
+    if (string.Equals(P.TargetPlatformIdentifier, "android", StringComparison.OrdinalIgnoreCase)
+        || P.TargetFramework.Contains("-android", StringComparison.OrdinalIgnoreCase)) {
+        return RunAndroidApk(csprojPath);
+    }
     var targetPath = P.TargetPath;
     if (string.IsNullOrEmpty(targetPath) || !File.Exists(targetPath)) {
         Console.Error.WriteLine($"FAIL: cannot run, TargetPath not found: '{targetPath}'");
@@ -2012,6 +2072,102 @@ if (command == "run") {
     return proc.ExitCode;
 }
 return 0;
+
+static int RunAndroidApk(string csprojPath) {
+    var projectDir = Path.GetDirectoryName(csprojPath)!;
+    var outputDir = ResolveProjectPath(projectDir, P.OutputPath);
+    var apk = "";
+    if (!string.IsNullOrEmpty(outputDir) && Directory.Exists(outputDir)) {
+        apk = Directory.EnumerateFiles(outputDir, "*-Signed.apk", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .FirstOrDefault() ?? "";
+        if (apk.Length == 0) {
+            apk = Directory.EnumerateFiles(outputDir, "*.apk", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault() ?? "";
+        }
+    }
+    if (apk.Length == 0 || !File.Exists(apk)) {
+        Console.Error.WriteLine($"FAIL: cannot run Android app, APK not found under '{outputDir}'");
+        return 2;
+    }
+
+    var adb = ResolveAdbPath();
+    if (string.IsNullOrEmpty(adb) || !File.Exists(adb)) {
+        Console.Error.WriteLine($"FAIL: cannot run Android app, adb not found. AndroidSdkDirectory='{P.Get("AndroidSdkDirectory")}'");
+        return 2;
+    }
+
+    var installRc = RunAndroidProcess(adb, "install", "-r", apk);
+    if (installRc != 0)
+        return installRc;
+
+    var packageName = P.Get("ApplicationId");
+    if (string.IsNullOrEmpty(packageName))
+        packageName = P.Get("_AndroidPackage");
+    if (string.IsNullOrEmpty(packageName)) {
+        Console.Error.WriteLine("FAIL: cannot run Android app, package name is empty.");
+        return 2;
+    }
+    var launchComponent = ResolveAndroidLaunchComponent(adb, packageName);
+    if (!string.IsNullOrEmpty(launchComponent))
+        return RunAndroidProcess(adb, "shell", "am", "start", "-n", launchComponent);
+    return RunAndroidProcess(adb, "shell", "monkey", "-p", packageName, "1");
+}
+
+static string ResolveAndroidLaunchComponent(string adb, string packageName) {
+    var result = RunAndroidProcessCapture(adb, "shell", "cmd", "package", "resolve-activity", "--brief", packageName);
+    if (result.ExitCode != 0)
+        return "";
+
+    foreach (var line in result.Stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Reverse()) {
+        var value = line.Trim();
+        if (value.Contains('/') && !value.StartsWith("priority=", StringComparison.OrdinalIgnoreCase))
+            return value;
+    }
+    return "";
+}
+
+static string ResolveAdbPath() {
+    var exe = Path.DirectorySeparatorChar == '\\' ? "adb.exe" : "adb";
+    var androidSdkDirectory = P.Get("AndroidSdkDirectory");
+    if (!string.IsNullOrEmpty(androidSdkDirectory)) {
+        var adb = Path.Combine(androidSdkDirectory, "platform-tools", exe);
+        if (File.Exists(adb))
+            return adb;
+    }
+    androidSdkDirectory = P.Get("_AndroidSdkDirectory");
+    if (!string.IsNullOrEmpty(androidSdkDirectory)) {
+        var adb = Path.Combine(androidSdkDirectory, "platform-tools", exe);
+        if (File.Exists(adb))
+            return adb;
+    }
+    return exe;
+}
+
+static int RunAndroidProcess(string fileName, params string[] arguments) {
+    var psi = new System.Diagnostics.ProcessStartInfo(fileName) { UseShellExecute = false };
+    foreach (var argument in arguments)
+        psi.ArgumentList.Add(argument);
+    var process = System.Diagnostics.Process.Start(psi)!;
+    process.WaitForExit();
+    return process.ExitCode;
+}
+
+static (int ExitCode, string Stdout, string Stderr) RunAndroidProcessCapture(string fileName, params string[] arguments) {
+    var psi = new System.Diagnostics.ProcessStartInfo(fileName) {
+        UseShellExecute = false,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+    };
+    foreach (var argument in arguments)
+        psi.ArgumentList.Add(argument);
+    var process = System.Diagnostics.Process.Start(psi)!;
+    var stdout = process.StandardOutput.ReadToEnd();
+    var stderr = process.StandardError.ReadToEnd();
+    process.WaitForExit();
+    return (process.ExitCode, stdout, stderr);
+}
 
 static void WriteBuildSummary(TimeSpan elapsed, TimeSpan restoreElapsed, int criticalCount, int ignored) {
     var buildMs = elapsed.TotalMilliseconds;
@@ -2970,6 +3126,12 @@ static class ItemSerde {
         var arr = new Bsharp.Generated.TaskModel.ItemSpec[items.Count];
         for (int i = 0; i < items.Count; i++) arr[i] = OneSpec(items[i]);
         return arr;
+    }
+    public static Bsharp.Generated.TaskModel.ItemSpec[] ToSpecs(IEnumerable<Item> items) {
+        if (items is List<Item> list) return ToSpecs(list);
+        var specs = new List<Bsharp.Generated.TaskModel.ItemSpec>();
+        foreach (var item in items) specs.Add(OneSpec(item));
+        return specs.Count == 0 ? Array.Empty<Bsharp.Generated.TaskModel.ItemSpec>() : specs.ToArray();
     }
     public static Bsharp.Generated.TaskModel.ItemSpec[] ConcatSpecs(params Bsharp.Generated.TaskModel.ItemSpec[][] groups) {
         var count = 0;
@@ -4002,11 +4164,45 @@ static class PathUtil {
     }
     public static string NormalizeSeparators(string value) =>
         Path.DirectorySeparatorChar == '/' ? value.Replace('\\', '/') : value;
+    public static string NormalizePathLike(string value) =>
+        CollapseDuplicateSeparators(NormalizeSeparators(value));
     public static string NormalizeSeparatorList(string value) {
         var normalized = new List<string>();
         foreach (var item in new SplitList(value))
             normalized.Add(NormalizeSeparators(item));
         return string.Join(";", normalized);
+    }
+    public static string NormalizePathLikeList(string value) {
+        var normalized = new List<string>();
+        foreach (var item in new SplitList(value))
+            normalized.Add(NormalizePathLike(item));
+        return string.Join(";", normalized);
+    }
+    public static bool IsPathLikeName(string name) =>
+        name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Directory", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("File", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Manifest", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Jar", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Zip", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Archive", StringComparison.OrdinalIgnoreCase);
+    static string CollapseDuplicateSeparators(string value) {
+        var separator = Path.DirectorySeparatorChar;
+        var first = value.IndexOf(separator);
+        if (first < 0) return value;
+        StringBuilder? sb = null;
+        var previousWasSeparator = false;
+        for (int i = 0; i < value.Length; i++) {
+            var c = value[i];
+            var isSeparator = c == separator;
+            if (isSeparator && previousWasSeparator) {
+                sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                continue;
+            }
+            if (sb != null) sb.Append(c);
+            previousWasSeparator = isSeparator;
+        }
+        return sb?.ToString() ?? value;
     }
 }
 
@@ -4118,8 +4314,12 @@ static partial class Tasks {
         foreach (var d in new SplitList(p.GetValueOrDefault("Directories"))) if (Directory.Exists(d)) Directory.Delete(d, true);
     }
     public static void CreateProperty(ParamList p, OutputList? outputs) {
-        var value = PathUtil.NormalizeSeparators(p.GetValueOrDefault("Value") ?? "");
-        if (outputs != null && outputs.TryGetValue("Value", out var spec) && spec.itemName != null) P.Set(spec.itemName, value);
+        var value = p.GetValueOrDefault("Value") ?? "";
+        if (outputs != null && outputs.TryGetValue("Value", out var spec) && spec.itemName != null) {
+            if (PathUtil.IsPathLikeName(spec.itemName))
+                value = PathUtil.NormalizePathLikeList(value);
+            P.Set(spec.itemName, value);
+        }
     }
     public static void CreateItem(ParamList p, OutputList? outputs) {
         var items = new List<Item>();
@@ -4236,7 +4436,8 @@ static partial class Tasks {
     public static void MSBuildItems(List<Item> projects, string targetsValue, string properties, string removeProperties, OutputList? outputs) {
         if (projects.Count == 0) return;
         var targets = StringList.FromSemicolonList(targetsValue ?? "");
-        if (targets.Length == 0) return;
+        if (targets.Length == 0)
+            targets = new[] { "Build" };
 
         var currentProject = P.MSBuildProjectFullPath;
         bool selfOnly = projects.All(project =>
@@ -4580,6 +4781,8 @@ static partial class Tasks {
         sb.AppendLine("        P.Set(\"MSBuildProjectDirectory\", projectDir);");
         sb.AppendLine("        P.Set(\"ProjectDir\", projectDir + Path.DirectorySeparatorChar);");
         sb.AppendLine("        P.Set(\"MSBuildThisFile\", Path.GetFileName(csprojPath));");
+        sb.AppendLine("        P.Set(\"MSBuildThisFileName\", Path.GetFileNameWithoutExtension(csprojPath));");
+        sb.AppendLine("        P.Set(\"MSBuildThisFileExtension\", Path.GetExtension(csprojPath));");
         sb.AppendLine("        P.Set(\"MSBuildThisFileFullPath\", csprojPath);");
         sb.AppendLine("        P.Set(\"MSBuildThisFileDirectory\", projectDir + Path.DirectorySeparatorChar);");
         sb.AppendLine();
@@ -4852,7 +5055,7 @@ static partial class Tasks {
         foreach (var name in sequence) {
             if (!instance.Targets.TryGetValue(name, out var target) || string.IsNullOrWhiteSpace(target.Returns))
                 continue;
-            sb.AppendLine($"        if (string.Equals(name, {CSharpLiteral(name)}, StringComparison.OrdinalIgnoreCase)) return {CompileTargetReturns(target.Returns)};");
+            sb.AppendLine($"        if (string.Equals(name, {CSharpLiteral(name)}, StringComparison.OrdinalIgnoreCase)) return {CompileTargetReturns(target.Returns, target.Location.File)};");
         }
         sb.AppendLine("        return new List<Item>();");
         sb.AppendLine("    }");
@@ -4899,11 +5102,11 @@ static partial class Tasks {
         return true;
     }
 
-    static string CompileTargetReturns(string returns) {
+    static string CompileTargetReturns(string returns, string? declaringFile) {
         var trimmed = returns.Trim();
         if (TryParsePureItemList(trimmed, out var itemType))
             return $"new List<Item>({ItemAccess(itemType)})";
-        return $"ItemSerde.FromSpecs(ItemSerde.SpecsFromScalar({CompileExpr(returns)}))";
+        return $"ItemSerde.FromSpecs(ItemSerde.SpecsFromScalar({CompileExpr(returns, declaringFile: declaringFile)}))";
     }
 
     static string TargetArrayLiteral(IEnumerable<string> targets) =>
@@ -4984,17 +5187,10 @@ static partial class Tasks {
         var hasAfters = afterCompanions.TryGetValue(name, out var afters);
 
         var literalRun = new List<string>();
-        var literalRunBatch = 0;
         void FlushLiteralRun() {
             if (literalRun.Count == 0) return;
-            if (literalRun.Count == 1) {
-                sb.AppendLine($"            await {Method(literalRun[0])}();");
-            } else {
-                var batch = literalRunBatch++;
-                for (var i = 0; i < literalRun.Count; i++)
-                    sb.AppendLine($"            var dependencyTask{batch}_{i} = {Method(literalRun[i])}();");
-                sb.AppendLine($"            await ValueTaskHelpers.WhenAll({string.Join(", ", Enumerable.Range(0, literalRun.Count).Select(i => $"dependencyTask{batch}_{i}"))});");
-            }
+            foreach (var literal in literalRun)
+                sb.AppendLine($"            await {Method(literal)}();");
             literalRun.Clear();
         }
 
@@ -5015,7 +5211,7 @@ static partial class Tasks {
         // companions are still scheduled. A condition-skipped target is not considered
         // done, so a later request can execute it if the condition has become true.
         if (hasCondition) {
-            sb.AppendLine($"                if (!({CompileCondWithFallback(target.Condition, instance)})) {{");
+            sb.AppendLine($"                if (!({CompileCondWithFallback(target.Condition, instance, target.Location.File)})) {{");
             if (beforeCompanions.TryGetValue(name, out var skippedBefores)) {
                 foreach (var before in skippedBefores)
                     sb.AppendLine($"                    await {Method(before)}();");
@@ -5041,7 +5237,7 @@ static partial class Tasks {
                 literalRun.Add(val);
             } else {
                 FlushLiteralRun();
-                sb.AppendLine($"            foreach (var dependencyName in ({CompileExpr(val)}).Split(';', StringSplitOptions.RemoveEmptyEntries))");
+                sb.AppendLine($"            foreach (var dependencyName in ({CompileExpr(val, declaringFile: target.Location.File)}).Split(';', StringSplitOptions.RemoveEmptyEntries))");
                 sb.AppendLine("                await Run(dependencyName.Trim());");
                 onDynamicEmitted();
             }
@@ -5095,9 +5291,13 @@ static partial class Tasks {
 
         sb.AppendLine($"    static async ValueTask {coreMethod}() {{");
         if (hasIncr) {
-            sb.AppendLine($"        if (!TargetIncrementality.IsUpToDate({CSharpLiteral(name)}, {CompileExpr(target.Inputs)}, {CompileExpr(target.Outputs)})) {{");
+            sb.AppendLine($"        if (!TargetIncrementality.IsUpToDate({CSharpLiteral(name)}, {CompileExpr(target.Inputs, declaringFile: target.Location.File)}, {CompileExpr(target.Outputs, declaringFile: target.Location.File)})) {{");
         }
-        foreach (var child in target.Children) EmitChild(sb, child);
+        if (string.Equals(name, "ResolveProjectReferences", StringComparison.OrdinalIgnoreCase)) {
+            sb.AppendLine("        Tasks.ResolveProjectReferencesV1();");
+        } else {
+            foreach (var child in target.Children) EmitChild(sb, child);
+        }
         if (hasIncr) {
             sb.AppendLine("        } else {");
             sb.AppendLine($"            Log.TargetUpToDate({CSharpLiteral(name)});");
@@ -5125,7 +5325,7 @@ static partial class Tasks {
     static void EmitTaskOutputInference(StringBuilder sb, ProjectTaskInstance task) {
         var ind = "        ";
         if (!string.IsNullOrEmpty(task.Condition)) {
-            sb.AppendLine($"{ind}if ({CompileCond(task.Condition)}) {{");
+            sb.AppendLine($"{ind}if ({CompileCond(task.Condition, declaringFile: task.Location.File)}) {{");
             ind += "    ";
         }
         foreach (var output in task.Outputs) {
@@ -5140,7 +5340,7 @@ static partial class Tasks {
             switch (output) {
                 case ProjectTaskOutputItemInstance itemOutput:
                     sb.AppendLine($"{ind}{{");
-                    sb.AppendLine($"{ind}    foreach (var identity in new SemicolonSplit({CompileExpr(parameterValue)})) {{");
+                    sb.AppendLine($"{ind}    foreach (var identity in new SemicolonSplit({CompileExpr(parameterValue, declaringFile: task.Location.File)})) {{");
                     sb.AppendLine($"{ind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
                     sb.AppendLine($"{ind}            {ItemAccess(itemOutput.ItemType)}.Add(newItem);");
                     sb.AppendLine($"{ind}        }}");
@@ -5148,7 +5348,7 @@ static partial class Tasks {
                     sb.AppendLine($"{ind}}}");
                     break;
                 case ProjectTaskOutputPropertyInstance propertyOutput:
-                    sb.AppendLine($"{ind}P.Set({CSharpLiteral(propertyOutput.PropertyName)}, {CompileExpr(parameterValue)});");
+                    sb.AppendLine($"{ind}P.Set({CSharpLiteral(propertyOutput.PropertyName)}, {CompileExpr(parameterValue, declaringFile: task.Location.File)});");
                     break;
             }
         }
@@ -5188,13 +5388,21 @@ static partial class Tasks {
         // Same @(X)-based inference as for tasks.
         string? batch = InferBatchType(strs, itemRefScopeExprs: strs);
         if (batch != null) { sb.AppendLine($"{ind}foreach (var batchItem in {ItemAccess(batch)}) {{"); ind += "    "; }
-        if (!string.IsNullOrEmpty(pg.Condition)) sb.AppendLine($"{ind}if ({CompileCond(pg.Condition, batch)}) {{");
+        var groupCondition = string.IsNullOrEmpty(pg.Condition) ? "true" : CompileCond(pg.Condition, batch, pg.Location.File);
+        if (groupCondition == "false") {
+            if (batch != null) sb.AppendLine($"        }}");
+            return;
+        }
+        if (groupCondition != "true") sb.AppendLine($"{ind}if ({groupCondition}) {{");
         else sb.AppendLine($"{ind}{{");
         foreach (var prop in pg.Properties) {
             var iind = ind + "    ";
-            var setExpr = SetProperty(prop.Name, CompileExpr(ApplyThisFileDirectory(prop.Value, prop.Location.File), batch));
-            if (!string.IsNullOrEmpty(prop.Condition))
-                sb.AppendLine($"{iind}if ({CompileCond(prop.Condition, batch)}) {setExpr};");
+            var setExpr = SetProperty(prop.Name, CompileExpr(prop.Value, batch, declaringFile: prop.Location.File));
+            var propCondition = string.IsNullOrEmpty(prop.Condition) ? "true" : CompileCond(prop.Condition, batch, prop.Location.File);
+            if (propCondition == "false")
+                continue;
+            if (propCondition != "true")
+                sb.AppendLine($"{iind}if ({propCondition}) {setExpr};");
             else
                 sb.AppendLine($"{iind}{setExpr};");
         }
@@ -5202,25 +5410,26 @@ static partial class Tasks {
         if (batch != null) sb.AppendLine($"        }}");
     }
 
-    static string ApplyThisFileDirectory(string value, string? declaringFile) {
-        if (string.IsNullOrEmpty(value) || !value.Contains("$(MSBuildThisFileDirectory)", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(declaringFile))
-            return value;
-        var dir = Path.GetDirectoryName(declaringFile);
-        if (string.IsNullOrEmpty(dir))
-            return value;
-        return value.Replace("$(MSBuildThisFileDirectory)", dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
-
     static void EmitItemGroup(StringBuilder sb, ProjectItemGroupTaskInstance ig) {
         var outer = "        ";
         // Open ItemGroup-level condition (shared across all items).
-        if (!string.IsNullOrEmpty(ig.Condition)) sb.AppendLine($"{outer}if ({CompileCond(ig.Condition)}) {{");
+        var groupCondition = string.IsNullOrEmpty(ig.Condition) ? "true" : CompileCond(ig.Condition, declaringFile: ig.Location.File);
+        if (groupCondition == "false")
+            return;
+        if (groupCondition != "true") sb.AppendLine($"{outer}if ({groupCondition}) {{");
         else sb.AppendLine($"{outer}{{");
         var ind = outer + "    ";
 
         var items = ig.Items.ToList();
         for (var itemIndex = 0; itemIndex < items.Count; itemIndex++) {
+            if (TryMergeAdjacentDirectItemCopies(items, itemIndex, out var directCopyGroup)) {
+                EmitMergedDirectItemCopies(sb, ind, directCopyGroup);
+                itemIndex += directCopyGroup.Copies.Count - 1;
+                continue;
+            }
+
             var item = items[itemIndex];
+            var itemSourceFile = item.Location.File;
             var itemCondition = item.Condition;
             if (TryMergeAdjacentItemAdditions(items, itemIndex, out var mergedCount, out var mergedCondition)) {
                 itemCondition = mergedCondition;
@@ -5260,7 +5469,7 @@ static partial class Tasks {
                 {
                     var removeTarget = ItemAccess(item.ItemType);
                     if (!string.IsNullOrEmpty(itemCondition)) {
-                        sb.AppendLine($"{ind}{removeTarget}.RemoveAll(batchItem => {CompileCond(itemCondition, batch)});");
+                        sb.AppendLine($"{ind}{removeTarget}.RemoveAll(batchItem => {CompileCond(itemCondition, batch, itemSourceFile)});");
                     } else {
                         sb.AppendLine($"{ind}{removeTarget}.Clear();");
                     }
@@ -5268,13 +5477,13 @@ static partial class Tasks {
                 }
             }
 
-            var openCond = !string.IsNullOrEmpty(itemCondition) ? $"if ({CompileCond(itemCondition, batch)}) " : "";
+            var openCond = !string.IsNullOrEmpty(itemCondition) ? $"if ({CompileCond(itemCondition, batch, itemSourceFile)}) " : "";
             var target = ItemAccess(item.ItemType);
             var openedBatch = false;
             if (!string.IsNullOrEmpty(item.Include)) {
                 var direct = TryParseDirectItemRef(item.Include);
                 var itemRefList = TryParseItemRefList(item.Include);
-                var projection = TryParseItemProjection(item.Include);
+                var projection = TryParseItemProjection(item.Include, itemSourceFile);
                 var dynamicInclude = TryParseDynamicItemInclude(item.Include);
                 var semicolonSplit = batch == null ? TryParsePropertySemicolonSplit(item.Include) : null;
                 if (dynamicInclude is { } dynamic
@@ -5294,9 +5503,9 @@ static partial class Tasks {
                     sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
                     sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
-                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch, declaringFile: m.Location.File)})";
                         if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch)}) {assign};");
+                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch, m.Location.File)}) {assign};");
                         else
                             sb.AppendLine($"{iind}        {assign};");
                     }
@@ -5308,7 +5517,7 @@ static partial class Tasks {
                 }
                 if (itemRefList != null && batch == null) {
                     var sourceCond = !string.IsNullOrEmpty(itemCondition)
-                        ? $"if ({CompileCond(itemCondition)}) "
+                        ? $"if ({CompileCond(itemCondition, declaringFile: itemSourceFile)}) "
                         : "";
                     foreach (var itemRef in itemRefList) {
                         var sourceEnumerable = string.Equals(TryCanonicalItemKey(item.ItemType), TryCanonicalItemKey(itemRef), StringComparison.OrdinalIgnoreCase)
@@ -5319,9 +5528,9 @@ static partial class Tasks {
                         sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
                         sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                         foreach (var m in item.Metadata) {
-                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value)})";
+                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, declaringFile: m.Location.File)})";
                             if (!string.IsNullOrEmpty(m.Condition))
-                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition)}) {assign};");
+                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, declaringFile: m.Location.File)}) {assign};");
                             else
                                 sb.AppendLine($"{iind}        {assign};");
                         }
@@ -5338,7 +5547,7 @@ static partial class Tasks {
                         ? $"{projection.Value.ItemsExpr}.ToArray()"
                         : projection.Value.ItemsExpr;
                     var sourceCond = !string.IsNullOrEmpty(itemCondition)
-                        ? $"if ({(batch == null ? CompileCond(itemCondition) : CompileCond(itemCondition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal))}) "
+                        ? $"if ({(batch == null ? CompileCond(itemCondition, declaringFile: itemSourceFile) : CompileCond(itemCondition, batch, itemSourceFile).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal))}) "
                         : "";
                     sb.AppendLine($"{iind}foreach (var sourceItem in {sourceEnumerable}) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
@@ -5346,13 +5555,13 @@ static partial class Tasks {
                     sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
                         var value = batch == null
-                            ? CompileExpr(m.Value)
-                            : CompileExpr(m.Value, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
+                            ? CompileExpr(m.Value, declaringFile: m.Location.File)
+                            : CompileExpr(m.Value, batch, declaringFile: m.Location.File).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
                         var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {value})";
                         if (!string.IsNullOrEmpty(m.Condition)) {
                             var metadataCondition = batch == null
-                                ? CompileCond(m.Condition)
-                                : CompileCond(m.Condition, batch).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
+                                ? CompileCond(m.Condition, declaringFile: m.Location.File)
+                                : CompileCond(m.Condition, batch, m.Location.File).Replace("batchItem.", "sourceItem.", StringComparison.Ordinal);
                             sb.AppendLine($"{iind}        if ({metadataCondition}) {assign};");
                         } else {
                             sb.AppendLine($"{iind}        {assign};");
@@ -5366,15 +5575,15 @@ static partial class Tasks {
 
                 if (semicolonSplit != null) {
                     var sourceCond = !string.IsNullOrEmpty(itemCondition)
-                        ? $"if ({CompileCond(itemCondition)}) "
+                        ? $"if ({CompileCond(itemCondition, declaringFile: itemSourceFile)}) "
                         : "";
                     sb.AppendLine($"{iind}foreach (var identity in new SemicolonSplit({semicolonSplit})) {{");
                     sb.AppendLine($"{iind}    {sourceCond}{{");
                     sb.AppendLine($"{iind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
                     foreach (var m in item.Metadata) {
-                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value)})";
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, declaringFile: m.Location.File)})";
                         if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition)}) {assign};");
+                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition, declaringFile: m.Location.File)}) {assign};");
                         else
                             sb.AppendLine($"{iind}            {assign};");
                     }
@@ -5411,9 +5620,9 @@ static partial class Tasks {
                         sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
                         sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                         foreach (var m in item.Metadata) {
-                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch ?? direct)})";
+                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch ?? direct, declaringFile: m.Location.File)})";
                             if (!string.IsNullOrEmpty(m.Condition))
-                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch ?? direct)}) {assign};");
+                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch ?? direct, m.Location.File)}) {assign};");
                             else
                                 sb.AppendLine($"{iind}        {assign};");
                         }
@@ -5424,9 +5633,9 @@ static partial class Tasks {
                         sb.AppendLine($"{iind}        var newItem = new Item(sourceItem.Identity);");
                         sb.AppendLine($"{iind}        sourceItem.CopyMetadataTo(newItem);");
                         foreach (var m in item.Metadata) {
-                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch ?? direct)})";
+                            var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch ?? direct, declaringFile: m.Location.File)})";
                             if (!string.IsNullOrEmpty(m.Condition))
-                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch ?? direct)}) {assign};");
+                                sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch ?? direct, m.Location.File)}) {assign};");
                             else
                                 sb.AppendLine($"{iind}        {assign};");
                         }
@@ -5438,23 +5647,23 @@ static partial class Tasks {
                     if (batch != null)
                         sb.AppendLine($"{iind}        batchItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
-                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch, declaringFile: m.Location.File)})";
                         if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch)}) {assign};");
+                            sb.AppendLine($"{iind}        if ({CompileCond(m.Condition, batch, m.Location.File)}) {assign};");
                         else
                             sb.AppendLine($"{iind}        {assign};");
                     }
                     sb.AppendLine($"{iind}        {target}.Add(newItem);");
                     sb.AppendLine($"{iind}    }}");
                 } else {
-                    sb.AppendLine($"{iind}    foreach (var identity in new SemicolonSplit({CompileExpr(item.Include, batch)})) {{");
+                    sb.AppendLine($"{iind}    foreach (var identity in new SemicolonSplit({CompileExpr(item.Include, batch, declaringFile: itemSourceFile)})) {{");
                     sb.AppendLine($"{iind}        foreach (var newItem in Item.ExpandInclude(identity.ToString())) {{");
                     if (batch != null)
                         sb.AppendLine($"{iind}            batchItem.CopyMetadataTo(newItem);");
                     foreach (var m in item.Metadata) {
-                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch)})";
+                        var assign = $"newItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, batch, declaringFile: m.Location.File)})";
                         if (!string.IsNullOrEmpty(m.Condition))
-                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition, batch)}) {assign};");
+                            sb.AppendLine($"{iind}            if ({CompileCond(m.Condition, batch, m.Location.File)}) {assign};");
                         else
                             sb.AppendLine($"{iind}            {assign};");
                     }
@@ -5472,7 +5681,7 @@ static partial class Tasks {
                 {
                     sb.AppendLine($"{iind}{target}.RemoveAll(batchItem => {{");
                     if (!string.IsNullOrEmpty(itemCondition))
-                        sb.AppendLine($"{iind}    if (!({CompileCond(itemCondition, batch)})) return false;");
+                        sb.AppendLine($"{iind}    if (!({CompileCond(itemCondition, batch, itemSourceFile)})) return false;");
                     if (direct != null) {
                         sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromItems({ItemAccess(direct)});");
                     } else if (IsPureLiteralNoSemicolon(item.Remove) && !item.Remove.Contains('*') && !item.Remove.Contains('?')) {
@@ -5480,7 +5689,7 @@ static partial class Tasks {
                         sb.AppendLine($"{iind}}});");
                         continue;
                     } else {
-                        sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch)});");
+                        sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch, declaringFile: itemSourceFile)});");
                     }
                     sb.AppendLine($"{iind}    return itemsToRemove.Contains(batchItem.Identity);");
                     sb.AppendLine($"{iind}}});");
@@ -5504,7 +5713,7 @@ static partial class Tasks {
                 } else if (IsPureLiteralNoSemicolon(item.Remove) && !item.Remove.Contains('*') && !item.Remove.Contains('?')) {
                     sb.AppendLine($"{iind}    {target}.RemoveAll(item => string.Equals(item.Identity, {CSharpLiteral(item.Remove)}, StringComparison.OrdinalIgnoreCase));");
                 } else {
-                    sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch)});");
+                    sb.AppendLine($"{iind}    var itemsToRemove = StringSet.FromSemicolonList({CompileExpr(item.Remove, batch, declaringFile: itemSourceFile)});");
                     sb.AppendLine($"{iind}    {target}.RemoveAll(item => itemsToRemove.Contains(item.Identity));");
                 }
                 sb.AppendLine($"{iind}}}");
@@ -5513,13 +5722,13 @@ static partial class Tasks {
                 sb.AppendLine($"{iind}foreach (var batchItem in {ItemAccess(updateBatch)}) {{");
                 iind += "    ";
                 if (!string.IsNullOrEmpty(itemCondition)) {
-                    sb.AppendLine($"{iind}if ({CompileCond(itemCondition, updateBatch)}) {{");
+                    sb.AppendLine($"{iind}if ({CompileCond(itemCondition, updateBatch, itemSourceFile)}) {{");
                     iind += "    ";
                 }
                 foreach (var m in item.Metadata) {
-                    var assign = $"batchItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, updateBatch)})";
+                    var assign = $"batchItem.SetMetadata({CSharpLiteral(m.Name.ToLowerInvariant())}, {CompileExpr(m.Value, updateBatch, declaringFile: m.Location.File)})";
                     if (!string.IsNullOrEmpty(m.Condition))
-                        sb.AppendLine($"{iind}if ({CompileCond(m.Condition, updateBatch)}) {assign};");
+                        sb.AppendLine($"{iind}if ({CompileCond(m.Condition, updateBatch, m.Location.File)}) {assign};");
                     else
                         sb.AppendLine($"{iind}{assign};");
                 }
@@ -5563,6 +5772,94 @@ static partial class Tasks {
 
         mergedCondition = first.Condition;
         return false;
+    }
+
+    sealed record DirectItemCopy(string TargetItemType, string? Condition, string DeclaringFile);
+    sealed record DirectItemCopyGroup(string SourceItemType, IReadOnlyList<DirectItemCopy> Copies);
+
+    static bool TryMergeAdjacentDirectItemCopies(
+        IReadOnlyList<ProjectItemGroupTaskItemInstance> items,
+        int start,
+        out DirectItemCopyGroup group)
+    {
+        group = new DirectItemCopyGroup("", Array.Empty<DirectItemCopy>());
+        if (!TryClassifyDirectItemCopy(items[start], out var sourceItemType, out var firstCopy))
+            return false;
+
+        var copies = new List<DirectItemCopy> { firstCopy };
+        for (var i = start + 1; i < items.Count; i++) {
+            if (!TryClassifyDirectItemCopy(items[i], out var nextSourceItemType, out var nextCopy) ||
+                !string.Equals(sourceItemType, nextSourceItemType, StringComparison.OrdinalIgnoreCase))
+                break;
+            copies.Add(nextCopy);
+        }
+
+        if (copies.Count < 2)
+            return false;
+
+        group = new DirectItemCopyGroup(sourceItemType, copies);
+        return true;
+    }
+
+    static bool TryClassifyDirectItemCopy(ProjectItemGroupTaskItemInstance item, out string sourceItemType, out DirectItemCopy copy) {
+        sourceItemType = "";
+        copy = new DirectItemCopy("", null, "");
+        if (!string.IsNullOrEmpty(item.Remove) || item.Metadata.Any())
+            return false;
+        var direct = TryParseDirectItemRef(item.Include);
+        if (direct == null &&
+            TryParseSimpleMetadataProjection(item.Include) is { MetadataName: var metadataName } projection &&
+            string.Equals(metadataName, "Identity", StringComparison.OrdinalIgnoreCase)) {
+            direct = projection.ItemType;
+        }
+        if (direct == null || string.Equals(direct, item.ItemType, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!DirectCopyConditionOnlyUsesSourceItem(item.Condition, direct))
+            return false;
+
+        sourceItemType = direct;
+        copy = new DirectItemCopy(item.ItemType, item.Condition, item.Location.File);
+        return true;
+    }
+
+    static bool DirectCopyConditionOnlyUsesSourceItem(string? condition, string sourceItemType) {
+        if (string.IsNullOrEmpty(condition))
+            return true;
+        if (ScanItemListRefs(new[] { condition }).Count != 0)
+            return false;
+        foreach (var metadataRef in EnumerateMetadataRefs(condition)) {
+            if (metadataRef.ItemType != null &&
+                !string.Equals(metadataRef.ItemType, sourceItemType, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return true;
+    }
+
+    static void EmitMergedDirectItemCopies(StringBuilder sb, string ind, DirectItemCopyGroup group) {
+        var source = ItemAccess(group.SourceItemType);
+        sb.AppendLine($"{ind}foreach (var batchItem in {source}) {{");
+        foreach (var copy in group.Copies) {
+            var target = ItemAccess(copy.TargetItemType);
+            var condition = string.IsNullOrEmpty(copy.Condition)
+                ? "true"
+                : CompileCond(copy.Condition, group.SourceItemType.ToLowerInvariant(), copy.DeclaringFile);
+            if (condition == "false")
+                continue;
+            sb.AppendLine($"{ind}    {{");
+            var inner = ind + "        ";
+            if (condition != "true") {
+                sb.AppendLine($"{inner}if ({condition}) {{");
+                inner += "    ";
+            }
+            sb.AppendLine($"{inner}var newItem = new Item(batchItem.Identity);");
+            sb.AppendLine($"{inner}batchItem.CopyMetadataTo(newItem);");
+            sb.AppendLine($"{inner}{target}.Add(newItem);");
+            if (condition != "true")
+                sb.AppendLine($"{ind}        }}");
+            sb.AppendLine($"{ind}    }}");
+        }
+        sb.AppendLine($"{ind}}}");
     }
 
     static bool HasSameItemAddBody(ProjectItemGroupTaskItemInstance first, ProjectItemGroupTaskItemInstance next) {
@@ -5769,31 +6066,46 @@ static partial class Tasks {
     }
 
     static void EmitTask(StringBuilder sb, ProjectTaskInstance task) {
+        if (IsNoOpLocalTask(task))
+            return;
+
         var ind = "        ";
+        var taskSourceFile = task.Location.File;
         var strs = new List<string?> { task.Condition };
         foreach (var kv in task.Parameters) strs.Add(kv.Value);
         var realTaskMeta = task.Name != "CallTarget" && !ForceLocalTaskImplementation(task.Name)
             ? GetTaskMeta(task.Name)
             : null;
-        var batchPlan = realTaskMeta is null ? CreateTaskBatchPlan(strs) : null;
+        var batchPlan = realTaskMeta is null || ShouldUseGroupedTaskBatching(task)
+            ? CreateTaskBatchPlan(strs)
+            : null;
         var itemAccessOverrides = default(Dictionary<string, string>);
         string? batch = batchPlan?.PrimaryItemType;
         if (batchPlan != null) {
             var suffix = (++_batchPlanCounter).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var keyVar = $"__batchKey{suffix}";
-            sb.AppendLine($"{ind}foreach (var {keyVar} in BatchRuntime.Keys({CSharpLiteral(batchPlan.MetadataName)}, {string.Join(", ", batchPlan.SourceItemTypes.Select(ItemAccess))})) {{");
-            ind += "    ";
             itemAccessOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var itemType in batchPlan.ReferencedItemTypes) {
-                var varName = $"__batchItems_{SanitizeIdent(itemType)}_{suffix}";
-                sb.AppendLine($"{ind}var {varName} = BatchRuntime.ItemsForBatch({ItemAccess(itemType)}, {CSharpLiteral(batchPlan.MetadataName)}, {keyVar});");
-                itemAccessOverrides[itemType] = varName;
+            if (batchPlan.IterateItems) {
+                var sourceItems = batchPlan.SourceItemTypes.Count == 1
+                    ? ItemAccess(batchPlan.SourceItemTypes[0])
+                    : throw new InvalidOperationException("item-iteration batching requires one source item type");
+                sb.AppendLine($"{ind}foreach (var batchItem in {sourceItems}) {{");
+                ind += "    ";
+                itemAccessOverrides[batchPlan.SourceItemTypes[0]] = "new[] { batchItem }";
+            } else {
+                var keyVar = $"__batchKey{suffix}";
+                sb.AppendLine($"{ind}foreach (var {keyVar} in BatchRuntime.Keys({CSharpLiteral(batchPlan.MetadataName)}, {string.Join(", ", batchPlan.SourceItemTypes.Select(ItemAccess))})) {{");
+                ind += "    ";
+                foreach (var itemType in batchPlan.ReferencedItemTypes) {
+                    var varName = $"__batchItems_{SanitizeIdent(itemType)}_{suffix}";
+                    sb.AppendLine($"{ind}var {varName} = BatchRuntime.ItemsForBatch({ItemAccess(itemType)}, {CSharpLiteral(batchPlan.MetadataName)}, {keyVar});");
+                    itemAccessOverrides[itemType] = varName;
+                }
+                var batchItemExpr = string.Join(" : ", batchPlan.SourceItemTypes.Select(itemType => {
+                    var varName = itemAccessOverrides[itemType];
+                    return $"{varName}.Count > 0 ? {varName}[0]";
+                })) + $" : new Item({keyVar})";
+                sb.AppendLine($"{ind}var batchItem = {batchItemExpr};");
             }
-            var batchItemExpr = string.Join(" : ", batchPlan.SourceItemTypes.Select(itemType => {
-                var varName = itemAccessOverrides[itemType];
-                return $"{varName}.Count > 0 ? {varName}[0]";
-            })) + $" : new Item({keyVar})";
-            sb.AppendLine($"{ind}var batchItem = {batchItemExpr};");
         } else if (realTaskMeta != null) {
             batch = InferBatchType(strs, itemRefScopeExprs: strs);
             if (batch != null) {
@@ -5801,15 +6113,20 @@ static partial class Tasks {
                 ind += "    ";
             }
         }
-        var openCond = !string.IsNullOrEmpty(task.Condition) ? $"if ({CompileCond(task.Condition, batch)}) " : "";
+        var compiledCondition = string.IsNullOrEmpty(task.Condition) ? "true" : CompileCond(task.Condition, batch, taskSourceFile);
+        if (compiledCondition == "false") {
+            if (batch != null) sb.AppendLine("        }");
+            return;
+        }
+        var openCond = compiledCondition != "true" ? $"if ({compiledCondition}) " : "";
         sb.AppendLine($"{ind}{openCond}{{");
         if (realTaskMeta is TaskMetadataLoader.TaskMeta realMeta) {
             if (CanSkipRealTaskWhenItemListIsEmpty(task, "PackageReferenceItems", "PackageReference", out var skipItemType)) {
                 sb.AppendLine($"{ind}    if ({ItemAccess(skipItemType)}.Count != 0) {{");
-                EmitTypedTaskInvocation(sb, ind + "    ", task, realMeta, batch, itemAccessOverrides);
+                EmitTypedTaskInvocation(sb, ind + "    ", task, realMeta, batch, itemAccessOverrides, taskSourceFile);
                 sb.AppendLine($"{ind}    }}");
             } else {
-                EmitTypedTaskInvocation(sb, ind, task, realMeta, batch, itemAccessOverrides);
+                EmitTypedTaskInvocation(sb, ind, task, realMeta, batch, itemAccessOverrides, taskSourceFile);
             }
             sb.AppendLine($"{ind}}}");
             if (batch != null) sb.AppendLine($"        }}");
@@ -5826,7 +6143,7 @@ static partial class Tasks {
             string? targetsExpr = null;
             foreach (var kv in task.Parameters) {
                 if (kv.Key.Equals("Targets", StringComparison.OrdinalIgnoreCase)) {
-                    targetsExpr = CompileExpr(kv.Value, batch, itemAccessOverrides);
+                    targetsExpr = CompileExpr(kv.Value, batch, itemAccessOverrides, taskSourceFile);
                     break;
                 }
             }
@@ -5846,11 +6163,11 @@ static partial class Tasks {
                 }
             }
         } else if (ForceLocalTaskImplementation(task.Name)) {
-            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides);
+            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides, taskSourceFile);
         } else if (!KnownTasks.Contains(task.Name)) {
             sb.AppendLine($"{ind}    Tasks.NotImplemented({CSharpLiteral(task.Name)});");
         } else {
-            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides);
+            EmitLocalTaskInvocation(sb, ind, task, batch, itemAccessOverrides, taskSourceFile);
         }
         sb.AppendLine($"{ind}}}");
         if (batch != null) sb.AppendLine($"        }}");
@@ -5869,14 +6186,18 @@ static partial class Tasks {
     static bool SuppressLocalTaskLog(string name) =>
         name is "AllowEmptyTelemetry" or "ShowPreviewMessage";
 
-    static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
+    static bool IsNoOpLocalTask(ProjectTaskInstance task) =>
+        task.Outputs.Count == 0 &&
+        task.Name is "AllowEmptyTelemetry" or "ShowPreviewMessage";
+
+    static void EmitLocalTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides, string? declaringFile) {
         if (task.Name.Equals("MSBuild", StringComparison.OrdinalIgnoreCase)
             && task.Parameters.TryGetValue("Projects", out var projectsRaw)
             && TryParseDirectItemRef(projectsRaw) is { } projectItemType)
         {
-            var targets = task.Parameters.TryGetValue("Targets", out var targetsRaw) ? CompileExpr(targetsRaw, batch, itemAccessOverrides) : "\"\"";
-            var properties = task.Parameters.TryGetValue("Properties", out var propertiesRaw) ? CompileExpr(propertiesRaw, batch, itemAccessOverrides) : "\"\"";
-            var removeProperties = task.Parameters.TryGetValue("RemoveProperties", out var removePropertiesRaw) ? CompileExpr(removePropertiesRaw, batch, itemAccessOverrides) : "\"\"";
+            var targets = task.Parameters.TryGetValue("Targets", out var targetsRaw) ? CompileExpr(targetsRaw, batch, itemAccessOverrides, declaringFile) : "\"\"";
+            var properties = task.Parameters.TryGetValue("Properties", out var propertiesRaw) ? CompileExpr(propertiesRaw, batch, itemAccessOverrides, declaringFile) : "\"\"";
+            var removeProperties = task.Parameters.TryGetValue("RemoveProperties", out var removePropertiesRaw) ? CompileExpr(removePropertiesRaw, batch, itemAccessOverrides, declaringFile) : "\"\"";
             EmitOutputListAssignment(sb, ind, task.Outputs);
             sb.AppendLine($"{ind}    Tasks.MSBuildItems(ItemSerde.CloneItems({ItemAccess(projectItemType)}), {targets}, {properties}, {removeProperties}, outputs);");
             return;
@@ -5886,14 +6207,14 @@ static partial class Tasks {
             sb.AppendLine($"{ind}    var parameters = ParamList.Empty;");
         } else if (task.Parameters.Count == 1) {
             var kv = task.Parameters.First();
-            sb.AppendLine($"{ind}    var parameters = new ParamList({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)});");
+            sb.AppendLine($"{ind}    var parameters = new ParamList({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides, declaringFile)});");
         } else if (task.Parameters.Count <= 4) {
-            var args = task.Parameters.Select(kv => $"{CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)}");
+            var args = task.Parameters.Select(kv => $"{CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides, declaringFile)}");
             sb.AppendLine($"{ind}    var parameters = new ParamList({string.Join(", ", args)});");
         } else {
             sb.AppendLine($"{ind}    var parameters = new ParamList(new (string Key, string Value)[] {{");
             foreach (var kv in task.Parameters)
-                sb.AppendLine($"{ind}        ({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides)}),");
+                sb.AppendLine($"{ind}        ({CSharpLiteral(kv.Key)}, {CompileLocalTaskParameter(task.Name, kv.Key, kv.Value, batch, itemAccessOverrides, declaringFile)}),");
             sb.AppendLine($"{ind}    }});");
         }
         if (TaskTakesOutputs(task.Name)) {
@@ -5908,11 +6229,11 @@ static partial class Tasks {
         }
     }
 
-    static string CompileLocalTaskParameter(string taskName, string parameterName, string value, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
-        var compiled = CompileExpr(value, batch, itemAccessOverrides);
+    static string CompileLocalTaskParameter(string taskName, string parameterName, string value, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides, string? declaringFile) {
+        var compiled = CompileExpr(value, batch, itemAccessOverrides, declaringFile);
         return LocalTaskPathParameterKind(taskName, parameterName) switch {
-            PathParameterKind.Single => $"PathUtil.NormalizeSeparators({compiled})",
-            PathParameterKind.List => $"PathUtil.NormalizeSeparatorList({compiled})",
+            PathParameterKind.Single => $"PathUtil.NormalizePathLike({compiled})",
+            PathParameterKind.List => $"PathUtil.NormalizePathLikeList({compiled})",
             _ => compiled,
         };
     }
@@ -5967,7 +6288,7 @@ static partial class Tasks {
     // Emit a call to a generated Tasks.<Task>_<n>(...) helper. The helper owns the repetitive
     // TaskRunner.Create/Set*/Execute plumbing, while the target body stays responsible for
     // copying task outputs back into generated P/I state.
-    static void EmitTypedTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, TaskMetadataLoader.TaskMeta meta, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides) {
+    static void EmitTypedTaskInvocation(StringBuilder sb, string ind, ProjectTaskInstance task, TaskMetadataLoader.TaskMeta meta, string? batch, IReadOnlyDictionary<string, string>? itemAccessOverrides, string? declaringFile) {
         var shortName = meta.FullTypeName.Contains('.')
             ? meta.FullTypeName.Substring(meta.FullTypeName.LastIndexOf('.') + 1)
             : meta.FullTypeName;
@@ -5988,19 +6309,21 @@ static partial class Tasks {
             }
             var methodArgName = $"p{args.Count}";
             var rawValue = kv.Value ?? "";
-            var valueExpr = CompileExpr(rawValue, batch, itemAccessOverrides);
+            var valueExpr = CompileExpr(rawValue, batch, itemAccessOverrides, declaringFile);
             var typeName = "string";
             var direct = TryParseDirectItemRef(rawValue);
             if ((pm.PropertyTypeShort == "ITaskItem" || pm.PropertyTypeShort == "ITaskItem[]") && direct != null) {
-                typeName = "List<Item>";
-                valueExpr = ItemAccess(direct);
+                typeName = pm.PropertyTypeShort == "ITaskItem[]" ? "IEnumerable<Item>" : "List<Item>";
+                valueExpr = itemAccessOverrides != null && itemAccessOverrides.TryGetValue(direct, out var overrideExpr)
+                    ? overrideExpr
+                    : ItemAccess(direct);
             }
             // Most generated task arguments are just expressions over global generated state
             // (`P.X`, `I.Y`, literals, and LINQ over item lists), so the helper can read them
             // directly and avoid a long p0/p1/... signature. Batched task metadata references
             // depend on the target body's current `batchItem`, so keep those rare values as caller
             // parameters.
-            var requiresCallerValue = batch != null && ValueExprUsesCurrentBatchItem(valueExpr);
+            var requiresCallerValue = batch != null && (ValueExprUsesCurrentBatchItem(valueExpr) || RawValueUsesCurrentBatchItem(rawValue, batch));
             args.Add(new GeneratedTaskArg(kv.Key, pm.Name, methodArgName, typeName, rawValue, valueExpr, pm, requiresCallerValue));
         }
 
@@ -6024,8 +6347,19 @@ static partial class Tasks {
     }
 
     static bool ValueExprUsesCurrentBatchItem(string valueExpr) =>
-        valueExpr.Contains("batchItem.GetMetadata(", StringComparison.Ordinal)
-        || valueExpr.Contains("batchItem.HasMetadata(", StringComparison.Ordinal);
+        valueExpr.Contains("batchItem", StringComparison.Ordinal)
+        || valueExpr.Contains("batchItem.GetMetadata(", StringComparison.Ordinal)
+        || valueExpr.Contains("batchItem.HasMetadata(", StringComparison.Ordinal)
+        || valueExpr.Contains("__batchItems_", StringComparison.Ordinal);
+
+    static bool RawValueUsesCurrentBatchItem(string rawValue, string batchItemType) {
+        foreach (var metadataRef in EnumerateMetadataRefs(rawValue)) {
+            if (metadataRef.ItemType == null ||
+                string.Equals(metadataRef.ItemType, batchItemType, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
 
     static string RegisterGeneratedTaskHelper(string logName, string shortName, List<GeneratedTaskArg> args) {
         var helperName = $"{SanitizeIdent(shortName)}_{++_generatedTaskHelperCounter:D3}";
@@ -6152,7 +6486,7 @@ static partial class Tasks {
                     sb.AppendLine($"{ind}TaskRunner.SetItemFromString({reqVar}, {key}, {value});");
                 return;
             case "ITaskItem[]":
-                if (arg.TypeName == "List<Item>")
+                if (arg.TypeName == "List<Item>" || arg.TypeName == "IEnumerable<Item>")
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ToSpecs({value}));");
                 else if (!arg.RequiresCallerValue && TryParseItemRefList(arg.RawValue) is { } itemRefs)
                     sb.AppendLine($"{ind}TaskRunner.SetItems({reqVar}, {key}, ItemSerde.ConcatSpecs({string.Join(", ", itemRefs.Select(itemRef => $"ItemSerde.ToSpecs({ItemAccess(itemRef)})"))}));");
@@ -6189,23 +6523,40 @@ static partial class Tasks {
             else
                 sb.AppendLine($"{ind}{{ var outputValue = TaskRunner.GetString({respVar}, {key}); if (!string.IsNullOrEmpty(outputValue)) {target}.Add(new Item(outputValue)); }}");
         } else if (o is ProjectTaskOutputPropertyInstance optr) {
+            var propertyName = optr.PropertyName.ToLowerInvariant();
+            var propertyIsPathLike = IsGeneratedPathLikeName(optr.PropertyName);
             string write;
-            if (TryCanonicalProp(optr.PropertyName.ToLowerInvariant(), out var canon)) write = $"P.{canon} = ";
-            else write = $"P.SetExtra({CSharpLiteral(optr.PropertyName.ToLowerInvariant())}, ";
-            string trailer = TryCanonicalProp(optr.PropertyName.ToLowerInvariant(), out _) ? ";" : ");";
+            if (TryCanonicalProp(propertyName, out var canon)) write = $"P.{canon} = ";
+            else write = $"P.SetExtra({CSharpLiteral(propertyName)}, ";
+            string trailer = TryCanonicalProp(propertyName, out _) ? ";" : ");";
 
             if (pm.PropertyTypeShort == "ITaskItem[]")
                 sb.AppendLine($"{ind}{write}string.Join(\";\", System.Linq.Enumerable.Select(TaskRunner.GetItems({respVar}, {key}), outputItem => outputItem.Identity)){trailer}");
-            else if (pm.PropertyTypeShort == "string[]")
-                sb.AppendLine($"{ind}{write}string.Join(\";\", TaskRunner.GetStrings({respVar}, {key})){trailer}");
+            else if (pm.PropertyTypeShort == "string[]") {
+                var value = $"string.Join(\";\", TaskRunner.GetStrings({respVar}, {key}))";
+                if (propertyIsPathLike) value = $"PathUtil.NormalizePathLikeList({value})";
+                sb.AppendLine($"{ind}{write}{value}{trailer}");
+            }
             else if (pm.PropertyTypeShort == "bool")
                 sb.AppendLine($"{ind}{write}(TaskRunner.GetString({respVar}, {key})){trailer}");
-            else
-                sb.AppendLine($"{ind}{write}TaskRunner.GetString({respVar}, {key}){trailer}");
+            else {
+                var value = $"TaskRunner.GetString({respVar}, {key})";
+                if (propertyIsPathLike) value = $"PathUtil.NormalizePathLike({value})";
+                sb.AppendLine($"{ind}{write}{value}{trailer}");
+            }
         }
     }
 
     // Helpers ------------------------------------------------------
+
+    static bool IsGeneratedPathLikeName(string name) =>
+        name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Directory", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("File", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Manifest", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Jar", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Zip", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Archive", StringComparison.OrdinalIgnoreCase);
 
     public static string ItemAccess(string itemName) {
         return TryCanonicalItem(itemName.ToLowerInvariant(), out var canon)
@@ -6220,9 +6571,12 @@ static partial class Tasks {
             : $"P.SetExtra(\"{lower}\", {valueExpr})";
     }
 
-    static string CompileCond(string? cond, string? batchItemType = null) {
+    static string CompileCond(string? cond, string? batchItemType = null, string? declaringFile = null) {
         if (string.IsNullOrEmpty(cond)) return "true";
-        var compiled = CondCompiler.TryCompile(cond, batchItemType);
+        var thisFileProperties = GetThisFileProperties(declaringFile);
+        if (thisFileProperties != null)
+            cond = InlineThisFileProperties(cond, thisFileProperties);
+        var compiled = CondCompiler.TryCompile(cond, batchItemType, thisFileProperties);
         if (compiled == null) throw new InvalidOperationException($"uncompilable condition: {cond}");
         return compiled;
     }
@@ -6239,26 +6593,53 @@ static partial class Tasks {
     // For mutated ones it may be incorrect but the worst outcome is "skipped target whose
     // condition would have been true at runtime" — which we accept as a best-effort
     // optimization for now.
-    static string CompileCondWithFallback(string? cond, ProjectInstance instance) {
+    static string CompileCondWithFallback(string? cond, ProjectInstance instance, string? declaringFile = null) {
         if (string.IsNullOrEmpty(cond)) return "true";
+        var thisFileProperties = GetThisFileProperties(declaringFile);
+        var contextualCond = thisFileProperties == null ? cond : InlineThisFileProperties(cond, thisFileProperties);
         try {
-            return CompileCond(cond);
+            return CompileCond(contextualCond, declaringFile: declaringFile);
         } catch {
             string expanded;
-            try { expanded = instance.ExpandString(cond); }
+            try { expanded = instance.ExpandString(contextualCond); }
             catch { throw new InvalidOperationException($"uncompilable condition: {cond}"); }
-            var compiled = CondCompiler.TryCompile(expanded);
+            var compiled = CondCompiler.TryCompile(expanded, literalProperties: thisFileProperties);
             if (compiled == null)
                 throw new InvalidOperationException($"uncompilable condition (even after ExpandString → \"{expanded}\"): {cond}");
             return compiled;
         }
     }
 
-    static string CompileExpr(string? expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null) {
+    static string CompileExpr(string? expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null, string? declaringFile = null) {
         if (string.IsNullOrEmpty(expr)) return "\"\"";
-        var compiled = ExprCompiler.TryCompile(expr, batchItemType, itemAccessOverrides);
+        var thisFileProperties = GetThisFileProperties(declaringFile);
+        if (thisFileProperties != null)
+            expr = InlineThisFileProperties(expr, thisFileProperties);
+        var compiled = ExprCompiler.TryCompile(expr, batchItemType, itemAccessOverrides, thisFileProperties);
         if (compiled == null) throw new InvalidOperationException($"uncompilable expression: {expr}");
         return compiled;
+    }
+
+    static IReadOnlyDictionary<string, string>? GetThisFileProperties(string? declaringFile) {
+        if (string.IsNullOrEmpty(declaringFile))
+            return null;
+        var fullPath = Path.GetFullPath(declaringFile);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrEmpty(directory))
+            return null;
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            ["MSBuildThisFile"] = Path.GetFileName(fullPath),
+            ["MSBuildThisFileName"] = Path.GetFileNameWithoutExtension(fullPath),
+            ["MSBuildThisFileExtension"] = Path.GetExtension(fullPath),
+            ["MSBuildThisFileFullPath"] = fullPath,
+            ["MSBuildThisFileDirectory"] = directory + Path.DirectorySeparatorChar,
+        };
+    }
+
+    static string InlineThisFileProperties(string value, IReadOnlyDictionary<string, string> thisFileProperties) {
+        foreach (var (name, replacement) in thisFileProperties)
+            value = value.Replace("$(" + name + ")", replacement, StringComparison.OrdinalIgnoreCase);
+        return value;
     }
 
     static (HashSet<string>, bool) ScanMetadataRefs(string? s) {
@@ -6375,7 +6756,15 @@ static partial class Tasks {
         return batch;
     }
 
-    sealed record TaskBatchPlan(string MetadataName, string PrimaryItemType, IReadOnlyList<string> SourceItemTypes, IReadOnlyList<string> ReferencedItemTypes);
+    sealed record TaskBatchPlan(string MetadataName, string PrimaryItemType, IReadOnlyList<string> SourceItemTypes, IReadOnlyList<string> ReferencedItemTypes, bool IterateItems);
+
+    static bool ShouldUseGroupedTaskBatching(ProjectTaskInstance task) {
+        if (task.Outputs.Count == 0) return false;
+        if (!string.Equals(task.Name, "CreateItem", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!EnumerateMetadataRefs(task.Condition).Any()
+            && !task.Parameters.Any(p => EnumerateMetadataRefs(p.Value).Any())) return false;
+        return true;
+    }
 
     static TaskBatchPlan? CreateTaskBatchPlan(IEnumerable<string?> exprs) {
         var values = exprs.Where(e => !string.IsNullOrEmpty(e)).ToArray();
@@ -6393,15 +6782,21 @@ static partial class Tasks {
 
         if (metadataNames.Count == 0)
             return null;
-        if (metadataNames.Count > 1)
-            throw new InvalidOperationException($"multi-dimensional task batching is not supported in v1: {string.Join(", ", metadataNames)}");
-
-        var metadataName = metadataNames.First().ToLowerInvariant();
         var sources = qualifiedTypes.Count > 0
             ? qualifiedTypes.ToList()
             : referencedTypes.ToList();
         if (sources.Count == 0)
             return null;
+        var iterateItems = false;
+        string metadataName;
+        if (metadataNames.Count > 1) {
+            if (sources.Count != 1)
+                throw new InvalidOperationException($"multi-dimensional task batching is not supported in v1: {string.Join(", ", metadataNames)}");
+            iterateItems = true;
+            metadataName = "identity";
+        } else {
+            metadataName = metadataNames.First().ToLowerInvariant();
+        }
 
         var referenced = referencedTypes
             .Concat(sources)
@@ -6410,7 +6805,8 @@ static partial class Tasks {
 
         return new TaskBatchPlan(metadataName, sources[0].ToLowerInvariant(),
             sources.Select(s => s.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            referenced.Select(s => s.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            referenced.Select(s => s.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            iterateItems);
     }
 
     static IEnumerable<(string? ItemType, string MetadataName)> EnumerateMetadataRefs(string? s) {
@@ -6465,7 +6861,7 @@ static partial class Tasks {
         return refs;
     }
 
-    static (string ItemType, string ItemsExpr, string Selector)? TryParseItemProjection(string expr) {
+    static (string ItemType, string ItemsExpr, string Selector)? TryParseItemProjection(string expr, string? declaringFile = null) {
         var trimmed = expr.Trim();
         if (!trimmed.StartsWith("@(") || !trimmed.EndsWith(")")) return null;
         var inner = trimmed.Substring(2, trimmed.Length - 3).Trim();
@@ -6496,7 +6892,7 @@ static partial class Tasks {
                 var close = inner.IndexOf('\'', pos + 1);
                 if (close < 0) return null;
                 var format = inner.Substring(pos + 1, close - pos - 1);
-                var compiled = ExprCompiler.TryCompile(format, batchCtx);
+                var compiled = ExprCompiler.TryCompile(format, batchCtx, literalProperties: GetThisFileProperties(declaringFile));
                 if (compiled == null) return null;
                 selector = compiled.Replace("batchItem.", "transformItem.", StringComparison.Ordinal);
                 pos = close + 1;
@@ -6514,7 +6910,7 @@ static partial class Tasks {
                     if (depth > 0) pos++;
                 }
                 if (pos >= inner.Length) return null;
-                var args = ParseProjectionArgs(inner.Substring(argsStart, pos - argsStart));
+                var args = ParseProjectionArgs(inner.Substring(argsStart, pos - argsStart), declaringFile);
                 if (args == null) return null;
                 pos++;
                 switch (fn) {
@@ -6620,7 +7016,7 @@ static partial class Tasks {
         return null;
     }
 
-    static List<string>? ParseProjectionArgs(string block) {
+    static List<string>? ParseProjectionArgs(string block, string? declaringFile = null) {
         var raw = new List<string>();
         var current = new System.Text.StringBuilder();
         var depth = 0;
@@ -6644,9 +7040,9 @@ static partial class Tasks {
         foreach (var arg in raw) {
             string? value;
             if (arg.Length >= 2 && (arg[0] == '\'' && arg[^1] == '\'' || arg[0] == '`' && arg[^1] == '`'))
-                value = ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2));
+                value = ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), literalProperties: GetThisFileProperties(declaringFile));
             else
-                value = ExprCompiler.TryCompile(arg);
+                value = ExprCompiler.TryCompile(arg, literalProperties: GetThisFileProperties(declaringFile));
             if (value == null) return null;
             compiled.Add(value);
         }
@@ -6715,8 +7111,8 @@ static partial class Tasks {
 
 // Compile MSBuild conditions into direct C# bool expressions.
 static class CondCompiler {
-    public static string? TryCompile(string cond, string? batchItemType = null) {
-        var p = new Parser(cond, batchItemType);
+    public static string? TryCompile(string cond, string? batchItemType = null, IReadOnlyDictionary<string, string>? literalProperties = null) {
+        var p = new Parser(cond, batchItemType, literalProperties);
         try {
             var r = p.ParseOr();
             p.SkipWs();
@@ -6729,8 +7125,9 @@ static class CondCompiler {
     class Parser {
         readonly string _src;
         readonly string? _batchItemType;
+        readonly IReadOnlyDictionary<string, string>? _literalProperties;
         int _i;
-        public Parser(string src, string? batchItemType) { _src = src; _batchItemType = batchItemType; _i = 0; }
+        public Parser(string src, string? batchItemType, IReadOnlyDictionary<string, string>? literalProperties) { _src = src; _batchItemType = batchItemType; _literalProperties = literalProperties; _i = 0; }
         public bool HasMore => _i < _src.Length;
 
         public string ParseOr() {
@@ -6771,6 +7168,11 @@ static class CondCompiler {
                 if (rightIsBool) throw new InvalidOperationException("bool in comparison");
                 if (op == "==" || op == "!=") {
                     string? c = null;
+                    if (TryDecodeStringLiteral(left, out var leftLiteral) &&
+                        TryDecodeStringLiteral(right, out var rightLiteral)) {
+                        var equals = string.Equals(leftLiteral, rightLiteral, StringComparison.OrdinalIgnoreCase);
+                        return (op == "==") == equals ? "true" : "false";
+                    }
                     // Special case: `'@(X)' == ''` becomes `(I.X.Count == 0)` (no Join allocation).
                     string? itemVar = right == "\"\"" ? TryExtractItemList(left)
                                     : left == "\"\""  ? TryExtractItemList(right)
@@ -6863,7 +7265,7 @@ static class CondCompiler {
                 }
                 string raw = _src.Substring(start, _i - start);
                 if (_i < _src.Length) _i++;
-                var c = ExprCompiler.TryCompile(raw, _batchItemType);
+                var c = ExprCompiler.TryCompile(raw, _batchItemType, literalProperties: _literalProperties);
                 if (c == null) throw new InvalidOperationException("uncompilable expr in value");
                 return c;
             }
@@ -6891,7 +7293,7 @@ static class CondCompiler {
             }
             var raw2 = _src.Substring(s, _i - s);
             if (raw2.Length == 0) return "\"\"";   // bare op (e.g., ' != X'): treat missing side as ""
-            var compiled = ExprCompiler.TryCompile(raw2, _batchItemType);
+            var compiled = ExprCompiler.TryCompile(raw2, _batchItemType, literalProperties: _literalProperties);
             if (compiled == null) throw new InvalidOperationException("uncompilable expr in value");
             return compiled;
         }
@@ -7036,6 +7438,18 @@ static class CondCompiler {
         static bool IsStringLiteral(string value) =>
             value.Length >= 2 && value[0] == '"' && value[^1] == '"';
 
+        static bool TryDecodeStringLiteral(string value, out string result) {
+            result = "";
+            if (!IsStringLiteral(value))
+                return false;
+            try {
+                result = System.Text.Json.JsonSerializer.Deserialize<string>(value) ?? "";
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
         static bool TryExtractBoolLiteral(string value, out bool result) {
             value = value.Trim();
             if (string.Equals(value, "\"true\"", StringComparison.Ordinal)) {
@@ -7158,7 +7572,7 @@ static class CondCompiler {
 
 // Compile MSBuild expression strings into C# string expressions.
 static class ExprCompiler {
-    public static string? TryCompile(string expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null) {
+    public static string? TryCompile(string expr, string? batchItemType = null, IReadOnlyDictionary<string, string>? itemAccessOverrides = null, IReadOnlyDictionary<string, string>? literalProperties = null) {
         if (string.IsNullOrEmpty(expr)) return "\"\"";
         // Normalize multi-line MSBuild expression whitespace.
         // XML element bodies like  <Inputs>$(A);\n    $(B);\n    @(C)</Inputs>
@@ -7176,7 +7590,7 @@ static class ExprCompiler {
                 if (j < 0) return null;
                 var inner = expr.Substring(i + 2, j - i - 2);
                 if (inner.StartsWith("[")) {
-                    var pf = PropertyFnCompiler.TryCompile(inner, batchItemType);
+                    var pf = PropertyFnCompiler.TryCompile(inner, batchItemType, literalProperties);
                     if (pf == null) return null;
                     if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
                     parts.Add(pf);
@@ -7187,7 +7601,7 @@ static class ExprCompiler {
                 // Dynamic property name from metadata: `$(%(X.Y))` — the inner `%(X.Y)`
                 // resolves to a string at runtime which is then used as the property name.
                 if (inner.StartsWith("%(") && inner.EndsWith(")")) {
-                    var metaCompiled = TryCompile(inner, batchItemType, itemAccessOverrides);
+                    var metaCompiled = TryCompile(inner, batchItemType, itemAccessOverrides, literalProperties);
                     if (metaCompiled == null) return null;
                     if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
                     parts.Add($"P.Get({metaCompiled})");
@@ -7203,8 +7617,9 @@ static class ExprCompiler {
                 int dotAt = FindTopLevelDot(inner);
                 if (dotAt > 0 && IsPlainIdent(inner.AsSpan(0, dotAt))) {
                     var chain = InstanceMethodChainCompiler.TryCompile(
-                        receiver: EmitPropertyRead(inner.Substring(0, dotAt)),
-                        chain: inner.Substring(dotAt));
+                        receiver: EmitPropertyRead(inner.Substring(0, dotAt), literalProperties),
+                        chain: inner.Substring(dotAt),
+                        literalProperties: literalProperties);
                     if (chain == null) return null;
                     if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
                     parts.Add(chain);
@@ -7213,7 +7628,7 @@ static class ExprCompiler {
                 }
                 if (inner.Contains("$") || inner.Contains("(")) return null;
                 if (lit.Length > 0) { parts.Add(LitToCSharp(lit.ToString())); lit.Clear(); }
-                parts.Add(EmitPropertyRead(inner));
+                parts.Add(EmitPropertyRead(inner, literalProperties));
                 i = j + 1;
             } else if (c == '@' && i + 1 < expr.Length && expr[i + 1] == '(') {
                 int j = FindMatching(expr, i + 1);
@@ -7268,8 +7683,10 @@ static class ExprCompiler {
         return $"({string.Join(" + ", parts)})";
     }
 
-    public static string EmitPropertyRead(string name) {
+    public static string EmitPropertyRead(string name, IReadOnlyDictionary<string, string>? literalProperties = null) {
         var lower = name.ToLowerInvariant();
+        if (literalProperties != null && literalProperties.TryGetValue(name, out var literal))
+            return LitToCSharp(literal);
         return Emitter.TryCanonicalProp(lower, out var canon) ? $"P.{canon}" : $"P.GetExtra(\"{lower}\")";
     }
 
@@ -7563,7 +7980,7 @@ static class ExprCompiler {
 // a static property fn returns something other than a plain string — e.g. DateTime,
 // Version, char). Supports `.PropertyName`, `.MethodName(args)`, `[intIndex]`.
 static class ChainCompiler {
-    public static string? Apply(string receiver, string chain) {
+    public static string? Apply(string receiver, string chain, IReadOnlyDictionary<string, string>? literalProperties = null) {
         chain = chain ?? "";
         var current = receiver;
         int i = 0;
@@ -7586,7 +8003,7 @@ static class ChainCompiler {
                     if (depth != 0) return null;
                     var argsBlock = chain.Substring(argsStart, i - argsStart);
                     i++; // skip )
-                    var args = SplitArgs(argsBlock);
+                    var args = SplitArgs(argsBlock, literalProperties);
                     if (args == null) return null;
                     current = ApplyCall(current, name, args);
                 } else {
@@ -7632,7 +8049,7 @@ static class ChainCompiler {
         };
     }
 
-    static List<string>? SplitArgs(string block) {
+    static List<string>? SplitArgs(string block, IReadOnlyDictionary<string, string>? literalProperties) {
         var result = new List<string>();
         if (string.IsNullOrWhiteSpace(block)) return result;
         int depth = 0; bool inQuote = false; char qc = '\0';
@@ -7650,9 +8067,9 @@ static class ChainCompiler {
         foreach (var a in result) {
             string? c;
             if (a.Length >= 2 && (a[0] == '\'' && a[^1] == '\'' || a[0] == '`' && a[^1] == '`'))
-                c = ExprCompiler.TryCompile(a.Substring(1, a.Length - 2));
+                c = ExprCompiler.TryCompile(a.Substring(1, a.Length - 2), literalProperties: literalProperties);
             else
-                c = ExprCompiler.TryCompile(a);
+                c = ExprCompiler.TryCompile(a, literalProperties: literalProperties);
             if (c == null) return null;
             compiled.Add(c);
         }
@@ -7666,7 +8083,7 @@ static class ChainCompiler {
 // starts with `.` and is one or more `.Name(args)` segments. Returns the final compiled
 // C# expression, or null if any method/arity is unsupported.
 static class InstanceMethodChainCompiler {
-    public static string? TryCompile(string receiver, string chain) {
+    public static string? TryCompile(string receiver, string chain, IReadOnlyDictionary<string, string>? literalProperties = null) {
         var current = receiver;
         // Track when the last step left `current` typed as string[] (only Split today)
         // so an immediate `[i]` consumes the array form and any other consumer joins it.
@@ -7706,7 +8123,7 @@ static class InstanceMethodChainCompiler {
             if (depth != 0) return null;
             var argsBlock = chain.Substring(argsStart, i - argsStart);
             i++; // skip )
-            var args = SplitArgs(argsBlock);
+            var args = SplitArgs(argsBlock, literalProperties);
             if (args == null) return null;
             var applied = ApplyMethod(current, method, args);
             if (applied == null) return null;
@@ -7717,7 +8134,7 @@ static class InstanceMethodChainCompiler {
         return current;
     }
 
-    static List<string>? SplitArgs(string argsBlock) {
+    static List<string>? SplitArgs(string argsBlock, IReadOnlyDictionary<string, string>? literalProperties) {
         var raw = new List<string>();
         if (string.IsNullOrWhiteSpace(argsBlock)) return raw;
         int depth = 0; bool inQuote = false; char quoteCh = '\0';
@@ -7739,26 +8156,26 @@ static class InstanceMethodChainCompiler {
         // Compile each arg via ExprCompiler so callers can drop them straight into emitted C#.
         var compiled = new List<string>(raw.Count);
         foreach (var a in raw) {
-            var c = CompileStringArg(a);
+            var c = CompileStringArg(a, literalProperties);
             if (c == null) return null;
             compiled.Add(c);
         }
         return compiled;
     }
 
-    static string? CompileStringArg(string raw) {
+    static string? CompileStringArg(string raw, IReadOnlyDictionary<string, string>? literalProperties) {
         // Quoted (single or backtick) → strip and compile the inner with ExprCompiler
         // (allows $(X)/@(X)/%(X) interpolation inside the quoted literal).
         if (raw.Length >= 2 && (raw[0] == '\'' && raw[^1] == '\'' || raw[0] == '`' && raw[^1] == '`'))
-            return ExprCompiler.TryCompile(raw.Substring(1, raw.Length - 2));
-        return ExprCompiler.TryCompile(raw);
+            return ExprCompiler.TryCompile(raw.Substring(1, raw.Length - 2), literalProperties: literalProperties);
+        return ExprCompiler.TryCompile(raw, literalProperties: literalProperties);
     }
 
     static string? CompileIntArg(string raw) {
         // Bare numeric literal → emit as C# int literal directly.
         if (int.TryParse(raw.Trim(), out var n)) return n.ToString();
         // Stringy form: let ExprCompiler produce the string and parse it.
-        var s = CompileStringArg(raw);
+        var s = CompileStringArg(raw, literalProperties: null);
         return s == null ? null : $"int.Parse({s})";
     }
 
@@ -7802,7 +8219,7 @@ static class InstanceMethodChainCompiler {
 }
 
 static class PropertyFnCompiler {
-    public static string? TryCompile(string inner, string? batchItemType = null) {
+    public static string? TryCompile(string inner, string? batchItemType = null, IReadOnlyDictionary<string, string>? literalProperties = null) {
         int closeBracket = inner.IndexOf(']');
         if (closeBracket < 0) return null;
         var cls = inner.Substring(1, closeBracket - 1);
@@ -7820,7 +8237,7 @@ static class PropertyFnCompiler {
             var memberName = rest.Substring(0, idEnd);
             var memberExpr = EmitStaticMember(cls, memberName);
             if (memberExpr == null) return null;
-            return ChainCompiler.Apply(memberExpr, rest.Substring(idEnd));
+            return ChainCompiler.Apply(memberExpr, rest.Substring(idEnd), literalProperties);
         }
         var method = rest.Substring(0, paren).TrimEnd();
         int depth = 0; int closeParen = -1;
@@ -7831,11 +8248,11 @@ static class PropertyFnCompiler {
         if (closeParen < 0) return null;
         var argsBlock = rest.Substring(paren + 1, closeParen - paren - 1);
         var tail = rest.Substring(closeParen + 1);
-        var args = SplitArgs(argsBlock, batchItemType);
+        var args = SplitArgs(argsBlock, batchItemType, literalProperties);
         if (args == null) return null;
         var call = EmitCall(cls, method, args);
         if (call == null) return null;
-        return ChainCompiler.Apply(call, tail);
+        return ChainCompiler.Apply(call, tail, literalProperties);
     }
 
     // Static field/property access — used when `[Class]::Member` has no `(args)`.
@@ -7851,7 +8268,7 @@ static class PropertyFnCompiler {
         _ => null,
     };
 
-    static List<string>? SplitArgs(string argsBlock, string? batchItemType = null) {
+    static List<string>? SplitArgs(string argsBlock, string? batchItemType = null, IReadOnlyDictionary<string, string>? literalProperties = null) {
         var result = new List<string>();
         int i = 0;
         var current = new System.Text.StringBuilder();
@@ -7864,7 +8281,7 @@ static class PropertyFnCompiler {
                 if (c == '(' || c == '[') depth++;
                 else if (c == ')' || c == ']') depth--;
                 else if (c == ',' && depth == 0) {
-                    var compiled = CompileArg(current.ToString().Trim(), batchItemType);
+                    var compiled = CompileArg(current.ToString().Trim(), batchItemType, literalProperties);
                     if (compiled == null) return null;
                     result.Add(compiled);
                     current.Clear();
@@ -7876,22 +8293,22 @@ static class PropertyFnCompiler {
             i++;
         }
         if (current.Length > 0) {
-            var compiled = CompileArg(current.ToString().Trim(), batchItemType);
+            var compiled = CompileArg(current.ToString().Trim(), batchItemType, literalProperties);
             if (compiled == null) return null;
             result.Add(compiled);
         }
         return result;
     }
 
-    static string? CompileArg(string arg, string? batchItemType = null) {
+    static string? CompileArg(string arg, string? batchItemType = null, IReadOnlyDictionary<string, string>? literalProperties = null) {
         if (arg.Length == 0) return "\"\"";
         if (arg.Length >= 2 && arg[0] == '\'' && arg[^1] == '\'')
-            return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType);
+            return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType, literalProperties: literalProperties);
         if (arg.Length >= 2 && arg[0] == '`' && arg[^1] == '`')
-            return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType);
+            return ExprCompiler.TryCompile(arg.Substring(1, arg.Length - 2), batchItemType, literalProperties: literalProperties);
         if (arg.Length >= 2 && arg[0] == '"' && arg[^1] == '"')
             return "\"" + arg.Substring(1, arg.Length - 2).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-        return ExprCompiler.TryCompile(arg, batchItemType);
+        return ExprCompiler.TryCompile(arg, batchItemType, literalProperties: literalProperties);
     }
 
     static string? EmitCall(string cls, string method, List<string> args) {

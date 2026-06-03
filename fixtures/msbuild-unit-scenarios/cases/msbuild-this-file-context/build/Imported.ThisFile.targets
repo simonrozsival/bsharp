@@ -1,0 +1,24 @@
+<Project>
+  <Target Name="ThisFileContext" Condition="'$(MSBuildThisFile)' == 'Imported.ThisFile.targets'">
+    <PropertyGroup>
+      <ImportedDirectory>$(MSBuildThisFileDirectory)</ImportedDirectory>
+      <ImportedFullPath>$(MSBuildThisFileFullPath)</ImportedFullPath>
+      <ImportedFile>$(MSBuildThisFile)</ImportedFile>
+      <ImportedName>$(MSBuildThisFileName)</ImportedName>
+      <ImportedExtension>$(MSBuildThisFileExtension)</ImportedExtension>
+      <ImportedLowerName>$(MSBuildThisFileName.ToLower())</ImportedLowerName>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ThisFileItem Include="$(MSBuildThisFileDirectory)marker.txt">
+        <SourceFullPath>$(MSBuildThisFileFullPath)</SourceFullPath>
+        <Name Condition="'$(MSBuildThisFileName)' == 'Imported.ThisFile'">$(MSBuildThisFileName)</Name>
+      </ThisFileItem>
+    </ItemGroup>
+
+    <WriteLinesToFile
+      File="$(MSBuildThisFileDirectory)out.txt"
+      Lines="$(ImportedFile)|$(ImportedName)|$(ImportedLowerName)|$(ImportedExtension)|$(ImportedFullPath)|$(ImportedDirectory)|@(ThisFileItem->'%(SourceFullPath)')|@(ThisFileItem->'%(Name)')"
+      Overwrite="true" />
+  </Target>
+</Project>

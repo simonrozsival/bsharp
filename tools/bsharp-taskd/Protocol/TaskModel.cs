@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -209,19 +210,44 @@ public static class TaskModelExt {
         => r.Outputs.TryGetValue(name, out var e) && e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
 
     static string NormalizeTaskString(string name, string value) {
-        if (value.IndexOf('\\') < 0 || !IsPathLikeName(name)) return value;
-        return value.Replace('\\', Path.DirectorySeparatorChar);
+        if (!IsPathLikeName(name)) return value;
+        return NormalizePathLike(value);
     }
     static string[] NormalizeTaskStrings(string name, string[] values) {
         if (!IsPathLikeName(name)) return values;
         string[]? normalized = null;
         for (int i = 0; i < values.Length; i++) {
             var value = values[i];
-            if (value.IndexOf('\\') < 0) continue;
+            var normalizedValue = NormalizePathLike(value);
+            if (ReferenceEquals(normalizedValue, value)) continue;
             normalized ??= (string[])values.Clone();
-            normalized[i] = value.Replace('\\', Path.DirectorySeparatorChar);
+            normalized[i] = normalizedValue;
         }
         return normalized ?? values;
+    }
+    static string NormalizePathLike(string value) {
+        var normalized = Path.DirectorySeparatorChar == '/'
+            ? value.Replace('\\', '/')
+            : value.Replace('/', '\\');
+        return CollapseDuplicateSeparators(normalized);
+    }
+    static string CollapseDuplicateSeparators(string value) {
+        var separator = Path.DirectorySeparatorChar;
+        var first = value.IndexOf(separator);
+        if (first < 0) return value;
+        StringBuilder? sb = null;
+        var previousWasSeparator = false;
+        for (int i = 0; i < value.Length; i++) {
+            var c = value[i];
+            var isSeparator = c == separator;
+            if (isSeparator && previousWasSeparator) {
+                sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                continue;
+            }
+            if (sb != null) sb.Append(c);
+            previousWasSeparator = isSeparator;
+        }
+        return sb?.ToString() ?? value;
     }
     static bool IsPathLikeName(string name) =>
         name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
@@ -230,6 +256,5 @@ public static class TaskModelExt {
         name.Contains("Manifest", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Jar", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Zip", StringComparison.OrdinalIgnoreCase) ||
-        name.Contains("Apk", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("Archive", StringComparison.OrdinalIgnoreCase);
 }

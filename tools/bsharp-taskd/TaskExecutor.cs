@@ -28,6 +28,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
@@ -261,9 +262,21 @@ internal static class TaskExecutor {
         if (e.ValueKind == JsonValueKind.String && bool.TryParse(e.GetString(), out var b)) return b;
         return false;
     }
-    static int ReadInt(JsonElement e) => e.TryGetInt32(out var v) ? v : 0;
-    static long ReadLong(JsonElement e) => e.TryGetInt64(out var v) ? v : 0L;
-    static double ReadDouble(JsonElement e) => e.TryGetDouble(out var v) ? v : 0d;
+    static int ReadInt(JsonElement e) {
+        if (e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var v)) return v;
+        if (e.ValueKind == JsonValueKind.String && int.TryParse(e.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) return v;
+        return 0;
+    }
+    static long ReadLong(JsonElement e) {
+        if (e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var v)) return v;
+        if (e.ValueKind == JsonValueKind.String && long.TryParse(e.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) return v;
+        return 0L;
+    }
+    static double ReadDouble(JsonElement e) {
+        if (e.ValueKind == JsonValueKind.Number && e.TryGetDouble(out var v)) return v;
+        if (e.ValueKind == JsonValueKind.String && double.TryParse(e.GetString(), NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out v)) return v;
+        return 0d;
+    }
     static string[] ReadStrings(JsonElement e) {
         if (e.ValueKind != JsonValueKind.Array) return Array.Empty<string>();
         return JsonSerializer.Deserialize(e, TaskModelJson.Default.StringArray) ?? Array.Empty<string>();

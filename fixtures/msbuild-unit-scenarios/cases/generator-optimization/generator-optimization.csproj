@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <Target Name="Optimize">
+    <AllowEmptyTelemetry EventName="noop" EventData="noop" />
+
+    <PropertyGroup Condition="'literal' == 'literal'">
+      <FoldedProperty>folded</FoldedProperty>
+      <SkippedProperty Condition="'a' == 'b'">skipped</SkippedProperty>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Source Include="alpha">
+        <Kind>A</Kind>
+      </Source>
+      <Source Include="beta">
+        <Kind>B</Kind>
+      </Source>
+      <First Include="@(Source)" Condition="'%(Source.Kind)' == 'A'" />
+      <Second Include="@(Source)" Condition="'%(Source.Kind)' == 'B'" />
+    </ItemGroup>
+
+    <MakeDir Directories="out" />
+    <Delete Files="out/first.txt;out/second.txt;out/property.txt" />
+    <WriteLinesToFile File="out/first.txt" Lines="@(First)" Overwrite="true" />
+    <WriteLinesToFile File="out/second.txt" Lines="@(Second)" Overwrite="true" />
+    <WriteLinesToFile File="out/property.txt" Lines="$(FoldedProperty);$(SkippedProperty)" Overwrite="true" />
+  </Target>
+</Project>

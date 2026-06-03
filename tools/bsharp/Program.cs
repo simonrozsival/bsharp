@@ -13,7 +13,7 @@ return Launcher.Run(args);
 static class Launcher {
     const string BackgroundCodegenEnvironmentVariable = "BSHARP_BACKGROUND_CODEGEN";
     const string BackgroundRebuildCommand = "--bsharp-background-rebuild";
-    const string ShapeHashVersion = "bsharp-shape-v9-nativeaot-r2r-direct-sidekick";
+    const string ShapeHashVersion = "bsharp-shape-v12-ordered-deps-parallel-outer";
 
     public static int Run(string[] args) {
         if (args.Length > 0 && string.Equals(args[0], BackgroundRebuildCommand, StringComparison.Ordinal))
@@ -21,6 +21,7 @@ static class Launcher {
 
         string command = "build";
         bool noCache = false;
+        bool noFastRestore = false;
         bool backgroundCodegen = IsBackgroundCodegenEnabledByEnvironment();
         string? projectArg = null;
         var forwardArgs = new List<string>();
@@ -36,6 +37,9 @@ static class Launcher {
                     break;
                 case "--no-cache":
                     noCache = true;
+                    break;
+                case "--no-fast-restore":
+                    noFastRestore = true;
                     break;
                 case "--background-codegen":
                     backgroundCodegen = true;
@@ -90,6 +94,7 @@ static class Launcher {
             Console.Error.WriteLine("bsharp: no .csproj or .sln found in current directory (and none specified)");
             return 2;
         }
+        NormalizeForwardedProjectPath(forwardArgs, projectPath);
 
         if (command == "clean")
             return CleanProject(projectPath);
@@ -110,7 +115,12 @@ static class Launcher {
             return RunAudit(projectPath, globalProps);
 
         var restoredWithCachedHost = false;
-        if (ShouldPreRestoreProjectReferences(projectPath, forwardArgs)) {
+        if (noFastRestore && !HasNoRestore(forwardArgs)) {
+            var restoreRc = RestoreProject(projectPath, globalProps, "restoring project (--no-fast-restore)");
+            if (restoreRc != 0)
+                return restoreRc;
+            AddNoRestore(forwardArgs);
+        } else if (ShouldPreRestoreProjectReferences(projectPath, forwardArgs)) {
             var restoreRc = RestoreProject(projectPath, globalProps, "restoring ProjectReference graph");
             if (restoreRc != 0)
                 return restoreRc;
@@ -190,6 +200,20 @@ static class Launcher {
             || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
+    static void NormalizeForwardedProjectPath(List<string> forwardArgs, string projectPath) {
+        for (var i = 0; i < forwardArgs.Count; i++) {
+            var arg = forwardArgs[i];
+            if (!arg.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                continue;
+            try {
+                if (string.Equals(Path.GetFullPath(arg), projectPath, StringComparison.OrdinalIgnoreCase))
+                    forwardArgs[i] = projectPath;
+            } catch {
+                // Keep unusual arguments unchanged.
+            }
+        }
+    }
+
     static string ResolveProjectCacheRoot(string bsharpRoot, List<KeyValuePair<string, string>> globalProps) {
         // Ignore properties that don't affect build shape (just optimization/noise flags)
         var ignoreKeys = new[] { "TargetFramework", "SuppressNETCoreSdkPreviewMessage", "EnableSourceControlManagerQueries", "EnableSourceLink" };
@@ -212,7 +236,9 @@ static class Launcher {
     }
 
     static bool ShouldPreRestoreProjectReferences(string projectPath, List<string> forwardArgs) =>
-        !HasNoRestore(forwardArgs) && HasStaticProjectReferences(projectPath);
+        !HasNoRestore(forwardArgs) &&
+        HasStaticProjectReferences(projectPath) &&
+        HasMissingOrStaleProjectAssetsInStaticGraph(projectPath);
 
     static bool ShouldRestoreMissingAssetsBeforeHash(string projectPath, List<string> forwardArgs) =>
         !HasNoRestore(forwardArgs) && HasMissingProjectAssetsInStaticGraph(projectPath);
@@ -252,6 +278,81 @@ static class Launcher {
         return Visit(projectPath);
     }
 
+    static bool HasMissingOrStaleProjectAssetsInStaticGraph(string projectPath) {
+        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        bool VisitProject(string path) {
+            path = Path.GetFullPath(path);
+            if (!visitedProjects.Add(path))
+                return false;
+
+            var dir = Path.GetDirectoryName(path)!;
+            var assetsPath = Path.Combine(dir, "obj", "project.assets.json");
+            if (!File.Exists(assetsPath))
+                return true;
+
+            var assetsTime = File.GetLastWriteTimeUtc(assetsPath);
+            if (IsRestoreInputNewerThanAssets(path, assetsTime))
+                return true;
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (VisitImport(importPath, assetsTime))
+                    return true;
+            }
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include")) {
+                if (VisitProject(referencePath))
+                    return true;
+            }
+
+            return false;
+        }
+
+        bool VisitImport(string path, DateTime ownerAssetsTime) {
+            path = Path.GetFullPath(path);
+            if (!visitedImports.Add(path))
+                return false;
+
+            if (File.Exists(path) && File.GetLastWriteTimeUtc(path) > ownerAssetsTime)
+                return true;
+
+            foreach (var importPath in EnumerateStaticMsBuildPaths(path, "Import", "Project")) {
+                if (VisitImport(importPath, ownerAssetsTime))
+                    return true;
+            }
+            foreach (var referencePath in EnumerateStaticMsBuildPaths(path, "ProjectReference", "Include")) {
+                if (VisitProject(referencePath))
+                    return true;
+            }
+
+            return false;
+        }
+
+        return VisitProject(projectPath);
+    }
+
+    static bool IsRestoreInputNewerThanAssets(string projectPath, DateTime assetsTime) {
+        if (File.GetLastWriteTimeUtc(projectPath) > assetsTime)
+            return true;
+
+        var dir = Path.GetDirectoryName(projectPath);
+        while (!string.IsNullOrEmpty(dir)) {
+            if (IsNewerThan(Path.Combine(dir, "Directory.Build.props"), assetsTime)) return true;
+            if (IsNewerThan(Path.Combine(dir, "Directory.Build.targets"), assetsTime)) return true;
+            if (IsNewerThan(Path.Combine(dir, "Directory.Packages.props"), assetsTime)) return true;
+            if (IsNewerThan(Path.Combine(dir, "NuGet.config"), assetsTime)) return true;
+            if (IsNewerThan(Path.Combine(dir, "global.json"), assetsTime)) return true;
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        var projectDir = Path.GetDirectoryName(projectPath)!;
+        if (IsNewerThan(Path.Combine(projectDir, "packages.lock.json"), assetsTime)) return true;
+        return false;
+    }
+
+    static bool IsNewerThan(string path, DateTime threshold) =>
+        File.Exists(path) && File.GetLastWriteTimeUtc(path) > threshold;
+
     static bool HasStaticProjectReferences(string projectPath) {
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -275,17 +376,37 @@ static class Launcher {
     }
 
     static int RestoreMissingAssetsWithCachedHost(string binFile, string projectPath) {
+        if (!HasDiscoverableTaskDaemon())
+            return 1;
+
         Console.Error.WriteLine("bsharp: restoring missing project assets with cached bsharp host...");
         var sw = Stopwatch.StartNew();
         // Use the non-execv path here: we need to return to the launcher to
         // continue with the actual build/run after the restore completes.
-        var rc = RunBuildBinaryAndWait(binFile, new List<string> { "restore", projectPath, "-v:quiet" });
+        var rc = RunBuildBinaryAndWaitQuiet(binFile, new List<string> { "restore", projectPath, "-v:quiet" }, out var output);
         sw.Stop();
-        if (rc != 0)
+        if (rc != 0) {
             Console.Error.WriteLine($"bsharp: cached bsharp restore failed (exit {rc}); falling back to dotnet restore");
-        else
+            if (Environment.GetEnvironmentVariable("BSHARP_RESTORE_DEBUG") == "1" && !string.IsNullOrWhiteSpace(output))
+                Console.Error.WriteLine(output.TrimEnd());
+        } else {
             Console.Error.WriteLine($"bsharp: cached bsharp restore done in {sw.ElapsedMilliseconds}ms");
+        }
         return rc;
+    }
+
+    static bool HasDiscoverableTaskDaemon() {
+        var env = Environment.GetEnvironmentVariable("BSHARP_TASKD_PATH");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env))
+            return true;
+        if (string.IsNullOrEmpty(Environment.ProcessPath))
+            return false;
+
+        var launcherDir = Path.GetDirectoryName(ResolveLauncherRealPath(Environment.ProcessPath));
+        if (string.IsNullOrEmpty(launcherDir))
+            return false;
+        var exe = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "bsharp-taskd.exe" : "bsharp-taskd";
+        return File.Exists(Path.Combine(launcherDir, exe));
     }
 
     static int RunBuildBinaryAndWait(string binFile, List<string> forwardArgs) {
@@ -296,6 +417,23 @@ static class Launcher {
         proc.WaitForExit();
         return proc.ExitCode;
     }
+
+    static int RunBuildBinaryAndWaitQuiet(string binFile, List<string> forwardArgs, out string output) {
+        SetBuildBinaryEnvironment();
+        var psi = new ProcessStartInfo(binFile) {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        proc.WaitForExit();
+        output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
+        return proc.ExitCode;
+    }
+
 
     static int RestoreProject(string projectPath, List<KeyValuePair<string, string>> globalProps, string reason) {
         Console.Error.WriteLine($"bsharp: {reason} with dotnet restore...");
@@ -448,7 +586,7 @@ static class Launcher {
         WriteOuterDispatcher(outerBin, innerBuilds);
 
         var hashFile = Path.Combine(bsharpRoot, "shape.hash");
-        File.WriteAllText(hashFile, currentHash + "\nOuterDispatcher\n");
+        File.WriteAllText(hashFile, currentHash + "\nOuterDispatcher\n" + ShapeHashVersion + "\n");
         Console.Error.WriteLine($"bsharp: outer dispatcher ready at {outerBin}");
         return 0;
     }
@@ -799,7 +937,7 @@ static class Launcher {
 
         var hashFile = Path.Combine(bsharpDir, "shape.hash");
         var fullMode = $"{usedMode}+UniversalTaskDaemon";
-        File.WriteAllText(hashFile, currentHash + "\n" + fullMode + "\n");
+        File.WriteAllText(hashFile, currentHash + "\n" + fullMode + "\n" + ShapeHashVersion + "\n");
         Console.Error.WriteLine($"bsharp: build binary ready (mode={fullMode}) at {binFile} -> {publishedBin}");
         return 0;
     }
@@ -880,13 +1018,19 @@ static class Launcher {
 
         var script = new StringBuilder();
         script.AppendLine("#!/bin/sh");
-        script.AppendLine("set -e");
+        script.AppendLine("rc=0");
+        script.AppendLine("pids=''");
         foreach (var innerBuild in innerBuilds) {
             script.Append("exec_path=");
             script.Append(ShellQuote(innerBuild));
             script.AppendLine();
-            script.AppendLine("\"$exec_path\" \"$@\"");
+            script.AppendLine("\"$exec_path\" \"$@\" &");
+            script.AppendLine("pids=\"$pids $!\"");
         }
+        script.AppendLine("for pid in $pids; do");
+        script.AppendLine("  if ! wait \"$pid\"; then rc=1; fi");
+        script.AppendLine("done");
+        script.AppendLine("exit \"$rc\"");
         File.WriteAllText(destination, script.ToString());
         try {
             File.SetUnixFileMode(destination,
@@ -1342,18 +1486,6 @@ static class Launcher {
     static int ExecBuildBinary(string binFile, List<string> forwardArgs) {
         SetBuildBinaryEnvironment();
 
-        // On Unix, replace the launcher process with the host via execv. Saves
-        // ~10 ms vs Process.Start + WaitForExit (no fork, no wait round-trip)
-        // and the launcher process simply disappears. We only need fork+wait on
-        // Windows or if execv fails for some reason.
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-            try {
-                ExecvOrThrow(binFile, forwardArgs);
-            } catch {
-                // Fall through to Process.Start on failure.
-            }
-        }
-
         var psi = new ProcessStartInfo(binFile) { UseShellExecute = false };
         foreach (var a in forwardArgs) psi.ArgumentList.Add(a);
         var proc = Process.Start(psi)!;
@@ -1378,14 +1510,10 @@ static class Launcher {
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "execv", SetLastError = true)]
-    static extern int LibcExecv(string path, IntPtr argv);
-
     // CoreCLR's Environment.SetEnvironmentVariable on Unix does NOT update the
     // process's environ(7) array; it only updates a managed cache. That means
-    // any env var we want to be visible after execv must go through libc
-    // setenv(3) directly. Without this, BSHARP_LAUNCHER_PATH / BSHARP_TASKD_PATH
-    // would silently be dropped on the launcher→host execv transition.
+    // any env var we want child processes to inherit must go through libc
+    // setenv(3) directly.
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "setenv", SetLastError = true)]
     static extern int LibcSetenv(string name, string value, int overwrite);
 
@@ -1393,29 +1521,6 @@ static class Launcher {
         Environment.SetEnvironmentVariable(name, value);
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
             _ = LibcSetenv(name, value, 1);
-        }
-    }
-
-    static void ExecvOrThrow(string path, List<string> forwardArgs) {
-        // execv(path, [path, arg1, ..., argN, NULL])
-        var argvLen = forwardArgs.Count + 2; // path + args + null terminator
-        var argv = Marshal.AllocHGlobal(IntPtr.Size * argvLen);
-        try {
-            Marshal.WriteIntPtr(argv, 0, Marshal.StringToCoTaskMemUTF8(path));
-            for (int i = 0; i < forwardArgs.Count; i++)
-                Marshal.WriteIntPtr(argv, (i + 1) * IntPtr.Size, Marshal.StringToCoTaskMemUTF8(forwardArgs[i]));
-            Marshal.WriteIntPtr(argv, (argvLen - 1) * IntPtr.Size, IntPtr.Zero);
-
-            LibcExecv(path, argv);
-            // execv only returns on failure
-            throw new InvalidOperationException("execv returned, errno=" + Marshal.GetLastWin32Error());
-        } finally {
-            // Only reached on failure; on success the process image is replaced.
-            for (int i = 0; i < argvLen - 1; i++) {
-                var p = Marshal.ReadIntPtr(argv, i * IntPtr.Size);
-                if (p != IntPtr.Zero) Marshal.FreeCoTaskMem(p);
-            }
-            Marshal.FreeHGlobal(argv);
         }
     }
 
@@ -1445,7 +1550,7 @@ static class Launcher {
         var lines = File.ReadAllText(hashFile).Split('\n');
         var mode = lines.Length > 1 ? lines[1] : "";
         var hash = ComputeShapeHash(projectPath, globalProps, requestedTargets);
-        File.WriteAllText(hashFile, hash + "\n" + mode + "\n");
+        File.WriteAllText(hashFile, hash + "\n" + mode + "\n" + ShapeHashVersion + "\n");
     }
 
     // Cheap stat-only check used as the launcher fast path. We trust the cached
@@ -1464,6 +1569,9 @@ static class Launcher {
     // If any of these is newer than the hashFile (or any disappeared / appeared),
     // we fall back to the full ComputeShapeHash + content check.
     static bool IsHashFileStillFresh(string projectPath, string hashFile) {
+        if (!ShapeHashVersionMatches(hashFile))
+            return false;
+
         var hashMtime = File.GetLastWriteTimeUtc(hashFile);
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visitedImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1517,6 +1625,15 @@ static class Launcher {
         static bool NewerThan(string path, DateTime threshold) {
             if (!File.Exists(path)) return false;
             return File.GetLastWriteTimeUtc(path) > threshold;
+        }
+    }
+
+    static bool ShapeHashVersionMatches(string hashFile) {
+        try {
+            var lines = File.ReadAllText(hashFile).Split('\n');
+            return lines.Length > 2 && string.Equals(lines[2].Trim(), ShapeHashVersion, StringComparison.Ordinal);
+        } catch {
+            return false;
         }
     }
 }

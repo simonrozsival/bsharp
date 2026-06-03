@@ -6,13 +6,22 @@
 
   <Target Name="PathNormalization">
     <MakeDir Directories="$(MSBuildProjectDirectory)\nested" />
+    <MakeDir Directories="$(MSBuildProjectDirectory)\nested\/mixed//" />
     <WriteLinesToFile
       File="$(MSBuildProjectDirectory)\nested\normalized.txt"
       Lines="ok"
       Overwrite="true" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)\nested\/mixed//normalized.txt"
+      Lines="mixed"
+      Overwrite="true" />
     <Copy
       SourceFiles="$(MSBuildProjectDirectory)\nested\normalized.txt"
       DestinationFiles="$(MSBuildProjectDirectory)\nested\copied.txt" />
+    <Copy
+      SourceFiles="$(MSBuildProjectDirectory)\nested\/mixed//normalized.txt"
+      DestinationFiles="$(MSBuildProjectDirectory)\nested//mixed\\copied.txt" />
     <Delete Files="$(MSBuildProjectDirectory)\nested\normalized.txt" />
+    <Delete Files="$(MSBuildProjectDirectory)\nested\/mixed//normalized.txt" />
   </Target>
 </Project>

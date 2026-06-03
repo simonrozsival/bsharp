@@ -44,16 +44,15 @@ public sealed class CodegenUnitTests
         AssertInOrder(
             generated.ProgramText,
             "public static async ValueTask T_005_Build()",
-            "var dependencyTask0_0 = T_003_Maybe();",
-            "var dependencyTask0_1 = T_004_Flip();",
-            "var dependencyTask0_2 = T_003_Maybe();",
-            "await ValueTaskHelpers.WhenAll(dependencyTask0_0, dependencyTask0_1, dependencyTask0_2);");
+            "await T_003_Maybe();",
+            "await T_004_Flip();",
+            "await T_003_Maybe();");
 
         StringAssert.Contains(generated.ProgramText, "TargetRuntime.MarkSkipped(\"Maybe\"");
     }
 
     [TestMethod]
-    public void LargeLiteralDependencyBatchKeepsValueTasks()
+    public void LargeLiteralDependencyBatchRunsInOrder()
     {
         using var project = CodegenUnitProject.FromScenario("target-depends-large-batch", "target-depends-large-batch.proj");
         var generated = project.Generate();
@@ -61,12 +60,13 @@ public sealed class CodegenUnitTests
         AssertInOrder(
             generated.ProgramText,
             "public static async ValueTask T_006_Build()",
-            "var dependencyTask0_0 = T_001_A();",
-            "var dependencyTask0_4 = T_005_E();",
-            "await ValueTaskHelpers.WhenAll(dependencyTask0_0, dependencyTask0_1, dependencyTask0_2, dependencyTask0_3, dependencyTask0_4);");
+            "await T_001_A();",
+            "await T_002_B();",
+            "await T_003_C();",
+            "await T_004_D();",
+            "await T_005_E();");
         Assert.IsFalse(generated.ProgramText.Contains(".AsTask()", StringComparison.Ordinal),
-            "ValueTask dependency fan-in should not allocate Tasks just to call Task.WhenAll.");
-        StringAssert.Contains(generated.ProgramText, "public static async ValueTask WhenAll(params ValueTask[] tasks)");
+            "Literal dependency execution should stay ValueTask-based.");
     }
 
     [TestMethod]
@@ -262,14 +262,82 @@ public sealed class CodegenUnitTests
         using var project = CodegenUnitProject.FromScenario("path-separator-normalization", "path-separator-normalization.csproj");
         var generated = project.Generate("PathNormalization");
 
-        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizeSeparatorList");
-        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizeSeparators");
+        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizePathLikeList");
+        StringAssert.Contains(generated.ProgramText, "PathUtil.NormalizePathLike");
 
         generated.BuildHost();
         generated.RunHost().AssertSuccess("run generated path-normalization host");
 
         Assert.IsFalse(File.Exists(Path.Combine(project.DirectoryPath, "nested", "normalized.txt")));
         AssertFileLines(Path.Combine(project.DirectoryPath, "nested", "copied.txt"), "ok");
+        Assert.IsFalse(File.Exists(Path.Combine(project.DirectoryPath, "nested", "mixed", "normalized.txt")));
+        AssertFileLines(Path.Combine(project.DirectoryPath, "nested", "mixed", "copied.txt"), "mixed");
+    }
+
+    [TestMethod]
+    public void MSBuildThisFilePropertiesAreInlinedFromDeclaringImport()
+    {
+        using var project = CodegenUnitProject.FromScenario("msbuild-this-file-context", "msbuild-this-file-context.csproj");
+        var generated = project.Generate("ThisFileContext");
+
+        var importDirectory = Path.Combine(project.DirectoryPath, "build") + Path.DirectorySeparatorChar;
+        var importPath = Path.Combine(importDirectory, "Imported.ThisFile.targets");
+        var outputPath = Path.Combine(importDirectory, "out.txt");
+
+        StringAssert.Contains(generated.ProgramText, importPath);
+        StringAssert.Contains(generated.ProgramText, outputPath);
+        Assert.IsFalse(generated.ProgramText.Contains("P.MSBuildThisFileDirectory + \"out.txt\"", StringComparison.Ordinal),
+            "Imported MSBuildThisFileDirectory must be emitted as a literal, not read from global P state.");
+
+        generated.BuildHost();
+        generated.RunHost().AssertSuccess("run generated MSBuildThisFile host");
+
+        AssertFileLines(
+            outputPath,
+            $"Imported.ThisFile.targets|Imported.ThisFile|imported.thisfile|.targets|{importPath}|{importDirectory}|{importPath}|Imported.ThisFile");
+    }
+
+    [TestMethod]
+    public void TaskBatchingSupportsMultipleMetadataFromSameItem()
+    {
+        using var project = CodegenUnitProject.FromScenario("task-batching-multiple-metadata", "task-batching-multiple-metadata.csproj");
+        var generated = project.Generate("WriteBatches");
+
+        Assert.IsFalse(generated.ProgramText.Contains("multi-dimensional task batching", StringComparison.Ordinal),
+            "Tasks that reference multiple metadata names from one item type should still be emitted.");
+
+        generated.BuildHost();
+        generated.RunHost().AssertSuccess("run generated multiple-metadata batching host");
+
+        AssertFileLines(
+            Path.Combine(generated.OutputDirectory, "out", "batches.txt"),
+            "alpha|one",
+            "beta|two");
+    }
+
+    [TestMethod]
+    public void GeneratorOmitsNoOpTasksAndMergesDirectItemCopyLoops()
+    {
+        using var project = CodegenUnitProject.FromScenario("generator-optimization", "generator-optimization.csproj");
+        var generated = project.Generate("Optimize");
+
+        Assert.IsFalse(generated.ProgramText.Contains("Tasks.AllowEmptyTelemetry(", StringComparison.Ordinal),
+            "No-op telemetry tasks should not allocate parameters or emit calls.");
+        Assert.IsFalse(generated.ProgramText.Contains("if (true)", StringComparison.Ordinal),
+            "Literal true conditions should be folded away.");
+        Assert.IsFalse(generated.ProgramText.Contains("P.SkippedProperty =", StringComparison.Ordinal),
+            "Literal false property conditions should skip the assignment entirely.");
+        Assert.AreEqual(
+            1,
+            CountOccurrences(generated.ProgramText, "foreach (var batchItem in I.Source)"),
+            "Adjacent direct item-copy loops over the same source should be merged.");
+
+        generated.BuildHost();
+        generated.RunHost().AssertSuccess("run generated optimization host");
+
+        AssertFileLines(Path.Combine(generated.OutputDirectory, "out", "first.txt"), "alpha");
+        AssertFileLines(Path.Combine(generated.OutputDirectory, "out", "second.txt"), "beta");
+        AssertFileLines(Path.Combine(generated.OutputDirectory, "out", "property.txt"), "folded", "");
     }
 
     [TestMethod]
@@ -396,6 +464,18 @@ public sealed class CodegenUnitTests
             var tier = scenario.GetProperty("tier").GetString();
             Assert.IsTrue(tier is "structural" or "runtime", $"Unexpected scenario tier: {tier}");
         }
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+        return count;
     }
 
     private static void AssertInOrder(string text, params string[] expected)

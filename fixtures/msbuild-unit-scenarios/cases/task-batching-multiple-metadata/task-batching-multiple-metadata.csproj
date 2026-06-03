@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <Target Name="WriteBatches">
+    <MakeDir Directories="out" />
+    <Delete Files="out/batches.txt" />
+
+    <ItemGroup>
+      <BatchSource Include="alpha">
+        <Flavor>one</Flavor>
+      </BatchSource>
+      <BatchSource Include="beta">
+        <Flavor>two</Flavor>
+      </BatchSource>
+    </ItemGroup>
+
+    <WriteLinesToFile
+      File="out/batches.txt"
+      Lines="%(BatchSource.Identity)|%(BatchSource.Flavor)"
+      Overwrite="false" />
+  </Target>
+</Project>
