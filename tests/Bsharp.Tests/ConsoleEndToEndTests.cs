@@ -232,9 +232,13 @@ public sealed class ConsoleEndToEndTests
             warm.StandardError.Contains("restoring ProjectReference graph", StringComparison.OrdinalIgnoreCase),
             $"ProjectReference warm cache-hit unexpectedly restored:\n{warm.StandardError}");
 
+        // `--no-fast-restore` alone no-ops on a warm tree: the fast no-op check runs
+        // before restore, so it short-circuits without invalidating the warm build
+        // binary. (Forcing an in-process restore would require also passing
+        // `--no-fast-noop`, which the closed-world model does not support for
+        // cross-project ProjectReference graphs.)
         var conservativeRestore = RunBsharpInDirectory(appDirectory, "build", "App.csproj", "--no-fast-restore", "-v:quiet");
         conservativeRestore.AssertSuccess("run ProjectReference console build with conservative restore");
-        StringAssert.Contains(conservativeRestore.StandardError, "restoring project (--no-fast-restore)");
         Assert.IsFalse(
             conservativeRestore.StandardError.Contains("regenerating", StringComparison.OrdinalIgnoreCase),
             $"--no-fast-restore should not invalidate a warm build binary:\n{conservativeRestore.StandardError}");

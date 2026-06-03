@@ -26,32 +26,44 @@ Or build and use the tools directly:
 ```bash
 dotnet build tools/codegen/Codegen.csproj
 dotnet publish tools/bsharp/Bsharp.csproj -c Release -r osx-arm64
+dotnet publish tools/bsharp-taskd/BsharpTaskd.csproj -c Release -r osx-arm64
 
 export BSHARP="$PWD/tools/bsharp/bin/Release/net11.0/osx-arm64/publish/bsharp"
 export BSHARP_CODEGEN="$PWD/tools/codegen/bin/Debug/net11.0/Codegen"
+# Consumed only by the generator, so it can bundle the task server into .bsharp/.
+export BSHARP_TASKD_PATH="$PWD/tools/bsharp-taskd/bin/Release/net11.0/osx-arm64/publish/bsharp-taskd"
 
 cd fixtures/console-net11
-$BSHARP build --no-cache -v:quiet run
+$BSHARP build --no-cache -v:quiet console-net11.csproj   # compile the build once
 ```
 
-After the first successful build, the generated project-local binary can be run
-directly:
+`bsharp` is a one-time **generator** ("compile the build"): it evaluates the
+shape, code-generates + publishes the host, and **bundles the task server next to
+it**. After that the generated binary is **self-contained** — run it directly,
+with no launcher and no environment variables:
 
 ```bash
 ./.bsharp/build --no-restore build
 ./.bsharp/build --no-restore run
 ```
 
+This is the intended steady-state workflow: run `bsharp <project>` when the
+project *shape* changes (csproj, `Directory.Build.*`, `global.json`, `-p`
+globals); run `.bsharp/build` on every inner-loop iteration. Because the shape
+hash lives in the generator, a shape change is only detected when you re-run it.
+
 `BSHARP_CODEGEN` may point to either the `Codegen` executable/apphost or
 `Codegen.dll`. DLL paths are invoked through `dotnet`; executable paths are invoked
-directly.
+directly. `BSHARP_TASKD_PATH` is honored by `.bsharp/build` as a fallback if the
+bundled task server is missing.
 
 ## Architecture
 
 ```text
 bsharp
-  NativeAOT launcher. Finds the project, computes a shape hash, regenerates on cache
-  miss, publishes the generated host and task server, then execs .bsharp/build.
+  NativeAOT generator ("compile the build"). Finds the project, computes a shape
+  hash, regenerates on cache miss, publishes the generated host, and bundles the
+  task server into .bsharp/ so the host runs standalone. Not on the hot path.
 
 tools/codegen
   Managed .NET tool. Uses MSBuild evaluation and MetadataLoadContext to generate the

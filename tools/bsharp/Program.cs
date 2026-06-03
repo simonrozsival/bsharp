@@ -933,6 +933,12 @@ static class Launcher {
 
         var publishDir = Path.GetDirectoryName(publishedBin)!;
 
+        // Bundle the task daemon next to the published host so `.bsharp/build`
+        // is self-contained and can be invoked directly (no launcher, no
+        // BSHARP_TASKD_PATH). The host's ResolveDaemonExecutable() probes for a
+        // `bsharp-taskd` sibling in this directory.
+        BundleTaskDaemon(publishDir);
+
         // Single-file publishes keep the app and runtime in the apphost. Prefer a link, but
         // fall back to copying because Windows may disallow symlink creation.
         var binFile = Path.Combine(bsharpDir, "build");
@@ -1062,6 +1068,59 @@ static class Launcher {
         } catch (Exception) when (OperatingSystem.IsWindows()) {
             CopyDirectory(sourceDirectory, destination);
         }
+    }
+
+    // Resolve the task-daemon publish directory so we can bundle it next to a
+    // freshly generated host. Mirrors the host's own discovery order:
+    //   1. BSHARP_TASKD_PATH (points at the executable; take its directory)
+    //   2. a `bsharp-taskd` sibling of the (real) launcher path
+    static string? ResolveTaskDaemonSourceDir() {
+        var exe = ExecutableName("bsharp-taskd");
+        var env = Environment.GetEnvironmentVariable("BSHARP_TASKD_PATH");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env))
+            return Path.GetDirectoryName(Path.GetFullPath(env));
+        if (string.IsNullOrEmpty(Environment.ProcessPath))
+            return null;
+        var launcherDir = Path.GetDirectoryName(ResolveLauncherRealPath(Environment.ProcessPath));
+        if (string.IsNullOrEmpty(launcherDir))
+            return null;
+        var sibling = Path.Combine(launcherDir, exe);
+        return File.Exists(sibling) ? launcherDir : null;
+    }
+
+    // Copy the framework-dependent task daemon (apphost + .dll + .deps.json +
+    // .runtimeconfig.json) into the host's publish directory so the generated
+    // `.bsharp/build` finds it as a sibling and runs standalone.
+    static void BundleTaskDaemon(string publishDir) {
+        var sourceDir = ResolveTaskDaemonSourceDir();
+        if (sourceDir == null) {
+            Console.Error.WriteLine("bsharp: warning: could not locate bsharp-taskd to bundle; '.bsharp/build' will need BSHARP_TASKD_PATH set at runtime");
+            return;
+        }
+        var exe = ExecutableName("bsharp-taskd");
+        try {
+            foreach (var file in Directory.EnumerateFiles(sourceDir)) {
+                var name = Path.GetFileName(file);
+                if (!name.StartsWith("bsharp-taskd", StringComparison.Ordinal))
+                    continue;
+                var target = Path.Combine(publishDir, name);
+                File.Copy(file, target, overwrite: true);
+                if (string.Equals(name, exe, StringComparison.Ordinal) && !OperatingSystem.IsWindows())
+                    MakeExecutable(target);
+            }
+            Console.Error.WriteLine($"bsharp: bundled bsharp-taskd into {publishDir}");
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"bsharp: warning: failed to bundle bsharp-taskd ({ex.Message}); '.bsharp/build' will need BSHARP_TASKD_PATH set at runtime");
+        }
+    }
+
+    static void MakeExecutable(string path) {
+        try {
+            var psi = new ProcessStartInfo("chmod") { UseShellExecute = false };
+            psi.ArgumentList.Add("+x");
+            psi.ArgumentList.Add(path);
+            Process.Start(psi)?.WaitForExit();
+        } catch { }
     }
 
     static void CopyDirectory(string source, string destination) {
