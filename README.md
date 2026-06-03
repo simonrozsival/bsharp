@@ -104,9 +104,9 @@ Observed `fixtures/console-net11` warm no-op numbers:
 
 | Scenario | Time | What it measures |
 |---|---:|---|
-| Generated host cache-hit build | 0.4-0.8 ms | `.bsharp/build --fast-noop` internal build summary: fast no-op path, no SDK tasks |
-| `bsharp` launcher cache-hit wall time | ~115 ms | Shell `time $BSHARP`: launcher startup/hash check + `Process.Start(.bsharp/build)` |
-| Cumulative tasks on warm no-op fast path | 0.00 ms | `--fast-noop` returns before restore/build target execution; omit it to inspect full target execution at any verbosity |
+| Generated host cache-hit build | 0.4-0.8 ms | `.bsharp/build` internal build summary on the automatic fast no-op path, no SDK tasks |
+| `.bsharp/build` cache-hit wall time | ~56 ms | Shell `time ./.bsharp/build`: process startup + timestamp shortcut |
+| Cumulative tasks on warm no-op fast path | 0.00 ms | The automatic fast no-op returns before restore/build target execution; pass `--no-fast-noop` to inspect full target execution at any verbosity |
 
 The sub-millisecond number is the generated host's own work. The larger shell wall
 time is dominated by launching `bsharp` and then launching the project-local
@@ -118,7 +118,8 @@ time is dominated by launching `bsharp` and then launching the project-local
 |---|---|
 | `bsharp build` | Ensure `.bsharp/build` is current, then run `build` (which runs `Restore` first, matching `dotnet build`) |
 | `bsharp build --no-restore` | Like `bsharp build`, but skip the `Restore` target (matches `dotnet build --no-restore`) |
-| `bsharp build --fast-noop` | Opt in to the timestamp shortcut that returns before restore/build target execution when outputs are already current |
+| `bsharp build --no-fast-noop` | Disable the automatic timestamp shortcut. By default a `build`/`run` returns before restore/build target execution when every input is older than the output |
+| `bsharp build --no-fast-restore` | On the `build` path, force a real in-process `Restore` instead of the timestamp-based skip. **Only takes effect when the build is not already fast-no-op'd** — on a warm tree combine it with `--no-fast-noop` (`--no-fast-noop --no-fast-restore`), since the fast no-op check runs *before* restore is considered. The explicit `bsharp restore` command always runs a full restore regardless of this flag. |
 | `bsharp run` | Ensure `.bsharp/build` is current, then run `run` |
 | `bsharp build --no-cache` | Force regeneration and republish |
 | `bsharp build --background-codegen` | Experimental: start cache regeneration in the background on a miss and use `dotnet build` for the current invocation |
