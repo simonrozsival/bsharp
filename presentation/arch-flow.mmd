@@ -1,0 +1,22 @@
+flowchart TB
+  subgraph P1["Phase 1 — compile the build (once per shape · like ./configure)"]
+    direction LR
+    A["<b>bsharp &lt;project&gt;</b><br/>NativeAOT generator<br/>find .csproj · shape hash · .bsharp/ cache"]
+    B["<b>tools/codegen</b><br/>managed frontend<br/>MSBuild.Evaluation + MetadataLoadContext<br/>evaluate · target DAG · scan UsingTasks"]
+    C["<b>emit sources</b><br/>Program.cs · TaskModel.cs<br/>BsharpGenerated.csproj · task-server/"]
+    A -- "cache MISS" --> B --> C
+  end
+  subgraph P2["Phase 2 — run the compiled build (every inner-loop iteration)"]
+    direction LR
+    D["<b>.bsharp/build</b><br/>generated · NativeAOT · self-contained<br/>baked P.*/I.* state · async targets · hand-rolled tasks<br/>runs directly · nothing to install or configure"]
+    E["<b>bsharp-taskd</b><br/>CoreCLR · bundled next to host<br/>runs real SDK UsingTasks"]
+    D <-- "JSON / IPC" --> E
+  end
+  P1 == "publish host + BUNDLE task server into .bsharp/" ==> P2
+
+  classDef gen fill:#e8f0fe,stroke:#4285f4,stroke-width:1px,color:#111;
+  classDef run fill:#e6f4ea,stroke:#34a853,stroke-width:1px,color:#111;
+  classDef srv fill:#fef7e0,stroke:#fbbc04,stroke-width:1px,color:#111;
+  class A,B,C gen;
+  class D run;
+  class E srv;
