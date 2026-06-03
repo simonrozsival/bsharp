@@ -21,7 +21,6 @@ static class Launcher {
 
         string command = "build";
         bool noCache = false;
-        bool noFastRestore = false;
         bool backgroundCodegen = IsBackgroundCodegenEnabledByEnvironment();
         string? projectArg = null;
         var forwardArgs = new List<string>();
@@ -30,7 +29,7 @@ static class Launcher {
         for (int i = 0; i < args.Length; i++) {
             var a = args[i];
             switch (a) {
-                case "build": case "run": case "audit": case "clean": case "test":
+                case "build": case "run": case "audit": case "clean": case "test": case "restore":
                     command = a;
                     if (a != "audit")
                         forwardArgs.Add(a);
@@ -39,7 +38,11 @@ static class Launcher {
                     noCache = true;
                     break;
                 case "--no-fast-restore":
-                    noFastRestore = true;
+                    // Forwarded to the host, which forces a real (in-process) restore
+                    // every build by bypassing its skip-if-fresh check. The launcher must
+                    // NOT shell out to `dotnet restore` here — that would use the slow
+                    // out-of-process restore engine instead of bsharp's own fast restore.
+                    forwardArgs.Add(a);
                     break;
                 case "--background-codegen":
                     backgroundCodegen = true;
@@ -115,12 +118,11 @@ static class Launcher {
             return RunAudit(projectPath, globalProps);
 
         var restoredWithCachedHost = false;
-        if (noFastRestore && !HasNoRestore(forwardArgs)) {
-            var restoreRc = RestoreProject(projectPath, globalProps, "restoring project (--no-fast-restore)");
-            if (restoreRc != 0)
-                return restoreRc;
-            AddNoRestore(forwardArgs);
-        } else if (ShouldPreRestoreProjectReferences(projectPath, forwardArgs)) {
+        // For an explicit `restore` command, the host runs the real Restore target
+        // itself; the launcher must not pre-restore (that would double-restore or
+        // hide the work being measured). Just ensure the host exists and exec it.
+        if (command != "restore") {
+        if (ShouldPreRestoreProjectReferences(projectPath, forwardArgs)) {
             var restoreRc = RestoreProject(projectPath, globalProps, "restoring ProjectReference graph");
             if (restoreRc != 0)
                 return restoreRc;
@@ -140,6 +142,7 @@ static class Launcher {
                     return restoreRc;
                 AddNoRestore(forwardArgs);
             }
+        }
         }
 
         // Fast path: if cached build exists and no shape input is newer than the cache, trust it.

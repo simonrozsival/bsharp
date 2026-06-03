@@ -1860,6 +1860,7 @@ string command = "build";
 bool noBuild = false;
 bool noRestore = false;
 bool noFastNoop = false;
+bool noFastRestore = false;
 string? csprojArg = null;
 string? targetResultPath = null;
 var requestedTargets = new List<string>();
@@ -1871,6 +1872,7 @@ for (int i = 0; i < args.Length; i++) {
     else if (a == "--no-restore") noRestore = true;
     else if (a == "--fast-noop") { /* fast-noop is now automatic */ }
     else if (a == "--no-fast-noop") noFastNoop = true;
+    else if (a == "--no-fast-restore") noFastRestore = true;
     else if (a == "--bsharp-target-result" && i + 1 < args.Length) targetResultPath = args[++i];
     else if ((a == "-t" || a == "--target" || a == "-target") && i + 1 < args.Length) AddTargets(requestedTargets, args[++i]);
     else if (a.StartsWith("-t:", StringComparison.Ordinal)) AddTargets(requestedTargets, a.Substring(3));
@@ -1927,8 +1929,9 @@ if (!noBuild) {
         // `--no-restore` was passed. NuGet's RestoreTask self-skips when nothing
         // changed, but restore is still expensive (~1-2s). Skip if assets are fresh.
         if (!noRestore) {
-            if (ShouldSkipRestore(csprojPath)) {
-                // Restore outputs are fresh - skip it entirely
+            if (!noFastRestore && ShouldSkipRestore(csprojPath)) {
+                // Fast restore: outputs are fresh - skip it entirely.
+                // --no-fast-restore forces a real (in-process) restore every build.
                 if (Log.Level >= Log.Verbosity.Minimal)
                     Console.WriteLine("bsharp: skipping restore (project.assets.json is up-to-date)");
             } else {
@@ -2246,8 +2249,27 @@ static int RunRestore(string csprojPath) {
         foreach (var (t, msg) in restoreErrors) Console.Error.WriteLine($"  {t}: {msg}");
         return 1;
     }
+    // Record that the dependency graph was verified current as of now. NuGet only
+    // rewrites project.nuget.cache when its dgspec hash changes, so after a no-op
+    // restore the marker's timestamp would stay stale and ShouldSkipRestore would keep
+    // re-restoring on every build. Bumping the marker (NuGet's own up-to-date check is
+    // content-hash based, not mtime based, so this is safe) lets a verified-current
+    // restore be remembered.
+    TouchNuGetRestoreMarker(csprojPath);
     Log.ResetTaskTiming();
     return 0;
+}
+
+static void TouchNuGetRestoreMarker(string csprojPath) {
+    try {
+        var projectDir = Path.GetDirectoryName(csprojPath);
+        if (string.IsNullOrEmpty(projectDir)) return;
+        var marker = Path.Combine(projectDir, "obj", "project.nuget.cache");
+        if (File.Exists(marker))
+            File.SetLastWriteTimeUtc(marker, DateTime.UtcNow);
+    } catch {
+        // best-effort; a missing/locked marker just means the next build re-checks restore
+    }
 }
 
 static bool IsCriticalBuildTarget(string name) {
@@ -2299,37 +2321,32 @@ static bool FastNoOpBuild(string csprojPath) {
 
 static bool ShouldSkipRestore(string csprojPath) {
     var projectDir = Path.GetDirectoryName(csprojPath)!;
-    var assetsPath = Path.Combine(projectDir, "obj", "project.assets.json");
+    // project.nuget.cache is NuGet's restore-success marker: it is (re)written every
+    // time a restore completes successfully, so its timestamp is the moment of the last
+    // good restore. Skip restore only if that marker exists AND nothing that can change
+    // the resolved dependency graph is newer than it. We compare timestamps rather than
+    // trusting the marker's age, so an edit to the csproj / Directory.Build.props /
+    // Directory.Build.targets / Directory.Packages.props / global.json always forces a
+    // fresh restore. (An unnecessary restore is merely slow; skipping a needed one is
+    // incorrect, so we err toward restoring.)
     var cacheFile = Path.Combine(projectDir, "obj", "project.nuget.cache");
-    
-    // NuGet creates project.nuget.cache with hash when restore succeeds
-    // If it exists and is recent, restore was successful and current
-    if (File.Exists(cacheFile)) {
-        var cacheAge = DateTime.UtcNow - new FileInfo(cacheFile).LastWriteTimeUtc;
-        if (cacheAge.TotalHours < 24) {
-            // Trust NuGet's cache marker for 24 hours
-            // This is more reliable than timestamp checking
-            return true;
-        }
-    }
-    
-    // Fallback: If project.assets.json doesn't exist, we need to restore
-    if (!File.Exists(assetsPath))
+    if (!File.Exists(cacheFile))
         return false;
-    
-    var assetsTime = File.GetLastWriteTimeUtc(assetsPath);
-    
-    // Check if project file changed since last restore
-    if (File.Exists(csprojPath) && File.GetLastWriteTimeUtc(csprojPath) > assetsTime)
+
+    var restoreTime = File.GetLastWriteTimeUtc(cacheFile);
+
+    // The project file itself can add/remove/retarget PackageReferences.
+    if (File.Exists(csprojPath) && File.GetLastWriteTimeUtc(csprojPath) > restoreTime)
         return false;
-    
-    // Check Directory.Build.props, Directory.Packages.props
+
+    // Directory.Build.props / Directory.Build.targets / Directory.Packages.props /
+    // global.json (walking up the directory tree) can all change package versions or
+    // the SDK band that drives implicit references.
     foreach (var input in FastNoOpShapeInputs(projectDir)) {
-        if (File.Exists(input) && File.GetLastWriteTimeUtc(input) > assetsTime)
+        if (File.Exists(input) && File.GetLastWriteTimeUtc(input) > restoreTime)
             return false;
     }
-    
-    // Assets are up-to-date
+
     return true;
 }
 
